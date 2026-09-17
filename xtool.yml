@@ -1,0 +1,6 @@
+version: 1
+product: PoC
+bundleID: com.awesomenull.poc
+infoPath: layout/Applications/PoC.app/Info.plist
+iconPath: layout/Applications/PoC.app/AppIcon60x60@2x.png
+entitlementsPath: entitlements.plist

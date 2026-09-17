@@ -1,8 +1,0 @@
-Package: com.awesomenull.poc
-Name: PoC
-Version: 0.1.0
-Architecture: iphoneos-arm
-Description: On-device PoC for iOS 27 app-container restores.
-Maintainer: awesomenull
-Author: awesomenull
-Section: Utilities

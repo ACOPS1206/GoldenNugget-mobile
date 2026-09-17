@@ -1,6 +1,5 @@
 build/
 .theos/
-lib/*.a
-lib/empty.swift.part
+**/.build/
 *.ipa
 .DS_Store

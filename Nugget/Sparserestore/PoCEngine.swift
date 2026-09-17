@@ -552,19 +552,16 @@ class PoCEngine {
             self.log(String(format: "protective backup progress: %.0f%%", pct))
         }
         log("Light protective backup complete — session authorized, popup handled.")
-        log("Discarding pulled protective data, rebuilding as a minimal file-only 3.3 backup…")
-
-        // Rebuild host-side as a minimal file-only 3.3 backup inside the same
-        // authorized working dir (the device-side backup data above is dropped).
+        // iOS 27 (and GN's restore_files) does NOT accept a synthetic file-only
+        // rebuild: it rejects it PERMANENTLY (validation, not transient).  GN
+        // keeps the pulled protective keep-set (springboard + system prefs +
+        // home domain + addressbook/messages/posterboard), prunes Manifest.db to
+        // that keep-set (clean_backup_for_restore mirror), then on restore it
+        // re-prunes the pulled payload the same way and injects the new file.
+        log("Keeping the pulled protective keep-set (no discard) and pruning Manifest.db "
+            + "to the GN keep-set...")
         let deviceDir = backupRoot.appendingPathComponent(udid)
-        try? FileManager.default.removeItem(at: deviceDir)
-        try FileManager.default.createDirectory(at: deviceDir, withIntermediateDirectories: true)
-
-        // Minimal host-side 3.3 metadata (Status.plist Version 3.3, Manifest/Info plists)
-        try Self.ensureHostSideManifests(deviceDir: deviceDir, udid: udid)
-
-        // Empty Manifest.db, then inject the single AppDomain row
-        try Self.createEmptyManifestDb(deviceDir: deviceDir)
+        try Self.pruneManifestDb(deviceDir: deviceDir)
 
         let appInfo = try await InstProxy.lookup(bundleID: bundleID)
         log("Target app: \(bundleID) v\(appInfo.version)")
