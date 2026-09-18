@@ -22,6 +22,7 @@ struct PoCView: View {
     @State var showTargetImporter: Bool = false
     @State var logs: [String] = []
     @State var errorText: String?
+    @State var runStarted: Date?
 
     var body: some View {
         List {
@@ -53,13 +54,11 @@ struct PoCView: View {
                     Button("Reset pairing file") { resetPairing() }
                 } else {
                     Button("Select Pairing File") { showPairingImporter.toggle() }
-                        .fileImporter(isPresented: $showPairingImporter, allowedContentTypes: [UTType(filenameExtension: "mobiledevicepairing", conformingTo: .data)!, UTType(filenameExtension: "mobiledevicepair", conformingTo: .data)!]) { result in
+                        .fileImporter(isPresented: $showPairingImporter, allowedContentTypes: Self.pairingFileTypes) { result in
                             switch result {
                             case .success(let url):
                                 do {
-                                    pairingFileRaw = try String(contentsOf: url)
-                                    pairingFileURL = url.path
-                                    startMinimuxer()
+                                    try loadPairingFile(from: url)
                                 } catch {
                                     errorText = error.localizedDescription
                                 }
@@ -108,13 +107,47 @@ struct PoCView: View {
                     run()
                 } label: {
                     if running {
-                        ProgressView().frame(maxWidth: .infinity)
+                        // Elapsed time, not just a spinner: this run has stages
+                        // that legitimately take minutes, and a spinner alone
+                        // cannot tell "working" from "hung".
+                        HStack {
+                            ProgressView()
+                            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                                let secs = Int(ctx.date.timeIntervalSince(runStarted ?? ctx.date))
+                                Text("Running… \(secs / 60)m \(secs % 60)s")
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
                     } else {
                         Text(partialOnly ? "Run Partial Restore (3.3)" : "Run Backup → Inject → Restore")
                             .frame(maxWidth: .infinity)
                     }
                 }
                 .disabled(running || pairingFileURL == nil)
+            }
+
+            Section("Diagnostics") {
+                Button("Dump Diagnostics Into Log") {
+                    Task {
+                        let block = await PoCEngine.shared.diagnostics()
+                        await MainActor.run { logs.append(block) }
+                    }
+                }
+                .disabled(running)
+                // Share sheets beat hand-selecting text: the diagnostics block and
+                // the full Rust log are files in Documents.  AirDrop / Save to
+                // Files gets them off the device intact.
+                ShareLink(item: PoCEngine.diagnosticsURL) {
+                    Label("Share diagnostics.txt", systemImage: "square.and.arrow.up")
+                }
+                .disabled(!FileManager.default.fileExists(atPath: PoCEngine.diagnosticsURL.path))
+                ShareLink(item: PoCEngine.rustLogURL) {
+                    Label("Share minimuxer.log (\(PoCEngine.rustLogSize() / 1024) KB)", systemImage: "doc.text.magnifyingglass")
+                }
+                .disabled(PoCEngine.rustLogSize() == 0)
+                Text("The dump carries a keyword slice of the Rust log (mobilebackup2 protocol + jktcp flow verdict), scoped to this run.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             if !logs.isEmpty {
@@ -131,6 +164,10 @@ struct PoCView: View {
         .navigationTitle("PoC")
         .onAppear {
             spawnLogPrinter()
+            // Claim the process-wide Rust logger before anything can call
+            // setLogging()/start(): the Rust side latches the first
+            // idevice_init_logger call and would otherwise keep file logging off.
+            PoCEngine.shared.enableRustFileLogging()
             if let alt = Bundle.main.object(forInfoDictionaryKey: "ALTPairingFile") as? String, alt.count > 5000, pairingFileRaw == nil {
                 pairingFileRaw = alt
                 pairingFileURL = URL.documents.appendingPathComponent("pairingfile.mobiledevicepairing").path
@@ -140,11 +177,9 @@ struct PoCView: View {
             }
         }
         .onOpenURL { url in
-            if url.pathExtension.lowercased() == "mobiledevicepairing" {
+            if ["mobiledevicepairing", "mobiledevicepair", "mobiledeviceconfig"].contains(url.pathExtension.lowercased()) {
                 do {
-                    pairingFileRaw = try String(contentsOf: url)
-                    pairingFileURL = url.path
-                    startMinimuxer()
+                    try loadPairingFile(from: url)
                 } catch {
                     errorText = error.localizedDescription
                 }
@@ -163,6 +198,26 @@ struct PoCView: View {
         logs = []
     }
 
+    // Extensions accepted by the pairing-file picker and onOpenURL handler.
+    static let pairingFileTypes: [UTType] = ["mobiledevicepairing", "mobiledevicepair", "mobiledeviceconfig"].compactMap {
+        UTType(filenameExtension: $0, conformingTo: .data)
+    }
+
+    // Document-picker URLs are security-scoped: reading them without
+    // startAccessingSecurityScopedResource fails with "you don't have
+    // permission to view it". Copy the file into Documents and use that
+    // stable path afterwards (minimuxer reads from Documents too).
+    func loadPairingFile(from url: URL) throws {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let raw = try String(contentsOf: url)
+        let dest = URL.documents.appendingPathComponent("pairingfile.mobiledevicepairing")
+        try raw.write(to: dest, atomically: true, encoding: .utf8)
+        pairingFileRaw = raw
+        pairingFileURL = dest.path
+        startMinimuxer()
+    }
+
     func startMinimuxer() {
         guard let pairingFileRaw else { return }
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].path(percentEncoded: false)
@@ -170,14 +225,21 @@ struct PoCView: View {
             // SideStore-style pre-start guard: the LocalDevVPN tunnel routes to
             // the emulated peer (10.7.0.1:62078). Probe the tunnel first so the
             // RSD adapter/handshake can reach the device before we start.
+            let tunnelStage = StageTimer("tunnel probe")
             guard Tunnel.waitForTunnel(log: { line in PoCEngine.shared.log(line) }) else {
+                tunnelStage.done("FAILED")
                 DispatchQueue.main.async {
                     errorText = "Tunnel not ready: \(Tunnel.peerIP):\(Tunnel.servicePort) unreachable. Enable LocalDevVPN and retry."
                 }
                 return
             }
+            tunnelStage.done("reachable")
             Task {
                 do {
+                    // FIRST, before setLogging()/start(): the Rust logger latches
+                    // on the first idevice_init_logger call in the process, and
+                    // setLogging(true) below installs console=Error/file=OFF.
+                    PoCEngine.shared.enableRustFileLogging()
                     let minimuxer = Minimuxer.shared()
                     minimuxer.core.setLogging(true)
                     minimuxer.core.setDeviceProbeTimeout(3000)
@@ -206,19 +268,26 @@ struct PoCView: View {
                         PoCEngine.shared.log("pairing file: NOT a parseable XML/JSON plist")
                     }
                     try await minimuxer.core.start(pairingFile: pairingFileRaw, mountPath: docs)
+                    // Readiness wait, deadline-bounded.  This used to be
+                    // 20 × 1 s of flat sleeps, so every pairing-file load (and
+                    // every app launch with ALTPairingFile) paid up to 20 s
+                    // before anything else could happen.  Poll fast at first,
+                    // then back off, and stop at a hard deadline.
+                    let readyStage = StageTimer("minimuxer readiness")
                     var isReady = false
-                    if case .success(true) = await minimuxer.core.isReady() {
-                        isReady = true
-                    }
-                    var attempts = 1
-                    while !isReady && attempts < 20 {
-                        attempts += 1
-                        PoCEngine.shared.log("minimuxer not ready (attempt \(attempts)/20), retrying…")
-                        try await Task.sleep(nanoseconds: 1_000_000_000)
+                    let deadline = Date().addingTimeInterval(20)
+                    var poll = 0
+                    var delay: UInt64 = 200_000_000   // 0.2 s -> doubles -> 2 s cap
+                    while Date() < deadline {
+                        poll += 1
                         if case .success(true) = await minimuxer.core.isReady() {
                             isReady = true
+                            break
                         }
+                        try await Task.sleep(nanoseconds: delay)
+                        delay = min(delay * 2, 2_000_000_000)
                     }
+                    readyStage.done("ready=\(isReady) after \(poll) poll(s)")
                     PoCEngine.shared.log("minimuxer started. ready=\(isReady)")
                     if !isReady {
                         let tail = Self.minimuxerLogTail()
@@ -266,11 +335,18 @@ struct PoCView: View {
     func spawnLogPrinter() {
         PoCEngine.shared.onLog = { line in
             logs.append(line)
+            // A long run appends a lot (RSD chatter, retries, diagnostics).
+            // Keeping the array bounded keeps the List responsive while
+            // scrolling through a run.
+            if logs.count > 600 {
+                logs.removeFirst(logs.count - 600)
+            }
         }
     }
 
     func run() {
         running = true
+        runStarted = Date()
         logs = []
         Task {
             do {
@@ -282,7 +358,10 @@ struct PoCView: View {
             } catch {
                 PoCEngine.shared.log("❌ \(error.localizedDescription)")
             }
-            await MainActor.run { running = false }
+            await MainActor.run {
+                running = false
+                runStarted = nil
+            }
         }
     }
 

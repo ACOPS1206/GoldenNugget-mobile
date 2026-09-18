@@ -37,6 +37,18 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
     public static let shared = IdeviceGateway()
     var lastError: Error? = nil
 
+    /// Serializes the body of `ensureRPConnection()`.
+    ///
+    /// The `adapter`/`handshake` check-then-act is not atomic and every service
+    /// path funnels through here from `DispatchQueue.global()`, so two concurrent
+    /// callers (e.g. the post-start readiness poll and the first user-triggered
+    /// operation) both observe `nil` and both run `tunnel_create_rppairing`.
+    /// The device then holds two RemotePairing sessions — visible in
+    /// minimuxer.log as two `Sending attemptPairVerify`, two `createListener`
+    /// responses and two CDTunnel handshakes ~60 ms apart, with the second
+    /// session serving the service while the first leaks until the app exits.
+    private let tunnelLock = NSLock()
+
     private func getRustPlistString(_ node: plist_t) -> String? {
         var valPtr: UnsafeMutablePointer<Int8>? = nil
         plist_get_string_val(node, &valPtr)
@@ -138,6 +150,34 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
         // just comment/uncomment to override above set logging level during local debugging
 //        idevice_init_logger(IdeviceLogLevel(rawValue: 4), IdeviceLogLevel(rawValue: 0), nil)
         #endif
+    }
+
+    /// Install a Rust-side log sink that writes to `path` at DEBUG level.
+    ///
+    /// `idevice_init_logger` is guarded by a Rust `Once`: the FIRST call in the
+    /// process wins and every later call returns `AlreadyInitialized` (-2).
+    /// `setLogging(true)` — which `syncStart()` runs in DEBUG builds — installs
+    /// console=Error / file=OFF, so `<Documents>/minimuxer.log` is never
+    /// created and a failed mobilebackup2 operation leaves NO Rust trace at all.
+    /// Call this **before** `start()`/`setLogging()` to capture the whole device
+    /// conversation on disk.
+    ///
+    /// - Returns: raw `IdeviceLoggerError` (0 OK, -1 file error, -2 already
+    ///   initialized, -3 invalid path). Anything but 0 means the file sink is
+    ///   not active.
+    @discardableResult
+    public func enableRustFileLogging(to path: String) -> Int32 {
+        // Rust only borrows the C string for the duration of the call
+        // (`CStr::from_ptr`, never `from_raw`), so a leaked strdup is the
+        // simplest way to guarantee a valid lifetime for a once-per-process
+        // init without touching Rust-owned memory.
+        let cPath = strdup(path)
+        let result = idevice_init_logger(
+            IdeviceLogLevel(rawValue: 4),   // console: Debug
+            IdeviceLogLevel(rawValue: 4),   // file:    Debug
+            cPath
+        )
+        return Int32(result.rawValue)
     }
 
     private func syncStart(pairingFileContent: String) throws {
@@ -242,10 +282,24 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
     }
 
     private func ensureRPConnection() throws {
+        // One tunnel at a time: without this, concurrent callers each build their
+        // own (see `tunnelLock`).  Held across the FFI call on purpose — the call
+        // is blocking anyway, so the wait is the same wait.
+        tunnelLock.lock()
+        defer { tunnelLock.unlock() }
+
         debugLog("[IdeviceGateway] ensureRPConnection() started, adapter: \(String(describing: adapter)), handshake: \(String(describing: handshake))")
         if adapter != nil && handshake != nil {
             verboseLog("[IdeviceGateway] ensureRPConnection() using existing connection")
             return
+        }
+
+        // We only get here with a half-established pair (one handle set, the
+        // other nil), which no caller can use.  Release it before the FFI call
+        // overwrites the properties, or the pointer leaks.
+        if adapter != nil || handshake != nil {
+            verboseLog("[IdeviceGateway] ensureRPConnection() releasing half-established adapter/handshake first")
+            invalidateConnection()
         }
 
         guard let pairingFile = pairingFile else {
@@ -752,6 +806,45 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
             }
             debugLog("[IdeviceGateway] getLockdownValue plistVal is nil for \(key)")
             return nil
+        }
+    }
+
+    private func syncGetLockdownBool(key: String, domain: String) throws -> Bool? {
+        debugLog("[IdeviceGateway] getLockdownBool(\(domain)/\(key)) started, mode = .\(pairingFileType)")
+        try verifyInitialized()
+
+        return try performWithEitherService(
+            connectRP: lockdownd_connect_rsd,
+            connectLockdown: lockdownd_connect,
+            cleanup: lockdownd_client_free,
+            serviceName: "lockdownd"
+        ) { client in
+            var node: plist_t? = nil
+            let valErr = domain.withCString { domainPtr in
+                lockdownd_get_value(client, key, domainPtr, &node)
+            }
+            if let valErr = valErr {
+                let msg = self.getErrorMessage(from: valErr)
+                debugLog("[IdeviceGateway] getLockdownBool lockdownd_get_value failed for \(domain)/\(key): \(msg)")
+                defer { safeFreeError(valErr) }
+                throw IdeviceGatewayError(.serviceError, reason: "Failed to get lockdown value \(domain)/\(key), error: (\(msg))")
+            }
+            guard let node = node else {
+                debugLog("[IdeviceGateway] getLockdownBool plistVal is nil for \(domain)/\(key)")
+                return nil
+            }
+            defer { safeFreePlist(node) }
+
+            // plist_get_bool_val silently does nothing on a non-boolean node,
+            // so the type check is what makes a nil answer mean "absent".
+            guard plist_get_node_type(node) == PLIST_BOOLEAN else {
+                verboseLog("[IdeviceGateway] getLockdownBool \(domain)/\(key) is not a boolean node")
+                return nil
+            }
+            var out: UInt8 = 0
+            plist_get_bool_val(node, &out)
+            verboseLog("[IdeviceGateway] getLockdownBool \(domain)/\(key) = \(out != 0)")
+            return out != 0
         }
     }
 
@@ -2503,6 +2596,23 @@ extension IdeviceGateway {
     public func getLockdownValue(key: String) async throws -> String? {
         try await withFFIDispatch {
             try self.syncGetLockdownValue(key: key)
+        }
+    }
+
+    /// Boolean lockdown read from an explicit domain.
+    ///
+    /// `getLockdownValue(key:)` cannot express this for two independent reasons:
+    /// it passes a NULL domain (so domain-scoped keys such as
+    /// `com.apple.mobile.backup / WillEncrypt` are not visible at all), and it
+    /// reads through `plist_get_string_val`, which does nothing on a
+    /// PLIST_BOOLEAN node and therefore returns nil.
+    ///
+    /// Use this for the backup-encryption precondition: with "Encrypted Local
+    /// Backup" on, the device hands the host an ENCRYPTED Manifest.db, while
+    /// the PoC rewrites it with bare sqlite3.
+    public func getLockdownBool(key: String, domain: String) async throws -> Bool? {
+        try await withFFIDispatch {
+            try self.syncGetLockdownBool(key: key, domain: domain)
         }
     }
 

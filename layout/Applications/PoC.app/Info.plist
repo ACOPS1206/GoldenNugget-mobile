@@ -32,7 +32,7 @@
 		</dict>
 	</dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.awesomenull.poc</string>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -99,9 +99,18 @@
 				<key>public.filename-extension</key>
 				<array>
 					<string>mobiledevicepairing</string>
+					<string>mobiledevicepair</string>
+					<string>mobiledeviceconfig</string>
 				</array>
 			</dict>
 		</dict>
 	</array>
+	<!-- Expose Documents in the Files app: minimuxer.log (Rust, DEBUG) and
+	     diagnostics.txt are the only evidence for a mobilebackup2 failure, and
+	     the device is the only place they exist. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 </dict>
 </plist>
