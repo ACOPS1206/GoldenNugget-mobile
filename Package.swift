@@ -39,10 +39,29 @@ let package = Package(
                 "Nugget/Views/PoCView.swift",
                 "Nugget/Extensions/Alert++.swift",
                 "Nugget/Extensions/Extensions.swift",
-                "Nugget/Sparserestore/Backup.swift",
-                "Nugget/Sparserestore/InstProxy.swift",
-                "Nugget/Sparserestore/MBDB.swift",
-                "Nugget/Sparserestore/PoCEngine.swift",
+
+                // Engine core — see Nugget/Core/PoCEngine.swift for the layering.
+                // Adding a file here also requires re-running
+                // scripts/relink-core-sources.py for PoC.xcodeproj.
+                "Nugget/Core/AppPaths.swift",
+                "Nugget/Core/Logging.swift",
+                "Nugget/Core/TransportFailure.swift",
+                "Nugget/Core/AsyncRacing.swift",
+                "Nugget/Core/RustLog.swift",
+                "Nugget/Core/WireCensus.swift",
+                "Nugget/Core/ProgressPulse.swift",
+                "Nugget/Core/StallGuard.swift",
+                "Nugget/Core/ChannelRecovery.swift",
+                "Nugget/Core/ManifestStore.swift",
+                "Nugget/Core/MBFileBlob.swift",
+                "Nugget/Core/HostManifests.swift",
+                "Nugget/Core/BackupInjector.swift",
+                "Nugget/Core/ProtectiveBackup.swift",
+                "Nugget/Core/RestoreRunner.swift",
+                "Nugget/Core/Diagnostics.swift",
+                "Nugget/Core/InstProxy.swift",
+                "Nugget/Core/PoCEngine.swift",
+
                 "Nugget/SwiftNIO/_NIOBase64/Base64.swift",
                 "Nugget/SwiftNIO/NIOFoundationCompat/ByteBuffer-foundation.swift",
                 "Nugget/SwiftNIO/NIOCore/ByteBuffer-aux.swift",

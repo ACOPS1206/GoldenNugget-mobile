@@ -1,0 +1,138 @@
+diff --git a/ffi/src/mobilebackup2.rs b/ffi/src/mobilebackup2.rs
+index d21df1c..e70651f 100644
+--- a/ffi/src/mobilebackup2.rs
++++ b/ffi/src/mobilebackup2.rs
+@@ -504,6 +504,8 @@ pub unsafe extern "C" fn mobilebackup2_client_free(handle: *mut MobileBackup2Cli
+ /// * `backup_root` - Path to the backup root directory (null-terminated UTF-8)
+ /// * `source_identifier` - Source UDID (null-terminated UTF-8, or NULL for current device)
+ /// * `options` - Optional plist dictionary of backup options (NULL for defaults)
++/// * `factory_info` - Optional plist dictionary sent as the top-level `FactoryInfo`
++///   sibling of `Options` (NULL for a full backup)
+ /// * `delegate` - Pointer to a populated Mobilebackup2BackupDelegateFFI struct
+ /// * `out_response` - On success, receives the device response plist (caller must free). May be NULL.
+ ///
+@@ -515,6 +517,7 @@ pub unsafe extern "C" fn mobilebackup2_backup(
+     backup_root: *const c_char,
+     source_identifier: *const c_char,
+     options: crate::plist_t,
++    factory_info: crate::plist_t,
+     delegate: *const Mobilebackup2BackupDelegateFFI,
+     out_response: *mut crate::plist_t,
+ ) -> *mut IdeviceFfiError {
+@@ -547,12 +550,23 @@ pub unsafe extern "C" fn mobilebackup2_backup(
+         }
+     };
+ 
++    let factory = if factory_info.is_null() {
++        None
++    } else {
++        let pw = unsafe { &mut *(factory_info as *mut PlistWrapper) };
++        if let plist::Value::Dictionary(d) = pw.borrow_self().clone() {
++            Some(d)
++        } else {
++            None
++        }
++    };
++
+     let delegate_ref = unsafe { &*delegate };
+ 
+     let res = run_sync_local(async {
+         unsafe { &mut *client }
+             .0
+-            .backup_from_path(&backup_root, source.as_deref(), opts, delegate_ref)
++            .backup_from_path(&backup_root, source.as_deref(), opts, factory, delegate_ref)
+             .await
+     });
+ 
+diff --git a/idevice/src/services/mobilebackup2.rs b/idevice/src/services/mobilebackup2.rs
+index 0200cbb..486bb54 100644
+--- a/idevice/src/services/mobilebackup2.rs
++++ b/idevice/src/services/mobilebackup2.rs
+@@ -901,10 +901,41 @@ impl MobileBackup2Client {
+         source_identifier: Option<&str>,
+         options: Option<Dictionary>,
+     ) -> Result<(), IdeviceError> {
++        self.send_request_with_factory_info(
++            request,
++            target_identifier,
++            source_identifier,
++            options,
++            None,
++        )
++        .await
++    }
++
++    /// Sends a MobileBackup2 request with an extra top-level `FactoryInfo`.
++    ///
++    /// `FactoryInfo` is the sibling of `Options` the device reads to decide what
++    /// to skip; `{"Applications": {}}` makes it omit app containers entirely
++    /// (a "protective" backup). Only `Backup` carries it.
++    pub async fn send_request_with_factory_info(
++        &mut self,
++        request: &str,
++        target_identifier: Option<&str>,
++        source_identifier: Option<&str>,
++        options: Option<Dictionary>,
++        factory_info: Option<Dictionary>,
++    ) -> Result<(), IdeviceError> {
++        // The device refuses a Backup/Restore request that carries no
++        // TargetIdentifier. The Idevice handle only learns its UDID on the
++        // usbmuxd/lockdown connect path, which an RSD connection never runs, so
++        // udid() is None here and the key would be dropped by the optional-
++        // include macro. Fall back to the source identifier: over RSD the two
++        // are the same UDID, and every reference client sends the key.
++        let target_identifier = target_identifier.or(source_identifier);
+         let dict = crate::plist!(dict {
+             "TargetIdentifier":? target_identifier,
+             "SourceIdentifier":? source_identifier,
+             "Options":? options,
++            "FactoryInfo":? factory_info,
+             // Special cases like Unback/EnableCloudBackup are handled by caller if needed
+         });
+         self.send_device_link_message(request, Some(dict)).await
+@@ -1154,6 +1185,10 @@ impl MobileBackup2Client {
+     /// - If `source_identifier` is None, the current connected device's UDID will be used.
+     /// - The backup directory will be created if it does not exist.
+     ///
++    /// - `factory_info` is sent as the top-level `FactoryInfo` sibling of
++    ///   `Options` in the Backup request. `None` means a full backup;
++    ///   `Some({"Applications": {}})` makes the device skip app containers.
++    ///
+     /// Returns the final response dictionary from the device on success. If the device
+     /// reports an error, the dictionary will contain `ErrorCode` and `ErrorDescription`.
+     pub async fn backup_from_path(
+@@ -1161,6 +1196,7 @@ impl MobileBackup2Client {
+         backup_root: &Path,
+         source_identifier: Option<&str>,
+         options: Option<Dictionary>,
++        factory_info: Option<Dictionary>,
+         delegate: &dyn BackupDelegate,
+     ) -> Result<Option<Dictionary>, IdeviceError> {
+         let target_udid_owned = self.idevice.udid().map(|s| s.to_string());
+@@ -1174,11 +1210,12 @@ impl MobileBackup2Client {
+         let backup_dir = backup_root.join(source);
+         let _ = delegate.create_dir_all(&backup_dir).await;
+ 
+-        self.send_request(
++        self.send_request_with_factory_info(
+             BackupMessageType::BackupMessageTypeBackup.as_str(),
+             target_udid,
+             Some(source),
+             options,
++            factory_info,
+         )
+         .await?;
+ 
+diff --git a/tools/src/mobilebackup2.rs b/tools/src/mobilebackup2.rs
+index 02d00e5..96c9d5a 100644
+--- a/tools/src/mobilebackup2.rs
++++ b/tools/src/mobilebackup2.rs
+@@ -377,7 +377,7 @@ pub async fn main(arguments: &CollectedArguments, provider: Box<dyn IdeviceProvi
+ 
+             println!("Starting backup...");
+             match backup_client
+-                .backup_from_path(Path::new(&dir), source, options, &delegate)
++                .backup_from_path(Path::new(&dir), source, options, None, &delegate)
+                 .await
+             {
+                 Ok(Some(response)) => {

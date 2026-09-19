@@ -1,0 +1,138 @@
+diff --git a/ffi/src/mobilebackup2.rs b/ffi/src/mobilebackup2.rs
+index d21df1c..86df360 100644
+--- a/ffi/src/mobilebackup2.rs
++++ b/ffi/src/mobilebackup2.rs
+@@ -88,6 +88,23 @@ pub struct Mobilebackup2BackupDelegateFFI {
+     /// call; copy out any fields you need to keep.
+     pub on_progress:
+         Option<extern "C" fn(progress: *const Mobilebackup2BackupProgress, context: *mut c_void)>,
++
++    /// Optional pre-store filter. May be NULL.
++    ///
++    /// Called with the device-side directory and file name *before* any of the
++    /// payload is written. Returning false drains the payload off the wire
++    /// without creating, truncating or writing anything — how a protective
++    /// backup skips photos and videos. NULL means "store everything".
++    ///
++    /// Kept last so a caller compiled against a header without it still lines
++    /// up with the fields before it.
++    pub should_preserve: Option<
++        extern "C" fn(
++            device_name: *const c_char,
++            file_name: *const c_char,
++            context: *mut c_void,
++        ) -> bool,
++    >,
+ }
+ 
+ /// Progress snapshot passed to `on_progress`.
+@@ -391,6 +408,24 @@ impl BackupDelegate for Mobilebackup2BackupDelegateFFI {
+             cb(&ffi, self.context);
+         }
+     }
++
++    fn should_store_file(&self, dir: &str, path: &str) -> bool {
++        // NULL means "no filter", i.e. store everything — same as the default.
++        let Some(cb) = self.should_preserve else {
++            return true;
++        };
++        let d = match std::ffi::CString::new(dir) {
++            Ok(c) => c,
++            // A name we cannot hand to C is not a name we can judge; storing it
++            // is the safe answer.
++            Err(_) => return true,
++        };
++        let f = match std::ffi::CString::new(path) {
++            Ok(c) => c,
++            Err(_) => return true,
++        };
++        cb(d.as_ptr(), f.as_ptr(), self.context)
++    }
+ }
+ 
+ // ---------------------------------------------------------------------------
+diff --git a/idevice/src/services/mobilebackup2.rs b/idevice/src/services/mobilebackup2.rs
+index 0200cbb..d9b1a8c 100644
+--- a/idevice/src/services/mobilebackup2.rs
++++ b/idevice/src/services/mobilebackup2.rs
+@@ -234,6 +234,20 @@ pub trait BackupDelegate: Send + Sync {
+     /// `file_count` is the running total of files received in the current upload batch.
+     fn on_file_received(&self, _path: &str, _file_count: u32) {}
+ 
++    /// Called once per uploaded file, BEFORE any of its payload is written.
++    ///
++    /// `dir` and `path` are the device-side names taken from the upload message.
++    /// Returning `false` drains the payload off the wire without creating,
++    /// truncating or writing anything on the host — which is the whole point of
++    /// a *protective* backup, where photos and videos are read only so the
++    /// stream stays in step. Asking afterwards instead means every rejected
++    /// payload is written to flash in full and then deleted.
++    ///
++    /// Defaults to `true`, so delegates that do not care are unaffected.
++    fn should_store_file(&self, _dir: &str, _path: &str) -> bool {
++        true
++    }
++
+     /// Called during file transfer with a [`BackupProgress`] snapshot.
+     ///
+     /// Covers both directions: receiving files during a backup and sending them
+@@ -1534,7 +1548,7 @@ impl MobileBackup2Client {
+             if dlen == 0 {
+                 break;
+             }
+-            let _dname = self.read_exact_string(dlen as usize).await?;
++            let dname = self.read_exact_string(dlen as usize).await?;
+ 
+             // Receive file name
+             let flen = self.read_be_u32().await?;
+@@ -1543,9 +1557,16 @@ impl MobileBackup2Client {
+             }
+             let fname = self.read_exact_string(flen as usize).await?;
+ 
++            // Ask BEFORE touching the filesystem. A protective backup rejects
++            // most of what the device uploads; creating the file first and
++            // deleting it afterwards wrote every rejected payload to flash.
++            let keep = delegate.should_store_file(&dname, &fname);
++
+             let dst = host_path(host_dir, &fname);
+-            if let Some(parent) = dst.parent() {
+-                let _ = delegate.create_dir_all(parent).await;
++            if keep {
++                if let Some(parent) = dst.parent() {
++                    let _ = delegate.create_dir_all(parent).await;
++                }
+             }
+ 
+             // Read first code+data block
+@@ -1555,16 +1576,26 @@ impl MobileBackup2Client {
+             }
+             let mut code = self.read_one().await?;
+ 
+-            // Remove existing file and create new one
+-            let _ = delegate.remove(&dst).await;
+-            let mut file = delegate.create_file_write(&dst).await?;
++            // Remove existing file and create new one — skipped entirely when
++            // the delegate rejected the payload, which is what makes the drain
++            // cheap.
++            let mut file: Option<_> = if keep {
++                let _ = delegate.remove(&dst).await;
++                Some(delegate.create_file_write(&dst).await?)
++            } else {
++                None
++            };
+ 
+             // Receive file data blocks
+             while code == DL_CODE_FILE_DATA {
+                 let block_size = (nlen - 1) as usize;
+                 let data = self.read_exact(block_size).await?;
+-                file.write_all(&data)
+-                    .map_err(|e| IdeviceError::InternalError(e.to_string()))?;
++                // Rejected payloads are drained: the bytes are read so the
++                // stream stays in step, and dropped without ever reaching disk.
++                if let Some(f) = file.as_mut() {
++                    f.write_all(&data)
++                        .map_err(|e| IdeviceError::InternalError(e.to_string()))?;
++                }
+                 bytes_done += block_size as u64;
+ 
+                 // Report mid-file so a single multi-gigabyte file doesn't look

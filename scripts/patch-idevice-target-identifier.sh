@@ -46,16 +46,34 @@
 # `TargetIdentifier` where it used to emit `SourceIdentifier`.  In this PoC the
 # two are the same device UDID, but a real Restore wants both keys.  This is a
 # hypothesis test, not the final fix -- the real fix is a rebuilt Rust lib with
-# `let target = self.idevice.udid().or(Some(source))` in `backup_from_path`.
+# `let target = self.idevice.udid().or(Some(source))` in `backup_from_path`
+# (reachable now that scripts/build-idevice-ios.sh can rebuild the archive).
 # Revert with `--revert` once that lands.
 #
-# usage: scripts/patch-idevice-target-identifier.sh [--revert]
+# `libidevice_ffi.a.orig` is the pristine shipped binary and is git-tracked; it
+# is NOT the revert target.  --revert restores $BAK, the archive as it was
+# immediately before this script patched it (which may already carry other
+# patches, e.g. the jktcp rebuild).
+#
+# SUPERSEDED 2026-09-19 -- do not run this against a rebuilt archive.
+#
+# Vendor/patches/idevice-ffi/factory_info.patch fixes it at the source:
+# `send_request` in idevice/src/services/mobilebackup2.rs now sends
+# `target_identifier.or(source_identifier)`, so Backup and Restore both carry
+# TargetIdentifier *and* keep SourceIdentifier. Re-running the byte substitution
+# on such an archive would rename the SourceIdentifier literal too, leaving the
+# request with two TargetIdentifiers and no SourceIdentifier.
+#
+# Bare invocation now refuses; --force is there for a binary that genuinely
+# still needs it. --revert is unaffected (it just restores $BAK).
+#
+# usage: scripts/patch-idevice-target-identifier.sh [--revert|--force]
 #
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 LIB="$ROOT/Vendor/IDevice.xcframework/ios-arm64/libidevice_ffi.a"
-BAK="$ROOT/Vendor/patches/libidevice_ffi.a.orig"
+BAK="$ROOT/Vendor/patches/libidevice_ffi.a.pre-targetid"
 
 FROM='SourceIdentifier'
 TO='TargetIdentifier'
@@ -76,11 +94,19 @@ revert() {
 
 case "${1:-}" in
     --revert|-r) revert; exit 0 ;;
-    '') ;;
-    *) echo "usage: $0 [--revert]" >&2; exit 2 ;;
+    --force) ;;
+    '')
+        echo "error: superseded by Vendor/patches/idevice-ffi/factory_info.patch" >&2
+        echo "  the rebuilt archive sends TargetIdentifier from Rust; see the" >&2
+        echo "  SUPERSEDED note in $0. Use --force only for an archive that" >&2
+        echo "  really still lacks it." >&2
+        exit 1
+        ;;
+    *) echo "usage: $0 [--revert|--force]" >&2; exit 2 ;;
 esac
 
-# First run: keep the pristine library so --revert always works.
+# Keep whatever the archive looked like right before this patch, so --revert
+# undoes this patch and nothing else.
 if [ ! -f "$BAK" ]; then
     mkdir -p "$(dirname "$BAK")"
     cp "$LIB" "$BAK"

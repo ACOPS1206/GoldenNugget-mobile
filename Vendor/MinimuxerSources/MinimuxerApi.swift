@@ -300,7 +300,8 @@ public extension Minimuxer {
         sourceIdentifier: String,
         shouldReboot: Bool = false,
         systemFiles: Bool = true,
-        onProgress: ((Double) -> Void)? = nil
+        onProgress: ((Double) -> Void)? = nil,
+        delegateLog: ((String) -> Void)? = nil
     ) async throws {
         guard let gw = ideviceGateway else {
             throw MinimuxerError.noDevice("gateway is not IdeviceGateway")
@@ -310,7 +311,8 @@ public extension Minimuxer {
             sourceIdentifier: sourceIdentifier,
             shouldReboot: shouldReboot,
             systemFiles: systemFiles,
-            onProgress: onProgress
+            onProgress: onProgress,
+            delegateLog: delegateLog
         )
     }
 
@@ -320,7 +322,8 @@ public extension Minimuxer {
         sourceIdentifier: String,
         skipAppContainers: Bool = false,
         shouldPreserve: ((String, String) -> Bool)? = nil,
-        onProgress: ((Double) -> Void)? = nil
+        onProgress: ((Double) -> Void)? = nil,
+        delegateLog: ((String) -> Void)? = nil
     ) async throws -> [String: Any] {
         guard let gw = ideviceGateway else {
             throw MinimuxerError.noDevice("gateway is not IdeviceGateway")
@@ -330,7 +333,8 @@ public extension Minimuxer {
             sourceIdentifier: sourceIdentifier,
             skipAppContainers: skipAppContainers,
             shouldPreserve: shouldPreserve,
-            onProgress: onProgress
+            onProgress: onProgress,
+            delegateLog: delegateLog
         )
     }
 }

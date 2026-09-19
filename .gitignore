@@ -8,3 +8,6 @@ build/
 xcuserdata/
 .swiftpm/
 .workbuddy
+# local Rust toolchain + upstream idevice checkout used by
+# scripts/build-idevice-ios.sh (keeps ~/.cargo and ~/.rustup untouched)
+.rust/

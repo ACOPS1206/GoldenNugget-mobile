@@ -13,7 +13,7 @@ struct RootView: View {
 struct PoCView: View {
     @AppStorage("PairingFile") var pairingFileRaw: String?
     @State var pairingFileURL: String?
-    @State var bundleID: String = "com.apple.PosterBoard"
+    @State var bundleID: String = "com.goldens.victim"
     @State var fileName: String = "poc.txt"
     @State var contents: String = "PoC: iOS 27 app container restore OK"
     @State var partialOnly: Bool = true
@@ -124,6 +124,19 @@ struct PoCView: View {
                     }
                 }
                 .disabled(running || pairingFileURL == nil)
+
+                if running {
+                    // A stall guard that waits minutes for a device that may be
+                    // wedged is only safe if it can be stopped by hand. A blocked
+                    // Rust read cannot be interrupted, so this abandons the call
+                    // and unwinds: the guard notices the flag at its next poll.
+                    Button(role: .destructive) {
+                        PoCEngine.shared.requestCancel()
+                    } label: {
+                        Label("Stop run", systemImage: "stop.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
             }
 
             Section("Diagnostics") {
@@ -145,7 +158,15 @@ struct PoCView: View {
                     Label("Share minimuxer.log (\(PoCEngine.rustLogSize() / 1024) KB)", systemImage: "doc.text.magnifyingglass")
                 }
                 .disabled(PoCEngine.rustLogSize() == 0)
-                Text("The dump carries a keyword slice of the Rust log (mobilebackup2 protocol + jktcp flow verdict), scoped to this run.")
+                // The app-side log is a separate file because it is a separate
+                // half of the evidence: the Rust log shows what the protocol did,
+                // this one shows what the host decided (filter keeps, commit
+                // accounting, staging leftovers).
+                ShareLink(item: PoCEngine.appLogURL) {
+                    Label("Share poc.log (\(PoCEngine.appLogSize() / 1024) KB)", systemImage: "doc.plaintext")
+                }
+                .disabled(PoCEngine.appLogSize() == 0)
+                Text("The dump carries a keyword slice of the Rust log (mobilebackup2 protocol + jktcp flow verdict) scoped to this run, plus the app log tail (host-side decisions).")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -170,10 +191,10 @@ struct PoCView: View {
             PoCEngine.shared.enableRustFileLogging()
             if let alt = Bundle.main.object(forInfoDictionaryKey: "ALTPairingFile") as? String, alt.count > 5000, pairingFileRaw == nil {
                 pairingFileRaw = alt
-                pairingFileURL = URL.documents.appendingPathComponent("pairingfile.mobiledevicepairing").path
+                pairingFileURL = AppPaths.pairingFile.path
                 startMinimuxer()
             } else {
-                pairingFileURL = pairingFileRaw != nil ? URL.documents.appendingPathComponent("pairingfile.mobiledevicepairing").path : nil
+                pairingFileURL = pairingFileRaw != nil ? AppPaths.pairingFile.path : nil
             }
         }
         .onOpenURL { url in
@@ -211,7 +232,7 @@ struct PoCView: View {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         let raw = try String(contentsOf: url)
-        let dest = URL.documents.appendingPathComponent("pairingfile.mobiledevicepairing")
+        let dest = AppPaths.pairingFile
         try raw.write(to: dest, atomically: true, encoding: .utf8)
         pairingFileRaw = raw
         pairingFileURL = dest.path
@@ -220,7 +241,7 @@ struct PoCView: View {
 
     func startMinimuxer() {
         guard let pairingFileRaw else { return }
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].path(percentEncoded: false)
+        let docs = URL.documents.path(percentEncoded: false)
         DispatchQueue.global(qos: .userInitiated).async {
             // SideStore-style pre-start guard: the LocalDevVPN tunnel routes to
             // the emulated peer (10.7.0.1:62078). Probe the tunnel first so the
@@ -290,14 +311,14 @@ struct PoCView: View {
                     readyStage.done("ready=\(isReady) after \(poll) poll(s)")
                     PoCEngine.shared.log("minimuxer started. ready=\(isReady)")
                     if !isReady {
-                        let tail = Self.minimuxerLogTail()
+                        let tail = RustLog.tail()
                         PoCEngine.shared.log("minimuxer.log tail:\n\(tail)")
                         DispatchQueue.main.async {
                             errorText = "minimuxer started but never became ready.\n\nLast minimuxer.log lines:\n\(tail)"
                         }
                     }
                 } catch {
-                    let tail = Self.minimuxerLogTail()
+                    let tail = RustLog.tail()
                     PoCEngine.shared.log("minimuxer.log tail:\n\(tail)")
                     DispatchQueue.main.async {
                         errorText = "\(error.localizedDescription)\n\nLast minimuxer.log lines:\n\(tail)"
@@ -305,19 +326,6 @@ struct PoCView: View {
                 }
             }
         }
-    }
-
-    // minimuxer writes <docs>/minimuxer.log; print the last lines so a
-    // stopping point (e.g. "Couldn't get UDID" = bad pairing file) is visible
-    // directly in the UI instead of a bare MinimuxerError number.
-    static func minimuxerLogTail(_ lines: Int = 30) -> String {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let url = docs.appendingPathComponent("minimuxer.log")
-        guard let data = try? String(contentsOf: url, encoding: .utf8) else {
-            return "(no minimuxer.log at \(url.path))"
-        }
-        let parts = data.split(separator: "\n")
-        return parts.suffix(lines).joined(separator: "\n")
     }
 
     // Parse the pairing file plist and return its top-level keys. minimuxer's
@@ -355,6 +363,10 @@ struct PoCView: View {
                 } else {
                     try await PoCEngine.shared.runPoC(bundleID: bundleID, fileName: fileName, contents: contents)
                 }
+            } catch let failure as TransportFailure where failure.isCancellation {
+                // Stopping on purpose is not a failure — say so, and do not let it
+                // read like the device did something wrong.
+                PoCEngine.shared.log("⏹ run stopped by the user (\(failure.label))")
             } catch {
                 PoCEngine.shared.log("❌ \(error.localizedDescription)")
             }

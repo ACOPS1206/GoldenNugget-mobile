@@ -172,8 +172,21 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
         // simplest way to guarantee a valid lifetime for a once-per-process
         // init without touching Rust-owned memory.
         let cPath = strdup(path)
+        // console: Error, file: Debug.
+        //
+        // The file level is what carries the evidence (the DeviceLink
+        // conversation and jktcp's flow verdict are both DEBUG), so it stays.
+        // The console level used to be Debug as well, which meant every line was
+        // written twice — and jktcp logs one line per out-of-order segment from
+        // the thread that has to drain the socket.  Measured on 2026-09-19: a
+        // 2.46 MB burst produced 2402 lines in 45.6 ms, i.e. ~53k writes/s, while
+        // the same thread also had to drain a 54 MB/s burst.  Dropping the
+        // console sink removes none of the evidence and halves that write work.
+        // (On iOS the console sink goes nowhere anyway — `setLogging()` would
+        // have installed console=Error itself if the logger had not already been
+        // latched by this call.)
         let result = idevice_init_logger(
-            IdeviceLogLevel(rawValue: 4),   // console: Debug
+            IdeviceLogLevel(rawValue: 1),   // console: Error (was Debug — see above)
             IdeviceLogLevel(rawValue: 4),   // file:    Debug
             cPath
         )
@@ -676,6 +689,52 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
         } else {
             return try performWithTcpService(connect: connectLockdown, cleanup: cleanup, serviceName: serviceName, action: action)
         }
+    }
+
+    /// Ask lockdown for the device UDID **without touching any shared state**.
+    ///
+    /// Deliberately not `fetchUDID()` / `performWithService`: both call
+    /// `invalidateConnection()` when a connect fails, which frees the RSD
+    /// adapter — and clients created from that adapter keep using it
+    /// (`mountPersonalizedDdiRsd` hands `adapter` to a second FFI call from
+    /// inside a service action).  This probe exists for exactly one situation:
+    /// a long mobilebackup2 call is parked and the app wants to know whether the
+    /// device is still there.  Freeing the adapter underneath that call to
+    /// answer the question would defeat the purpose.
+    ///
+    /// It reuses the live adapter+handshake and opens a second lockdown service
+    /// connection on the same RSD session (the same thing the diagnostics block
+    /// has always done), asks one question, and closes it.  Any failure is
+    /// simply "false" — nothing is invalidated, nothing is retried.
+    public func probeLockdownAlive() -> Bool {
+        guard pairingFileType == .rppairing else {
+            // usbmuxd path: probing it would build a whole new connection, which
+            // is the opposite of read-only. Report "unknown" to the caller.
+            return true
+        }
+        guard let adapter = adapter, let handshake = handshake else {
+            debugLog("[IdeviceGateway] probeLockdownAlive() no live adapter/handshake to probe")
+            return false
+        }
+        var client: OpaquePointer? = nil
+        let connectErr = lockdownd_connect_rsd(adapter, handshake, &client)
+        if let connectErr = connectErr {
+            safeFreeError(connectErr)
+            debugLog("[IdeviceGateway] probeLockdownAlive() lockdownd_connect_rsd failed — device not answering")
+            return false
+        }
+        guard let client = client else { return false }
+        defer { lockdownd_client_free(client) }
+
+        var value: plist_t? = nil
+        let valErr = lockdownd_get_value(client, "UniqueDeviceID", nil, &value)
+        if let valErr = valErr {
+            safeFreeError(valErr)
+            debugLog("[IdeviceGateway] probeLockdownAlive() lockdownd_get_value failed")
+            return false
+        }
+        safeFreePlist(value)
+        return true
     }
 
     private func syncFetchUDID() throws -> String? {
@@ -2476,7 +2535,8 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
         sourceIdentifier: String,
         shouldReboot: Bool,
         systemFiles: Bool,
-        onProgress: (@Sendable (Double) -> Void)?
+        onProgress: (@Sendable (Double) -> Void)?,
+        delegateLog: (@Sendable (String) -> Void)? = nil
     ) throws {
         debugLog("[IdeviceGateway] syncRestoreBackup() called, backupRoot: \(backupRoot), source: \(sourceIdentifier)")
         try performWithService(
@@ -2484,7 +2544,13 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
             cleanup: mobilebackup2_client_free,
             serviceName: "mobilebackup2"
         ) { client in
-            let ctx = MobileBackup2BackupContext(onProgress: onProgress)
+            // A restore asks the host for file after file. Every "no" the host
+            // answers with (missing file, unreadable file, refused rename) is a
+            // `noteDelegateError`, and the device answers a refusal by waiting
+            // or by failing the batch — but with `onEvent` nil those refusals
+            // were never reported anywhere, so a restore that silently restored
+            // nothing looked exactly like a restore that was merely slow.
+            let ctx = MobileBackup2BackupContext(onProgress: onProgress, onEvent: delegateLog)
             var delegate = makeRestoreDelegate(context: ctx)
             defer { withExtendedLifetime(ctx) {} }
 
@@ -2502,6 +2568,11 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
 
             var response: plist_t? = nil
             let err = mobilebackup2_restore(client, rootC, sourceC, options, &delegate, &response)
+            // Same ordering as the backup path: the host-side accounting is the
+            // only evidence of what the device actually asked for and what the
+            // host answered, so it goes out before any error is raised.
+            delegateLog?(ctx.errorSummary())
+            delegateLog?(ctx.commitSummary())
             if let err = err {
                 let msg = self.getErrorMessage(from: err)
                 debugLog("[IdeviceGateway] syncRestoreBackup() mobilebackup2_restore failed: \(msg)")
@@ -2528,6 +2599,9 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
     ///   - shouldPreserve: Optional mid-stream filter; `(device_name, file_name) -> Bool`.
     ///     Files for which it returns false are drained and never written to disk.
     ///   - onProgress: Optional progress callback (0-100).
+    ///   - delegateLog: Optional diagnostic sink for the host-side delegate
+    ///     decisions (commit/move accounting). Without it those decisions are
+    ///     invisible in the app log.
     /// - Returns: The final device response plist (an `[String: Any]` view), as a convenience.
     @discardableResult
     private func syncBackupBackup(
@@ -2535,7 +2609,8 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
         sourceIdentifier: String,
         factoryInfo: plist_t?,
         shouldPreserve: (@Sendable (String, String) -> Bool)? = nil,
-        onProgress: (@Sendable (Double) -> Void)? = nil
+        onProgress: (@Sendable (Double) -> Void)? = nil,
+        delegateLog: (@Sendable (String) -> Void)? = nil
     ) throws -> [String: Any] {
         debugLog("[IdeviceGateway] syncBackupBackup() called, backupRoot: \(backupRoot)")
         return try performWithService(
@@ -2545,7 +2620,9 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
         ) { client in
             let ctx = MobileBackup2BackupContext(
                 onProgress: onProgress,
-                shouldPreserve: shouldPreserve
+                shouldPreserve: shouldPreserve,
+                onEvent: delegateLog,
+                backupRoot: backupRoot
             )
             var delegate = makeRestoreDelegate(context: ctx)
             defer { withExtendedLifetime(ctx) {} }
@@ -2562,6 +2639,20 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
 
             var response: plist_t? = nil
             let err = mobilebackup2_backup(client, rootC, sourceC, options, factoryInfo, &delegate, &response)
+            // Report the commit accounting before doing anything else: the
+            // device ends the run with one DLMessageMoveItems batch, and a
+            // shortfall there is what it reports as MBErrorDomain/104. These
+            // numbers are the only host-side evidence of what happened.
+            delegateLog?(ctx.commitSummary())
+            // The 0-byte stand-ins for filtered payloads must outlive the whole
+            // exchange: the device validates the backup tree against the
+            // Manifest.db it uploaded before it answers, and a payload that is
+            // missing there ends the run with MBErrorDomain/205 "Manifest
+            // references files not in backup". Only now is it safe to remove
+            // them (pymobiledevice3's `cleanup_discarded_files()` runs in the
+            // same place — a `finally` right after `dl_loop()`).
+            let standInsRemoved = ctx.cleanupPlaceholders()
+            delegateLog?(ctx.placeholderSummary(removed: standInsRemoved))
             if let err = err {
                 let msg = self.getErrorMessage(from: err)
                 debugLog("[IdeviceGateway] syncBackupBackup() mobilebackup2_backup failed: \(msg)")
@@ -2775,7 +2866,8 @@ extension IdeviceGateway {
         sourceIdentifier: String,
         shouldReboot: Bool = false,
         systemFiles: Bool = true,
-        onProgress: (@Sendable (Double) -> Void)? = nil
+        onProgress: (@Sendable (Double) -> Void)? = nil,
+        delegateLog: (@Sendable (String) -> Void)? = nil
     ) async throws {
         try await withFFIDispatch {
             try self.syncRestoreBackup(
@@ -2783,7 +2875,8 @@ extension IdeviceGateway {
                 sourceIdentifier: sourceIdentifier,
                 shouldReboot: shouldReboot,
                 systemFiles: systemFiles,
-                onProgress: onProgress
+                onProgress: onProgress,
+                delegateLog: delegateLog
             )
         }
     }
@@ -2805,7 +2898,8 @@ extension IdeviceGateway {
         sourceIdentifier: String,
         skipAppContainers: Bool = false,
         shouldPreserve: (@Sendable (String, String) -> Bool)? = nil,
-        onProgress: (@Sendable (Double) -> Void)? = nil
+        onProgress: (@Sendable (Double) -> Void)? = nil,
+        delegateLog: (@Sendable (String) -> Void)? = nil
     ) async throws -> [String: Any] {
         try await withFFIDispatch {
             var factoryInfo: plist_t? = nil
@@ -2822,7 +2916,8 @@ extension IdeviceGateway {
                 sourceIdentifier: sourceIdentifier,
                 factoryInfo: factoryInfo,
                 shouldPreserve: shouldPreserve,
-                onProgress: onProgress
+                onProgress: onProgress,
+                delegateLog: delegateLog
             )
         }
     }

@@ -8,7 +8,10 @@ struct PoCApp: App {
         // (em_proxy at 127.0.0.1:51820) when no LocalDevVPN-style tunnel
         // (NEPacketTunnelProvider with iface 10.7.1.1) is already up.
         let tunnelUp = Tunnel.isInterfaceUp()
-        print("Tunnel status: \(Tunnel.describe()) — em_proxy \(tunnelUp ? "skipped (LocalDevVPN active)" : "starting")")
+        // Goes through the app log rather than print(): on device the console is
+        // not reachable, and the tunnel verdict is the first thing a failed run
+        // needs to show in poc.log.
+        AppLog.write("Tunnel status: \(Tunnel.describe()) — em_proxy \(tunnelUp ? "skipped (LocalDevVPN active)" : "starting")")
         if !tunnelUp {
             let emproxy = Minimuxer.shared().emproxy
             emproxy.setHandshakeClient(host: "127.0.0.1", port: 51820, enabled: false)
@@ -16,7 +19,7 @@ struct PoCApp: App {
                 do {
                     try await emproxy.start(host: "127.0.0.1", port: 51820)
                 } catch {
-                    print("em_proxy failed to start: \(error)")
+                    AppLog.write("em_proxy failed to start: \(error)")
                 }
             }
         }
