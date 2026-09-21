@@ -261,7 +261,12 @@ fi
 
 [[ -f "$DEST" ]] || { echo "error: no $DEST to replace" >&2; exit 1; }
 STAMP="$(date +%Y%m%d-%H%M%S)"
-BACKUP="$REPO/Vendor/patches/libidevice_ffi.a.$STAMP"
+# Outside the repo tree: these archives are 70-190 MB, `Vendor/patches/` is
+# tracked, and GitHub rejects any push carrying a file over 100 MB.  `.backups/`
+# is gitignored.
+BACKUP_DIR="$REPO/.backups"
+mkdir -p "$BACKUP_DIR"
+BACKUP="$BACKUP_DIR/libidevice_ffi.a.$STAMP"
 echo "==> backing up the current archive to $(basename "$BACKUP")"
 cp "$DEST" "$BACKUP"
 cp "$BUILT" "$DEST"

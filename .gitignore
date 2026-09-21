@@ -13,3 +13,12 @@ xcuserdata/
 # local Rust toolchain + upstream idevice checkout used by
 # scripts/build-idevice-ios.sh (keeps ~/.cargo and ~/.rustup untouched)
 .rust/
+
+# Pre-patch copies of the vendored archive, written by
+# scripts/build-idevice-ios.sh --install and
+# scripts/patch-idevice-target-identifier.sh.  They are 70-190 MB each and a
+# push carrying one is rejected outright by GitHub's 100 MB limit — which is
+# exactly how five commits got stuck on 2026-09-21.  Keep them out of the tree;
+# the scripts write them to .backups/ now.
+.backups/
+Vendor/patches/libidevice_ffi.a.*

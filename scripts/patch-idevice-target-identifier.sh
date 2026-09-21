@@ -50,10 +50,12 @@
 # (reachable now that scripts/build-idevice-ios.sh can rebuild the archive).
 # Revert with `--revert` once that lands.
 #
-# `libidevice_ffi.a.orig` is the pristine shipped binary and is git-tracked; it
-# is NOT the revert target.  --revert restores $BAK, the archive as it was
-# immediately before this script patched it (which may already carry other
-# patches, e.g. the jktcp rebuild).
+# The pristine shipped binary used to be tracked as
+# `Vendor/patches/libidevice_ffi.a.orig` and is NOT the revert target; it left
+# git on 2026-09-21 (88 MB of history, and its 187 MB `pre-targetid` sibling was
+# rejected outright by GitHub's 100 MB push limit).  --revert restores $BAK, the
+# archive as it was immediately before this script patched it (which may already
+# carry other patches, e.g. the jktcp rebuild) — backups live in `.backups/` now.
 #
 # SUPERSEDED 2026-09-19 -- do not run this against a rebuilt archive.
 #
@@ -73,7 +75,13 @@ set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 LIB="$ROOT/Vendor/IDevice.xcframework/ios-arm64/libidevice_ffi.a"
-BAK="$ROOT/Vendor/patches/libidevice_ffi.a.pre-targetid"
+# Backups go OUTSIDE the repo tree: they are 70-190 MB and a push carrying one is
+# refused by GitHub.  `Vendor/patches/` is tracked, so writing there is what put
+# five commits in this state on 2026-09-21.  `.backups/` is gitignored.
+BAK="$ROOT/.backups/libidevice_ffi.a.pre-targetid"
+# Where the file sat until 2026-09-21 — still read for --revert so a checkout
+# from before the move can undo the patch.
+LEGACY_BAK="$ROOT/Vendor/patches/libidevice_ffi.a.pre-targetid"
 
 FROM='SourceIdentifier'
 TO='TargetIdentifier'
@@ -86,9 +94,11 @@ count() {
 }
 
 revert() {
-    [ -f "$BAK" ] || { echo "error: no backup at $BAK -- nothing to revert to" >&2; exit 1; }
-    cp "$BAK" "$LIB"
-    echo "reverted: $(basename "$LIB") restored from $BAK"
+    src="$BAK"
+    [ -f "$src" ] || src="$LEGACY_BAK"
+    [ -f "$src" ] || { echo "error: no backup at $BAK or $LEGACY_BAK -- nothing to revert to" >&2; exit 1; }
+    cp "$src" "$LIB"
+    echo "reverted: $(basename "$LIB") restored from $src"
     echo "  $FROM=$(count "$FROM" "$LIB")  $TO=$(count "$TO" "$LIB")"
 }
 
