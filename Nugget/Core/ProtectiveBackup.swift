@@ -78,7 +78,6 @@ enum ProtectiveBackup {
                 try await StallGuard.run(
                     label: "protective backup",
                     idleSeconds: 120,
-                    maxIdleSeconds: 300,
                     idle: { trace.lastActivityAt },
                     wire: { WireCensus.totals() },
                     probe: { await Diagnostics.deviceLivenessProbe() },
@@ -280,5 +279,114 @@ extension ProtectiveBackup {
             }
         }
         return n
+    }
+}
+
+// MARK: - The protective keep-set in MANIFEST coordinates
+//
+// A port of GoldenNugget's `_is_protective_file` / `_keep_protective_entry`
+// (`src/restore/protective.py`), which is the keep-set the PRUNE uses — called
+// with production's arguments, `include_photos: true` and
+// `include_keychain: false` (see `clean_backup_for_restore`'s only real caller).
+//
+// Two predicates exist on purpose, in both codebases: `isProtectiveFile` above
+// matches a **device-side upload name** and drives the mid-stream filter, while
+// this one matches the `(domain, relativePath)` pair a **Manifest.db row**
+// carries and drives the prune.  They are not interchangeable — the whole reason
+// this port exists is that the prune used to have no predicate at all and used
+// "the payload is on disk" as a proxy for one.
+
+extension ProtectiveBackup {
+    /// Domains whose rows are kept whole.
+    private static let protectiveDomains: Set<String> = [
+        "CameraRollDomain",   // actual photos and videos (DCIM/)
+        "MediaDomain",        // photo metadata (PhotoData/), PhotoStream, other media
+        "MessagesDomain",     // iMessage / SMS / MMS
+    ]
+
+    /// HomeDomain prefixes holding Apple ID account data and user settings.
+    private static let appleIDPrefixes = [
+        "Library/Accounts",               // Accounts3.sqlite
+        "Library/ConfigurationProfiles",  // configuration profiles
+        "Library/Preferences",            // user settings (dark mode, wallpaper, …)
+    ]
+    /// SpringBoard's home-screen layout and icon state.
+    private static let springBoardPrefixes = ["Library/SpringBoard"]
+    /// Control Center module layout — not covered by the prefix above.
+    private static let controlCenterPrefixes = ["Library/ControlCenter"]
+    /// The Shortcuts app's own store.
+    private static let shortcutsPrefixes = ["Library/Shortcuts"]
+    /// Safari "Add to Home Screen" web clips, and the PWA data that rides along.
+    private static let webClipsPrefixes = ["Library/WebClips"]
+    private static let webAppPrefixes = ["Library/WebApp"]
+    private static let webkitWebsiteDataPrefixes = ["Library/WebKit/WebsiteData"]
+    /// The contacts database.
+    private static let addressBookPrefixes = ["Library/AddressBook"]
+
+    /// Inside the protective HomeDomain scope but written by the tweak pass
+    /// itself — restoring the stale copy would undo the applied tweak.
+    private static let skipPathPrefixes = ["Library/SpringBoard/statusBarOverrides"]
+
+    /// Files iOS manages internally and rejects when a sparse backup carries
+    /// them with the wrong metadata.  `.GlobalPreferences.plist` is written
+    /// separately by the tweak pass, so restoring a stale one would clobber it.
+    private static let skipFiles: Set<String> = [
+        "keychain-backup.plist",     // iOS validates the protection class, rejects flags=4
+        ".GlobalPreferences.plist",
+    ]
+
+    /// `_is_protective_file(domain, relative_path, include_photos: true,
+    /// include_keychain: false)`.
+    static func isProtectiveEntry(domain: String, relativePath: String) -> Bool {
+        let filename = relativePath.split(separator: "/").last.map(String.init) ?? relativePath
+        // `keychain-backup.plist` is only let through when the backup is
+        // encrypted, which `include_keychain` encodes — and it is false here, the
+        // same as GoldenNugget's production call.
+        if skipFiles.contains(filename) { return false }
+
+        if domain == "HomeDomain" {
+            for prefix in skipPathPrefixes where startsWith(relativePath, prefix) { return false }
+            let groups = [appleIDPrefixes, springBoardPrefixes, controlCenterPrefixes,
+                          shortcutsPrefixes, webClipsPrefixes, webAppPrefixes,
+                          webkitWebsiteDataPrefixes, addressBookPrefixes]
+            for group in groups {
+                for prefix in group where startsWith(relativePath, prefix) { return true }
+            }
+            return false
+        }
+
+        return protectiveDomains.contains(domain)
+    }
+
+    /// `_keep_protective_entry` — the row-level wrap.
+    static func keepsRow(domain: String, relativePath: String) -> Bool {
+        if !domain.isEmpty, !relativePath.isEmpty,
+           isProtectiveEntry(domain: domain, relativePath: relativePath)
+            || domain == "SystemPreferencesDomain" {
+            return true
+        }
+        // The domain ROOT row.  GoldenNugget's comment: "without it the restore
+        // agent may skip the whole domain".
+        if relativePath.isEmpty,
+           domain == "SystemPreferencesDomain" || domain == "MessagesDomain" {
+            return true
+        }
+        return false
+    }
+
+    /// Python's `str.startswith(prefix)` — a plain prefix test, deliberately
+    /// WITHOUT a path-boundary check.
+    ///
+    /// A first version added `path == prefix || path.hasPrefix(prefix + "/")`,
+    /// which is the tidier rule and is NOT what the reference does: GoldenNugget
+    /// writes `relative_path.startswith(...)`, so `Library/SpringBoardX/Foo`
+    /// matches `Library/SpringBoard`.  A differential run over 34,936 real
+    /// `(domain, relativePath)` pairs from an actual device backup found exactly
+    /// that one disagreement — and the direction matters.  A prune that keeps a
+    /// path it did not have to keep is harmless; one that drops a path the
+    /// device expects is what produces MBErrorDomain/205.  So the loose test is
+    /// also the safe one, and matching the reference beats improving it.
+    private static func startsWith(_ path: String, _ prefix: String) -> Bool {
+        path.hasPrefix(prefix)
     }
 }

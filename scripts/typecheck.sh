@@ -40,15 +40,27 @@ if [[ -z "$PRODUCTS" || ! -d "$PRODUCTS/Minimuxer.swiftmodule" ]]; then
 fi
 echo "modules: $PRODUCTS"
 
-# Source list comes from Package.swift so it cannot drift from the real target.
+# The source list is whatever SwiftPM resolves for the target — the same call
+# scripts/sync-pbxproj-sources.py uses to reconcile the Xcode project, so the
+# two cannot disagree.  It used to be scraped out of Package.swift with a regex
+# for ".swift" literals, which silently returned an EMPTY list once the manifest
+# declared its sources as a directory — and an empty list type-checks clean.
 python3 - > /tmp/typecheck-sources.txt <<'PY'
-import re, pathlib
-src = pathlib.Path("Package.swift").read_text()
-for p in sorted(set(re.findall(r'"([^"]+\.swift)"', src))):
-    print(p)
+import importlib.util
+spec = importlib.util.spec_from_file_location(
+    "sync_pbxproj", "scripts/sync-pbxproj-sources.py")
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print("\n".join(mod.resolved_sources()))
 PY
 
-echo "type-checking $(wc -l < /tmp/typecheck-sources.txt) sources against $SDK"
+n=$(wc -l < /tmp/typecheck-sources.txt | tr -d ' ')
+if (( n < 10 )); then
+  echo "error: SwiftPM resolved only $n source(s) — refusing to report a clean gate" >&2
+  exit 2
+fi
+
+echo "type-checking $n sources against $SDK"
 
 # Staleness guard.  The gate reads the .swiftmodule files, not the vendored
 # sources, so a Vendor/ edit that has not been rebuilt shows up as a phantom

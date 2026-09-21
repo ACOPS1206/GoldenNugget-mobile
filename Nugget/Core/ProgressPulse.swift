@@ -68,6 +68,7 @@ final class Heartbeat: @unchecked Sendable {
 final class PercentThrottle: @unchecked Sendable {
     private let lock = NSLock()
     private var lastStep = -1
+    private var lastPct: Double = -1
     private var lastActivity = Date()
 
     /// Timestamp of the last progress sample; see `StallGuard.run`.
@@ -76,11 +77,23 @@ final class PercentThrottle: @unchecked Sendable {
         return lastActivity
     }
 
+    /// The most recent value the device reported; -1 when it never reported one.
+    ///
+    /// Distinct from the value `livenessLine()` prints: that one is the last 5 %
+    /// *step* crossed, so a run ending at 55 % and one ending at 59 % read the
+    /// same ("≥55%").  The exit line needs the real number — the whole point of
+    /// this type is that the log must be able to state what actually happened.
+    var lastPercent: Double {
+        lock.lock(); defer { lock.unlock() }
+        return lastPct
+    }
+
     /// - Returns: the new 5 % step the first time it is crossed, else nil.
     func step(_ pct: Double) -> Int? {
         lock.lock()
         defer { lock.unlock() }
         lastActivity = Date()
+        lastPct = pct
         guard pct >= 0 else { return nil }
         let step = Int(pct / 5) * 5
         guard step > lastStep else { return nil }

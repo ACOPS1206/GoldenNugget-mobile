@@ -104,6 +104,40 @@ public final class MobileBackup2BackupContext: @unchecked Sendable {
     private var delegateErrorSamples: [String] = []
     private var reportedDiskSpace = false
 
+    // ── Files the device actually took ───────────────────────────────────────
+    //
+    // A restore moves payloads host → device through `open_file_read`, and only
+    // the FAILURES of that callback were ever counted.  So "how much was
+    // restored" had no number behind it: the only progress the host had was the
+    // device's own percentage, which is precisely the figure that cannot be
+    // trusted when the device stops early (a 55 % restore and a 100 % restore
+    // both end with a clean exchange and no error).  Counting the files the
+    // device pulled turns that into a fact the log can state.
+    private let servedLock = NSLock()
+    private var servedFiles = 0
+    private var servedBytes: UInt64 = 0
+
+    func noteServedFile(bytes: Int) {
+        servedLock.lock()
+        servedFiles += 1
+        servedBytes += UInt64(max(0, bytes))
+        servedLock.unlock()
+    }
+
+    func servedFileCount() -> Int {
+        servedLock.lock()
+        defer { servedLock.unlock() }
+        return servedFiles
+    }
+
+    func servedSummary() -> String {
+        servedLock.lock()
+        let files = servedFiles
+        let bytes = servedBytes
+        servedLock.unlock()
+        return "device pulled \(files) file(s) from the host (\(bytes / 1024) KB)"
+    }
+
     func noteDelegateError(_ kind: String, _ detail: String) {
         errorLock.lock()
         delegateErrors += 1
@@ -449,6 +483,7 @@ private func mb2_open_file_read(
         return fail(c, "open_file_read", "no such file: \(pathStr)", code: -6)
     }
     if data.isEmpty {
+        c.noteServedFile(bytes: 0)
         outData.pointee = nil
         outLen.pointee = 0
         return nil
@@ -456,6 +491,7 @@ private func mb2_open_file_read(
     let buf = malloc(data.count)
     guard let buf = buf else { return fail(c, "open_file_read", "out of memory reading \(pathStr)") }
     data.copyBytes(to: buf.assumingMemoryBound(to: UInt8.self), count: data.count)
+    c.noteServedFile(bytes: data.count)
     outData.pointee = buf.assumingMemoryBound(to: UInt8.self)
     outLen.pointee = UInt(data.count)
     return nil

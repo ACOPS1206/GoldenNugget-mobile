@@ -16,7 +16,7 @@ struct PoCView: View {
     @State var bundleID: String = "com.goldens.victim"
     @State var fileName: String = "poc.txt"
     @State var contents: String = "PoC: iOS 27 app container restore OK"
-    @State var partialOnly: Bool = true
+    @State var partialOnly: Bool = false
     @State var running: Bool = false
     @State var showPairingImporter: Bool = false
     @State var showTargetImporter: Bool = false

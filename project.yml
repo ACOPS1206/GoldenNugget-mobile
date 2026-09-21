@@ -1,3 +1,18 @@
+# XcodeGen manifest for PoC.xcodeproj.
+#
+# XcodeGen is NOT installed here, so this file cannot be run locally and
+# project.pbxproj cannot be regenerated from it.  It is kept as the statement of
+# intent for the project, and `- path: Nugget` below is deliberately the same
+# source root Package.swift declares.
+#
+# Package.swift is the single source of truth for the source list.  After adding
+# or removing a file under Nugget/, run:
+#
+#     scripts/sync-pbxproj-sources.py
+#
+# which asks SwiftPM what the target resolves and reconciles project.pbxproj to
+# match.  If XcodeGen ever becomes available, regenerating from this file and
+# then running that script must leave project.pbxproj unchanged.
 name: PoC
 options:
   bundleIdPrefix: com.awesomenull

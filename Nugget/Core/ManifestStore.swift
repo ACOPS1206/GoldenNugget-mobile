@@ -140,16 +140,33 @@ struct ManifestStore {
     /// What `pruneToDiskState()` did, for the log line and for callers that want
     /// to react to a shortfall.
     struct PruneReport {
+        /// Every row in the table before the rewrite.
         let rows: Int
+        /// Rows the keep-set named AND that have a payload (or need none).
         let kept: Int
+        /// Rows the keep-set named but that have no payload on disk.  Dropped,
+        /// like GoldenNugget does — a file row without a payload is exactly what
+        /// the device reports as `MBErrorDomain/205`.
+        let missingPayloads: Int
         let orphansRemoved: Int
-        var dropped: Int { rows - kept }
+        /// Flags histogram of the rows that survived, e.g. `1×471 2×16695`.
+        /// `flags` is the value the device reads a "file type" out of, so what
+        /// survives matters as much as what is dropped.
+        let keptFlags: String
+
+        /// Rows outside the keep-set entirely.
+        var outsideKeepSet: Int { rows - kept - missingPayloads }
 
         var logLine: String {
-            "Pruned Manifest.db: \(dropped) of \(rows) row(s) dropped (no payload on disk), "
-                + "\(orphansRemoved) orphan payload file(s) removed. "
-                + "Dangling rows here are what the device reports as MBErrorDomain/205 "
-                + "(\"Manifest references files not in backup\")."
+            var line = "Pruned Manifest.db: \(kept) of \(rows) row(s) kept "
+                + "(\(missingPayloads) named by the keep-set but payload-less, "
+                + "\(outsideKeepSet) outside the keep-set), "
+                + "\(orphansRemoved) orphan payload file(s) removed."
+            line += " Kept rows by flags: \(keptFlags)."
+            if missingPayloads > 0 {
+                line += " A payload-less row is what the device reports as MBErrorDomain/205."
+            }
+            return line
         }
     }
 
@@ -185,6 +202,9 @@ struct ManifestStore {
         var stmt: OpaquePointer?
         var keepIDs: [String] = []
         var rowCount = 0
+        var payloadLess = 0
+        var payloadLessSample: [String] = []
+        var keptFlags: [Int32: Int] = [:]
 
         guard sqlite3_exec(db, "BEGIN", nil, nil, nil) == SQLITE_OK else {
             AppLog.write("Prune Manifest.db: could not begin a transaction — skipped")
@@ -198,23 +218,53 @@ struct ManifestStore {
             }
         }
 
-        // Phase 1: collect File rows whose payload file is present on disk.
-        // Directory rows (flags == 2) never have a payload, so they are kept
-        // unconditionally.
-        if sqlite3_prepare_v2(db, "SELECT fileID, flags FROM Files", -1, &stmt, nil) == SQLITE_OK,
-           let stmt {
+        // Phase 1: apply the keep-set to every row.
+        //
+        // The keep-set is GoldenNugget's predicate on `(domain, relativePath)`
+        // — see `ProtectiveBackup.keepsRow`.  It used to be "the payload exists
+        // on disk", which answers a *different* question: it keeps a row the
+        // keep-set excludes as long as something was uploaded for it, and it
+        // drops a symlink row, whose payload never exists.  The reference
+        // resolves both by predicate, so this does too.
+        if sqlite3_prepare_v2(db, "SELECT fileID, domain, relativePath, flags FROM Files",
+                              -1, &stmt, nil) == SQLITE_OK, let stmt {
             defer { sqlite3_finalize(stmt) }
             while sqlite3_step(stmt) == SQLITE_ROW {
                 guard let cID = sqlite3_column_text(stmt, 0) else { continue }
-                let fileID = String(cString: cID)
-                let flags = sqlite3_column_int(stmt, 1)
                 rowCount += 1
-                if flags == 2 {
-                    keepIDs.append(fileID)
-                } else if FileManager.default.fileExists(atPath: payloadURL(forFileID: fileID).path) {
-                    keepIDs.append(fileID)
+                let fileID = String(cString: cID)
+                let domain = sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? ""
+                let relPath = sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? ""
+                let flags = sqlite3_column_int(stmt, 3)
+
+                guard ProtectiveBackup.keepsRow(domain: domain, relativePath: relPath) else {
+                    continue
                 }
+
+                // Only regular files carry a `<aa>/<fileID>` payload, so only
+                // they are subject to the payload test.  GoldenNugget spells the
+                // rule as `flags == 1 and not payload_exists`, and the flags it
+                // does NOT name are the reason: a directory row (2) must survive
+                // without a payload — "dropping them makes the restore agent fail
+                // with renameatx ENOENT" — and a symlink row (4) has no payload
+                // by definition and must survive all the same.
+                if flags == 1,
+                   !FileManager.default.fileExists(atPath: payloadURL(forFileID: fileID).path) {
+                    payloadLess += 1
+                    if payloadLessSample.count < 5 {
+                        payloadLessSample.append("\(domain)/\(relPath)")
+                    }
+                    continue
+                }
+                keepIDs.append(fileID)
+                keptFlags[flags, default: 0] += 1
             }
+        }
+
+        if payloadLess > 0 {
+            AppLog.write("Prune: dropping \(payloadLess) row(s) the keep-set named but that have no "
+                + "payload on disk (e.g. \(payloadLessSample.joined(separator: ", "))) — a file row "
+                + "without a payload is what the device reports as MBErrorDomain/205")
         }
 
         // Phase 2: rewrite the table against the keep set.
@@ -257,9 +307,170 @@ struct ManifestStore {
 
         let orphansRemoved = removeOrphanPayloads(keepIDs: Set(keepIDs))
 
-        let report = PruneReport(rows: rowCount, kept: keepIDs.count, orphansRemoved: orphansRemoved)
+        let histogram = keptFlags.sorted { $0.key < $1.key }
+            .map { "\($0.key)×\($0.value)" }
+            .joined(separator: " ")
+        let report = PruneReport(rows: rowCount, kept: keepIDs.count,
+                                 missingPayloads: payloadLess,
+                                 orphansRemoved: orphansRemoved,
+                                 keptFlags: histogram.isEmpty ? "(none)" : histogram)
         AppLog.write(report.logLine)
         return report
+    }
+
+    /// One line describing exactly what the host is about to hand the device.
+    ///
+    /// The device restores what `Manifest.db` says and fails the run when the two
+    /// disagree ("Manifest references files not in backup"), but the host never
+    /// had a consolidated view of its own tree — the detail was spread across the
+    /// prune, inject and placeholder lines, each counting something different.
+    /// This is that view, taken immediately before the restore.
+    ///
+    /// `missingPayloads` is the number that matters.  Non-zero means the host is
+    /// offering the device rows it cannot fulfil, which is the host-side shape of
+    /// a restore that stops short: the device plans work it will never get the
+    /// bytes for.  Directory rows (`flags == 2`) **and symlink rows
+    /// (`flags == 4`)** have no payload by definition and are counted separately
+    /// so they cannot mask a real gap — and so they do not *look* like one.
+    ///
+    /// The symlink half is not cosmetic: `pruneToDiskState` deliberately keeps
+    /// `flags == 4` rows payload-less (GoldenNugget parity), so counting them as
+    /// missing made this line report `INCONSISTENT` on a backup that was
+    /// perfectly consistent.  The 2026-09-21 run said "2 missing their payload";
+    /// both were the 2 surviving symlink rows (e.g. `ba6b3d08…` =
+    /// `HomeDomain/Library/Shortcuts/ToolKit/Tools-active`, `flags = 4` in the
+    /// device's own manifest).  A verdict that is always red carries no signal.
+    func auditAgainstDisk() -> String {
+        guard exists, let db = try? open() else {
+            return "pre-restore audit: no readable Manifest.db at \(dbPath)"
+        }
+        defer { sqlite3_close(db) }
+
+        var stmt: OpaquePointer?
+        // `file IS NULL OR length(file) = 0` is the third thing the device can
+        // read a "type" out of: a row whose blob is empty has no `Mode` at all.
+        guard sqlite3_prepare_v2(
+            db, "SELECT fileID, flags, (file IS NULL OR length(file) = 0), file FROM Files",
+            -1, &stmt, nil) == SQLITE_OK, let stmt else {
+            return "pre-restore audit: could not read Manifest.db"
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        var fileRows = 0
+        var dirRows = 0
+        var symlinkRows = 0
+        var missingPayloads = 0
+        var bloblessRows = 0
+        var unreadableModes = 0
+        var firstMissing: String?
+        var firstBlobless: String?
+        var firstUnreadable: String?
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let cID = sqlite3_column_text(stmt, 0) else { continue }
+            let fileID = String(cString: cID)
+            let flags = sqlite3_column_int(stmt, 1)
+            if sqlite3_column_int(stmt, 2) != 0 {
+                bloblessRows += 1
+                if firstBlobless == nil { firstBlobless = fileID }
+                continue
+            }
+            let count = sqlite3_column_bytes(stmt, 3)
+            guard count > 0, let raw = sqlite3_column_blob(stmt, 3) else { continue }
+            // Fourth thing the device reads a "type" out of, and the one that
+            // actually bit us: a `Mode` that is an object reference rather than
+            // an inline number makes `decodeIntegerForKey:` raise on the device,
+            // which answers "Invalid file type: 00".  Checked here so the log
+            // names it instead of leaving a 205 to be interpreted.
+            if mbFileBlobMode(Data(bytes: raw, count: Int(count))) == nil {
+                unreadableModes += 1
+                if firstUnreadable == nil { firstUnreadable = fileID }
+            }
+            if flags == 2 {
+                dirRows += 1
+                continue
+            }
+            if flags == 4 {
+                symlinkRows += 1
+                continue
+            }
+            fileRows += 1
+            if !FileManager.default.fileExists(atPath: payloadURL(forFileID: fileID).path) {
+                missingPayloads += 1
+                if firstMissing == nil { firstMissing = fileID }
+            }
+        }
+
+        // Both halves are reported: a row with a payload but no blob is just as
+        // unusable to the device as the reverse, and until now only the payload
+        // half was ever counted.
+        let verdict = (missingPayloads == 0 && bloblessRows == 0 && unreadableModes == 0)
+            ? "consistent"
+            : "INCONSISTENT — the device cannot restore these rows"
+        var line = "pre-restore audit: \(fileRows) file row(s), \(dirRows) directory row(s), "
+            + "\(symlinkRows) symlink row(s), \(missingPayloads) missing their payload, "
+            + "\(bloblessRows) with an empty file blob, \(unreadableModes) with an unreadable Mode "
+            + "— \(verdict)"
+        if let firstMissing { line += " (first payload-less: \(firstMissing))" }
+        if let firstBlobless { line += " (first blob-less: \(firstBlobless))" }
+        if let firstUnreadable { line += " (first unreadable Mode: \(firstUnreadable))" }
+        return line
+    }
+
+    /// Our injected row's `MBFile` shape next to the device's own.
+    ///
+    /// `MBErrorDomain/205 — "Invalid file type: 00"` (2026-09-20) came back after
+    /// the device had pulled 7 of the 471 payloads it was offered. `205` is a
+    /// class of error, not a cause, so the description is the only discriminator
+    /// — and "file type" points at the metadata the device decodes out of a
+    /// Files row's `file` blob. Rows this app did not write still carry the blob
+    /// the device uploaded, which makes them the reference. One sample of each is
+    /// enough: the comparison that matters is the key SET, and each side is
+    /// produced by exactly one code path.
+    ///
+    /// The key set alone is not sufficient: it matched for two runs while the
+    /// archived `Mode` was an object reference, which makes every
+    /// `decodeInteger`-family read on the device raise "not an integer number".
+    /// So the *shape* is printed beside the keys — see `mbFileBlobShape`.
+    ///
+    /// Returns one log line; call it once, right after injecting.
+    func blobKeySample(ours: String) -> String {
+        guard exists, let db = try? open() else {
+            return "blob keys: no readable Manifest.db at \(dbPath)"
+        }
+        defer { sqlite3_close(db) }
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT fileID, file FROM Files WHERE file IS NOT NULL",
+                                 -1, &stmt, nil) == SQLITE_OK, let stmt else {
+            return "blob keys: could not read Manifest.db"
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        var oursKeys: String?
+        var deviceKeys: String?
+        var oursShape: String?
+        var deviceShape: String?
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let cID = sqlite3_column_text(stmt, 0) else { continue }
+            let fileID = String(cString: cID)
+            let count = sqlite3_column_bytes(stmt, 1)
+            guard count > 0, let raw = sqlite3_column_blob(stmt, 1) else { continue }
+            let blob = Data(bytes: raw, count: Int(count))
+            let keys = mbFileBlobKeys(blob)
+            let shape = mbFileBlobShape(blob)
+            if fileID == ours {
+                oursKeys = keys
+                oursShape = shape
+            } else if deviceKeys == nil {
+                deviceKeys = keys
+                deviceShape = shape
+            }
+            if oursKeys != nil, deviceKeys != nil { break }
+        }
+        return "blob keys: ours=[\(oursKeys ?? "row not found")] "
+            + "device=[\(deviceKeys ?? "no other row to compare against")]"
+            + " | shape ours: \(oursShape ?? "-")"
+            + " | shape device: \(deviceShape ?? "-")"
     }
 
     /// Phase 3: remove payload files that no keep row references.

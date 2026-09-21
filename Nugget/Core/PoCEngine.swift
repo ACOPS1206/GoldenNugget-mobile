@@ -1,5 +1,21 @@
 import Foundation
 import Minimuxer
+import SwiftUI
+import Observation
+
+// `@Observable` is the iOS 17 Observation macro, and this target is iOS 16, so
+// the type has to be gated or the whole target stops compiling:
+//   error: 'Observable()' is only available in iOS 17.0 or newer
+//   error: 'ObservationRegistrar' is only available in iOS 17.0 or newer
+// Gating it keeps the macro (rather than rewriting it as ObservableObject) and
+// costs nothing while nothing uses the type.  If the deployment target is ever
+// raised to 17 — `IPHONEOS_DEPLOYMENT_TARGET` in project.yml plus `.iOS(.v17)`
+// in Package.swift — this attribute is the one line to delete.
+@available(iOS 17.0, *)
+@Observable
+class Status {
+    
+}
 
 /// An error whose message is meant for the operator, not for a stack trace.
 struct PoCError: Error, LocalizedError {
@@ -128,38 +144,18 @@ class PoCEngine {
         contents: String = "PoC: iOS 27 app container restore OK"
     ) async throws {
         AppLog.shared.memory.reset()
+        warnIfPreviousCallStillRunning()
         clearCancel()
         let runStage = StageTimer("RUN full backup→inject→restore")
         defer { runStage.done() }
 
-        let minimuxer = Minimuxer.shared()
-        guard await testReady(minimuxer) else {
-            throw PoCError("minimuxer is not ready. Ensure WiFi and a working tunnel (LocalDevVPN or WireGuard + em_proxy), then select a pairing file.")
-        }
-        guard !bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw PoCError("Enter a bundle identifier to target (e.g. com.apple.PosterBoard)")
-        }
-        guard let udid = try await minimuxer.core.fetchUDID() else {
-            throw PoCError("Could not fetch device UDID")
-        }
-        log("UDID: \(udid)")
-        log("Target bundle: \(bundleID)")
-        log("Tunnel: \(Tunnel.describe())")
-        try await Diagnostics.preflightBackupEncryption()
-        // Everything after this byte offset is this run's Rust output.
-        markRustLog()
-
-        let data = contents.data(using: .utf8) ?? Data(contents.utf8)
+        let (udid, data) = try await prepareRun(bundleID: bundleID, contents: contents)
         let backupRoot = AppPaths.fullBackupRoot(udid: udid)
-
-        // Clean previous backup
-        try? FileManager.default.removeItem(at: backupRoot)
-        try FileManager.default.createDirectory(at: backupRoot, withIntermediateDirectories: true)
+        try resetDirectory(backupRoot)
 
         // Stage 1: real protective backup
         try await ProtectiveBackup.run(backupRoot: backupRoot, udid: udid) { overall in
-            let pct = overall < 0 ? 0 : min(overall, 100)
-            self.log(String(format: "backup progress: %.0f%%", pct))
+            self.logProgress("backup progress", overall)
         }
         log("Protective backup complete.")
 
@@ -172,21 +168,11 @@ class PoCEngine {
             contents: data
         )
 
-        // Stage 4: restore (same transient channel-drop handling as the
-        // partial path — the device can drop the channel here too).
-        let code = try await ChannelRecovery.retry(
-            label: "restore",
-            attempts: 3,
-            diagnostics: { await Diagnostics.report() }
-        ) {
-            try await RestoreRunner.run(backupRoot: backupRoot, sourceIdentifier: udid)
-        }
-
-        if code == 0 {
-            log("PoC restore succeeded (exit 0).")
+        // Stage 4: restore.  Same transient channel-drop handling as the
+        // partial path — the device can drop the channel here too.
+        try await runRestore(backupRoot: backupRoot, udid: udid, label: "restore") {
+            log("PoC restore succeeded: the device confirmed it finished.")
             log("If the device did NOT erase, iOS 27 app-container restores are safe.")
-        } else {
-            log("restore exited \(code). Inspect the log above.")
         }
     }
 
@@ -217,33 +203,14 @@ class PoCEngine {
         contents: String = "PoC: iOS 27 partial container restore OK"
     ) async throws {
         AppLog.shared.memory.reset()
+        warnIfPreviousCallStillRunning()
         clearCancel()
         let runStage = StageTimer("RUN partial restore")
         defer { runStage.done() }
 
-        let minimuxer = Minimuxer.shared()
-        guard await testReady(minimuxer) else {
-            throw PoCError("minimuxer is not ready. Ensure WiFi and a working tunnel (LocalDevVPN or WireGuard + em_proxy), then select a pairing file.")
-        }
-        guard !bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw PoCError("Enter a bundle identifier to target (e.g. com.apple.PosterBoard)")
-        }
-        guard let udid = try await minimuxer.core.fetchUDID() else {
-            throw PoCError("Could not fetch device UDID")
-        }
-        log("UDID: \(udid)")
-        log("Target bundle: \(bundleID)")
-        log("Tunnel: \(Tunnel.describe())")
-        try await Diagnostics.preflightBackupEncryption()
-        // Everything after this byte offset is this run's Rust output.
-        markRustLog()
-
-        let data = contents.data(using: .utf8) ?? Data(contents.utf8)
+        let (udid, data) = try await prepareRun(bundleID: bundleID, contents: contents)
         let backupRoot = AppPaths.partialBackupRoot(udid: udid)
-
-        // Clean previous partial backup
-        try? FileManager.default.removeItem(at: backupRoot)
-        try FileManager.default.createDirectory(at: backupRoot, withIntermediateDirectories: true)
+        try resetDirectory(backupRoot)
 
         // Stage 0b: LIGHT protective backup.  On iOS 27 the restore daemon
         // refuses a mobilebackup2 restore from an un-authorized session and
@@ -254,8 +221,7 @@ class PoCEngine {
         // it is fast — then we keep only its protective keep-set and add the
         // injected file on top.
         try await ProtectiveBackup.run(backupRoot: backupRoot, udid: udid) { overall in
-            let pct = overall < 0 ? 0 : min(overall, 100)
-            self.log(String(format: "protective backup progress: %.0f%%", pct))
+            self.logProgress("protective backup progress", overall)
         }
         log("Light protective backup complete — session authorized, popup handled.")
         // iOS 27 (and GN's restore_files) does NOT accept a synthetic file-only
@@ -287,8 +253,111 @@ class PoCEngine {
         // the mobilebackup2 channel mid-restore (SpringBoard restart ->
         // BrokenPipe "channel closed" / ConnectionTerminated); that is the
         // EXPECTED transient that GoldenNugget rides out (18x3s).  PoC: 3x3s.
+        try await runRestore(backupRoot: backupRoot, udid: udid, label: "partial restore") {
+            log("Partial restore succeeded: the device confirmed it finished.")
+            log("No full backup happened — if the device did NOT erase, iOS 27 accepts file-only 3.3 restores.")
+        }
+    }
+
+    // MARK: - Shared run plumbing
+    //
+    // `runPoC` and `runPartialRestore` used to carry their own copy of all of
+    // this — 26 of 29 preamble lines were byte-identical.  The sequence below is
+    // order-sensitive, so it lives in one place.
+
+    /// A run must not start on top of one that was cancelled but is still
+    /// running, and this makes that state visible.
+    ///
+    /// A blocking FFI call cannot be interrupted, so Stop only walks away from
+    /// it — and `clearCancel()` at the top of a run clears the very flag that
+    /// was going to make the abandoned call unwind. A second mobilebackup2
+    /// exchange started in that window is two sessions on one RSD adapter, which
+    /// is the hazard `InFlightCall` exists to record.
+    ///
+    /// This WARNS rather than blocks, deliberately. Blocking is the safer
+    /// default, but an abandoned call may never drain at all, which would turn
+    /// "press Stop" into "press Stop, then force-quit the app" — a worse failure
+    /// than the one it prevents. The state is logged instead, so it is never
+    /// invisible; flip it to `InFlightCall.waitUntilDrained(seconds:)` if that
+    /// trade ever looks wrong.
+    ///
+    /// Must run BEFORE `clearCancel()`: clearing first erases the signal the
+    /// previous run is still waiting on.
+    private func warnIfPreviousCallStillRunning() {
+        guard InFlightCall.shared.isBusy else { return }
+        log("⚠️ a previous device call is still running "
+            + "(\(InFlightCall.shared.abandonedDescription)) — starting a new run on top of it. "
+            + "If that call was cancelled it may still hold the session, so a failure from here that "
+            + "looks like a device problem may be two sessions sharing one RSD adapter: force-quit "
+            + "the app, then run again.")
+    }
+
+    /// Everything both flows do before touching the device.
+    ///
+    /// Returns the device UDID (needed to name the backup root) and the payload
+    /// already encoded.  Throws `PoCError` for the operator-facing failures.
+    private func prepareRun(
+        bundleID: String,
+        contents: String
+    ) async throws -> (udid: String, data: Data) {
+        let minimuxer = Minimuxer.shared()
+        guard await testReady(minimuxer) else {
+            throw PoCError("minimuxer is not ready. Ensure WiFi and a working tunnel (LocalDevVPN or WireGuard + em_proxy), then select a pairing file.")
+        }
+        guard !bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw PoCError("Enter a bundle identifier to target (e.g. com.apple.PosterBoard)")
+        }
+        guard let udid = try await minimuxer.core.fetchUDID() else {
+            throw PoCError("Could not fetch device UDID")
+        }
+        log("UDID: \(udid)")
+        log("Target bundle: \(bundleID)")
+        log("Tunnel: \(Tunnel.describe())")
+        try await Diagnostics.preflightBackupEncryption()
+        // Everything after this byte offset is this run's Rust output.
+        markRustLog()
+
+        return (udid, contents.data(using: .utf8) ?? Data(contents.utf8))
+    }
+
+    /// Start from an empty backup root.  Both flows need this: the manifest is
+    /// merged into, not replaced, so a leftover Manifest.db from a previous run
+    /// would leak its rows (and its pruned keep-set) into this one.
+    private func resetDirectory(_ url: URL) throws {
+        try? FileManager.default.removeItem(at: url)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    }
+
+    /// Clamp and throttle a Rust progress callback down to whole percent.
+    ///
+    /// The callback fires per file; logging every call appended thousands of
+    /// lines and pushed the interesting ones out of the UI list.
+    private func logProgress(_ prefix: String, _ overall: Double) {
+        let pct = overall < 0 ? 0 : min(overall, 100)
+        log(String(format: "\(prefix): %.0f%%", pct))
+    }
+
+    /// Stage 4: one mobilebackup2 restore, with the iOS-27 transient-channel
+    /// retry in front of it.
+    ///
+    /// `onSuccess` carries only the success wording — the two flows describe
+    /// their outcome differently, but the failure line is the same.
+    private func runRestore(
+        backupRoot: URL,
+        udid: String,
+        label: String,
+        onSuccess: () -> Void
+    ) async throws {
+        // Say what is being offered before offering it.  Every recorded "the
+        // restore said success but only part came back" run so far has had to be
+        // reconstructed from the prune / inject / placeholder lines after the
+        // fact; this puts the same numbers in one place, at the moment they are
+        // still actionable.
+        let deviceDir = AppPaths.deviceDir(backupRoot: backupRoot, udid: udid)
+        log(ManifestStore(deviceDir: deviceDir).auditAgainstDisk())
+
         let code = try await ChannelRecovery.retry(
-            label: "partial restore",
+            label: label,
             attempts: 3,
             diagnostics: { await Diagnostics.report() }
         ) {
@@ -296,10 +365,11 @@ class PoCEngine {
         }
 
         if code == 0 {
-            log("Partial restore succeeded (exit 0).")
-            log("No full backup happened — if the device did NOT erase, iOS 27 accepts file-only 3.3 restores.")
+            onSuccess()
         } else {
-            log("restore exited \(code). Inspect the log above.")
+            // Unreachable while RestoreRunner verifies its own outcome, but kept
+            // so a future path that stops doing so cannot fail silently.
+            log("restore returned \(code) without confirming completion — inspect the log above.")
         }
     }
 

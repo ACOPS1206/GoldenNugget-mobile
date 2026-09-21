@@ -12,17 +12,59 @@ import Foundation
 // `MBFile` blob that goes in a Files row, plus the data-protection extended
 // attribute the restore daemon expects on an app-container file.
 
-/// Default permission bits (0o755) for a synthetic record.
-let MODE_DEFAULT: UInt16 = UInt16(S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH)
+/// Permission bits for a synthetic record.
+///
+/// Measured against a known-good device backup of the same iPad
+/// (`MobileSync/Backup/00008130-001431082E40001C`), over 4000 `AppDomain-*`
+/// file rows: the mode is `0o100644` for 3283 of them (`0o100700` 574,
+/// `0o100600` 6, `0o100640` 4), and every directory row is `0o40755`.  A record
+/// the device did not write itself is the one place a wrong value here cannot
+/// be repaired by re-uploading, so it copies the common case exactly.
+let MODE_FILE_DEFAULT: UInt16 = 0o644
+let MODE_DIR_DEFAULT: UInt16 = 0o755
+
+/// The data-protection class the device puts on each kind of row.
+///
+/// Same measurement: 3283/4000 file rows are class 3 and 133 are class 4 —
+/// **not one is 0**, while every directory row is 0.  Both rows used to get 0.
+let PROTECTION_CLASS_FILE: Int = 3
+let PROTECTION_CLASS_DIR: Int = 0
 
 /// The `MBFile` object graph the device decodes out of a Files row's `file` blob.
 ///
 /// The `@objc` name is load-bearing: `NSKeyedArchiver` writes the class name
 /// into the archive and the device-side parser looks for `MBFile` literally.
+///
+/// The key set is copied from what the device itself writes, not from folklore:
+/// over the same 4000 `AppDomain-*` file rows, `InodeNumber` is present in
+/// **4000/4000** and `Digest` in **0/4000** (asymmetric `ExtendedAttributes` is
+/// legitimate — 1808/4000 carry it).  This used to be the exact opposite: a
+/// SHA1 `Digest` no iOS 27 row has, and no `InodeNumber` at all.
 @objc(MBFile) private class MBFileArchiver: NSObject, NSCoding {
     var relativePath: String = ""
-    var digest: Data?
-    var mode: UInt32 = 0
+
+    /// **An `Int`, never a `UInt32`, and the difference is not cosmetic.**
+    ///
+    /// `NSCoder` has no `UInt32` overload for `encode(_:forKey:)`, so a `UInt32`
+    /// silently takes the `Any?` overload: the number is boxed, the archiver
+    /// stores it as a `$objects` entry, and the key holds a **reference**
+    /// instead of an inline integer.  Every integer read path over such a blob
+    /// then fails — measured against the real `NSKeyedUnarchiver` (2026-09-21):
+    ///
+    ///     -[NSKeyedUnarchiver decodeInt64ForKey:]: value for key (Mode) is not
+    ///     an integer number        // decodeInteger / decodeInt32 / decodeInt64
+    ///                              // all raise; only decodeObject survives
+    ///
+    /// while every scalar in the device's own blobs is inline (`Mode` encoded as
+    /// a reference in **0 of 34918** rows).  A row whose `Mode` cannot be read
+    /// has no file type, and that is exactly the daemon's answer:
+    /// `MBErrorDomain/205 — "Invalid file type: 00"` — `00` being `%02x` of
+    /// `(mode & S_IFMT) >> 12` for a mode it read as zero.
+    ///
+    /// The key *set* never caught this (`mbFileBlobKeys` matched the device
+    /// exactly).  The *encoding* did, which is what `mbFileBlobShape` reports.
+    var mode: Int = 0
+
     var size: Int = 0
     var userID: Int = 501
     var groupID: Int = 501
@@ -33,7 +75,6 @@ let MODE_DEFAULT: UInt16 = UInt16(S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IXGR
     var flags: Int = 0
     var inodeNumber: Int = 0
     var extendedAttributes: Data?
-    var isDirectory: Bool = false
 
     override init() { super.init() }
 
@@ -50,21 +91,26 @@ let MODE_DEFAULT: UInt16 = UInt16(S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IXGR
         coder.encode(protectionClass, forKey: "ProtectionClass")
         coder.encode(size, forKey: "Size")
         coder.encode(relativePath, forKey: "RelativePath")
-        if isDirectory {
-            // A directory record has an inode but no digest and no xattrs.
-            coder.encode(inodeNumber, forKey: "InodeNumber")
-        } else {
-            if let digest { coder.encode(digest, forKey: "Digest") }
-            if let ea = extendedAttributes { coder.encode(ea, forKey: "ExtendedAttributes") }
-        }
+        // Unconditional, directories included: the device never omits it.
+        coder.encode(inodeNumber, forKey: "InodeNumber")
+        if let ea = extendedAttributes { coder.encode(ea, forKey: "ExtendedAttributes") }
     }
 }
 
 /// Build the archived `MBFile` blob for one manifest row.
-func buildMBFileBlob(relativePath: String, mode: UInt32, size: Int,
+///
+/// `mode` is an `Int` because the archived field has to come out as an inline
+/// integer — see `MBFileArchiver.mode`.  Callers compose it as
+/// `Int(MODE_FILE_DEFAULT) | Int(S_IFREG)`.
+///
+/// `timestamp` seeds all three time fields.  The device never writes 0 for any
+/// of them (`Birth` 0/34918, `LastModified` 0/34918, `LastStatusChange` 0/34918,
+/// earliest 1321453406), so neither does this.
+func buildMBFileBlob(relativePath: String, mode: Int, size: Int,
                      userID: Int = 501, groupID: Int = 501, protectionClass: Int = 0,
-                     inodeNumber: Int = 0, isDirectory: Bool = false,
-                     digest: Data? = nil, extendedAttributes: Data? = nil) -> Data {
+                     inodeNumber: Int = 0,
+                     timestamp: Int = Int(Date().timeIntervalSince1970),
+                     extendedAttributes: Data? = nil) -> Data {
     let obj = MBFileArchiver()
     obj.relativePath = relativePath
     obj.mode = mode
@@ -72,9 +118,10 @@ func buildMBFileBlob(relativePath: String, mode: UInt32, size: Int,
     obj.userID = userID
     obj.groupID = groupID
     obj.protectionClass = protectionClass
+    obj.birth = timestamp
+    obj.lastModified = timestamp
+    obj.lastStatusChange = timestamp
     obj.inodeNumber = inodeNumber
-    obj.isDirectory = isDirectory
-    obj.digest = digest
     obj.extendedAttributes = extendedAttributes
     NSKeyedArchiver.setClassName("MBFile", for: MBFileArchiver.self)
     // Force-try is safe here: the class name is registered on the line above and
@@ -83,11 +130,103 @@ func buildMBFileBlob(relativePath: String, mode: UInt32, size: Int,
     return try! NSKeyedArchiver.archivedData(withRootObject: obj, requiringSecureCoding: false)
 }
 
-/// The `com.apple.dataprotection.policy.exception-applied-by` attribute that
-/// lets SpringBoard write into the container being restored.
+/// The `com.apple.dataprotection.policy.exception-applied-by` attribute.
+///
+/// The value is the entity that applied the exception, and the device's own
+/// app-container rows name `com.apple.containermanagerd_system` — 3/3 sampled,
+/// on rows in the same `AppDomain-*` family this app injects into.  This used to
+/// say `com.apple.springboard`, which no sampled row carries; the caller's
+/// comment claimed that is what "lets SpringBoard write into the container",
+/// but the device's own records disagree, and they are the contract.
 func buildDataprotectionExtendedAttributes() -> Data {
     let ea: [String: Any] = [
-        "com.apple.dataprotection.policy.exception-applied-by": Data("com.apple.springboard".utf8)
+        "com.apple.dataprotection.policy.exception-applied-by":
+            Data("com.apple.containermanagerd_system".utf8)
     ]
     return (try? PropertyListSerialization.data(fromPropertyList: ea, format: .binary, options: 0)) ?? Data()
+}
+
+/// The `MBFile` keys an archived `file` blob actually carries, sorted.
+///
+/// This exists because the device rejected a restore with
+/// `MBErrorDomain/205 — "Invalid file type: 00"` (2026-09-20) after pulling 7 of
+/// the 471 payloads it was offered, and `205` is a class of error rather than a
+/// cause: the description is the only discriminator.  "File type" points at the
+/// metadata the device decodes out of a Files row's `file` blob, so the thing to
+/// compare is the key set — ours against the device's own, which every row we
+/// did not write still carries.
+///
+/// `NSKeyedArchiver` puts the encoded object's properties as non-`$` keys inside
+/// `$objects`, so collecting those across every entry recovers the key set.
+func mbFileBlobKeys(_ data: Data) -> String {
+    guard let obj = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+          let dict = obj as? [String: Any] else {
+        return "<not a plist>"
+    }
+    guard let objects = dict["$objects"] as? [Any] else {
+        return dict.keys.sorted().joined(separator: ",")
+    }
+    var keys: Set<String> = []
+    for entry in objects {
+        guard let entry = entry as? [String: Any] else { continue }
+        for key in entry.keys where !key.hasPrefix("$") { keys.insert(key) }
+    }
+    return keys.sorted().joined(separator: ",")
+}
+
+/// The `MBFile` object dict inside an archived blob, i.e. the entry that holds
+/// the row's metadata (as opposed to `$null`, the strings, the class dict…).
+///
+/// Found by scanning rather than by following `$top` → `root`: the root index is
+/// a `CFKeyedArchiverUID`, which `PropertyListSerialization` hands back as a
+/// private type with no public accessor.
+private func mbFileBlobObject(_ data: Data) -> [String: Any]? {
+    guard let obj = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+          let dict = obj as? [String: Any],
+          let objects = dict["$objects"] as? [Any] else {
+        return nil
+    }
+    for entry in objects {
+        guard let entry = entry as? [String: Any],
+              entry["Birth"] != nil || entry["Mode"] != nil else { continue }
+        return entry
+    }
+    return nil
+}
+
+/// The `Mode` the device comes away with, or nil when it cannot read one.
+///
+/// A nil here is the failing shape: `NSCoder` writes an inline number as an
+/// inline number, but it writes anything it had to box as a `$objects`
+/// reference — and the device's `decodeInteger`-family reads raise
+/// "value for key (Mode) is not an integer number" on a reference.  A restore
+/// agent that cannot read the type of a row answers
+/// `MBErrorDomain/205 — "Invalid file type: 00"`.
+func mbFileBlobMode(_ data: Data) -> Int? {
+    (mbFileBlobObject(data)?["Mode"] as? NSNumber)?.intValue
+}
+
+/// How a blob's values are *encoded*, not just which keys they are under.
+///
+/// `mbFileBlobKeys` compares key sets, and that is not enough on its own — which
+/// is how a broken `Mode` survived a whole diagnosis round: the keys matched the
+/// device exactly while the value was an object reference instead of a number,
+/// so every integer read on the device raised (2026-09-21) and the restore was
+/// answered with `MBErrorDomain/205 — "Invalid file type: 00"`.
+///
+/// So this reports the two things that separate a good blob from that one: the
+/// `Mode` a reader comes away with (`UNREADABLE` when it is a reference), and
+/// which keys hold references at all.  `RelativePath` / `ExtendedAttributes` /
+/// `Digest` are legitimately references — they are real objects; a *scalar*
+/// field appearing in this list is the bug.
+func mbFileBlobShape(_ data: Data) -> String {
+    guard let entry = mbFileBlobObject(data) else { return "<no object dict>" }
+    var references: [String] = []
+    for key in entry.keys.sorted() where !key.hasPrefix("$") {
+        if entry[key] is NSNumber { continue }
+        references.append(key)
+    }
+    let mode = (entry["Mode"] as? NSNumber)?.intValue
+    return "mode=\(mode.map(String.init) ?? "UNREADABLE") "
+        + "reference-valued keys=[\(references.joined(separator: ","))]"
 }

@@ -954,6 +954,24 @@ impl Adapter {
                                 state.reorder_bytes
                             );
                             if state.should_dup_ack() {
+                                // Announce what we are about to tell the peer.
+                                //
+                                // Without this line the log cannot distinguish a host that
+                                // keeps answering duplicate ACKs from one that has gone
+                                // silent: `ack()` writes to the pcap only, and no pcap is
+                                // captured in this build.  On 2026-09-19 the peer re-sent
+                                // nothing for 88 s while 3,265,094 B sat in the reorder
+                                // buffer — and there was no way to tell from the log whether
+                                // we had actually asked it to fill the hole.  Bounded by
+                                // `DUP_ACK_BURST` + `DUP_ACK_MIN_INTERVAL`, so this cannot
+                                // become a per-segment flood.
+                                debug!(
+                                    "duplicate ACK for hp={}: ack={} window={} (hole {} bytes wide)",
+                                    res.destination_port,
+                                    state.ack,
+                                    state.window_field(),
+                                    res.sequence_number.wrapping_sub(state.ack)
+                                );
                                 ack_me = Some(res.destination_port);
                             }
                         }

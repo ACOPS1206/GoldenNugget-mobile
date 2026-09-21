@@ -2,47 +2,32 @@ name: Build
 
 on:
   push:
+  pull_request:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build
+    name: Build unsigned IPA
     runs-on: macos-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@main
+        uses: actions/checkout@v4
 
-      - name: Checkout theos/theos
-        uses: actions/checkout@main
-        with:
-          repository: theos/theos
-          ref: master
-          submodules: recursive
-          path: theos
-
-      - name: Checkout theos/sdks
-        uses: actions/checkout@main
-        with:
-          repository: theos/sdks
-          ref: master
-          nugget-checkout: iPhoneOS16.5.sdk
-          path: theos/sdks
-
-      - name: Ensure main utils are installed
-        uses: dhinakg/procursus-action@main
-        with:
-          packages: coreutils make xz ldid
-
-      - name: Build
+      - name: Show toolchain
         run: |
-          export THEOS=theos
+          xcodebuild -version
+          swift --version
 
-          bash get_libraries.sh
-          bash ipabuild.sh
+      # The only supported build path.  It drives PoC.xcodeproj through
+      # xcodebuild and packages build/PoC.ipa; the same script is what the
+      # local workflow runs, so CI and the host cannot drift apart.
+      - name: Build IPA
+        run: ./scripts/build-ipa.sh Release
 
       - name: Upload artifact
-        uses: actions/upload-artifact@main
+        uses: actions/upload-artifact@v4
         with:
           name: poc-ipa
-          path: build/*.ipa
+          path: build/PoC.ipa
+          if-no-files-found: error

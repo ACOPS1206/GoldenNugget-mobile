@@ -94,6 +94,40 @@ trigger an ACK"`, i.e. exactly the behaviour being fixed.
 are `tests::local_tcp` and `tests::handle_speed`, which need root to create a
 TUN device (`Failed to create tunnel. Are you root?`). Pre-existing, unrelated.
 
+## Status: what this fixed, and what it did not
+
+The three problems above were real and are fixed. Re-measured on the same iPad,
+after the patch, from one production run on 2026-09-19 (23:11 local):
+
+| claim | before | after |
+|---|---|---|
+| data behind a hole | dropped | **held** — 3,509 consecutive `held=true` lines; `reorder_bytes` peaked at 3,265,094 B |
+| reorder window overflow | n/a | 0 `held=false`, 0 "reorder window full" |
+
+**The run still hangs**, though, and for a reason this patch could not address:
+the peer never re-sends the missing range.
+
+```
+15:11:27.874  device: DLMessageUploadFiles — the first real payload of the run
+15:11:28.104  first out-of-order: seq=4262572243 expected=4262551763
+              → the hole is the FIRST 20,480 bytes of that payload
+15:11:28      buffered climbs 1024 → 3,265,094 B, held=true on every line
+15:11:29…     DL messages = 0 for 88 s; out-of-order +6…8/s
+              gap grows monotonically 2991 KB → 3361 KB
+15:12:56      out-of-order stops and the gap resets — the flow ends
+```
+
+Across those 88 seconds jktcp logged **zero** `duplicate data seq` lines: not one
+retransmission. So the old amplification is gone — the bytes behind the hole are
+no longer thrown away — and what replaced it is a deadlock in which the data is
+held correctly and never becomes deliverable.
+
+That moves the open question off this side of the wire. The next measurement is
+whether the duplicate ACKs leave and whether the peer acts on them. `ack()` wrote
+only to the pcap, which this build does not capture, so that was invisible; the
+`duplicate ACK for hp=…` line added to the out-of-order branch now records the
+ack number, the window and the hole width for every duplicate ACK sent.
+
 ## Rebuilding
 
 See `scripts/build-idevice-ios.sh` in the repository root. It fetches

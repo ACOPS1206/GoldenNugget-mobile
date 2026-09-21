@@ -83,6 +83,36 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
         }
     }
 
+    /// The progress a restore has to reach before it counts as finished.
+    ///
+    /// A calibration, not a law: the device reports 0→100 over the job it plans,
+    /// so anything short of 100 means the device decided it was done early.  If
+    /// a genuine run is ever seen completing below 100, this is the one place to
+    /// change — and the thrown message already prints the value it observed.
+    static let restoreCompletionPercent: Double = 100
+
+    /// Last progress value the device reported during a restore.
+    ///
+    /// `MobileBackup2BackupContext` forwards progress to the caller but keeps no
+    /// copy of its own, so the completion check needs one.
+    final class RestoreProgressProbe: @unchecked Sendable {
+        private let lock = NSLock()
+        private var last: Double = -1
+
+        func note(_ percent: Double) {
+            lock.lock()
+            last = percent
+            lock.unlock()
+        }
+
+        /// -1 when the device never reported anything.
+        var lastPercent: Double {
+            lock.lock()
+            defer { lock.unlock() }
+            return last
+        }
+    }
+
     private var pairingFile: OpaquePointer? = nil
     private var adapter: OpaquePointer? = nil
     private var handshake: OpaquePointer? = nil
@@ -1918,6 +1948,54 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
         return dict
     }
 
+    /// What the device said when a mobilebackup2 exchange ended.
+    ///
+    /// `mobilebackup2_restore` / `_backup` hand back the device's final plist
+    /// through `out_response`. Its `ErrorCode` is the device's own verdict, and
+    /// it is the ONLY signal that separates "finished" from "gave up part way" —
+    /// the FFI return value cannot, because it is nil for both. Non-zero means
+    /// the device is telling us it did not do the work.
+    struct DeviceVerdict {
+        let errorCode: Int?
+        let errorDescription: String?
+        /// The response as the device wrote it, trimmed for the log.
+        let raw: String
+
+        var summaryLine: String {
+            if let code = errorCode {
+                return "device verdict: ErrorCode \(code)"
+                    + (errorDescription.map { " — \($0)" } ?? "")
+            }
+            // Not a failure: plenty of successful exchanges answer without an
+            // ErrorCode. Logged in full so the shape of a real response becomes
+            // visible instead of having to be guessed at.
+            return "device verdict: no ErrorCode present (response: \(raw))"
+        }
+    }
+
+    /// Read that verdict out of an `out_response` plist. Never throws: a shape
+    /// this code does not recognise yields an absent code, which the callers
+    /// treat as "no verdict", not as "failed".
+    func deviceVerdict(from response: plist_t?) -> DeviceVerdict {
+        guard let response, let dict = plistNodeToDictionary(response) else {
+            return DeviceVerdict(errorCode: nil, errorDescription: nil,
+                                 raw: "<no response plist>")
+        }
+        let code = Self.intValue(dict["ErrorCode"]) ?? Self.intValue(dict["Error"])
+        let description = (dict["ErrorDescription"] as? String) ?? (dict["Error"] as? String)
+        let raw = String(describing: dict)
+        return DeviceVerdict(errorCode: code, errorDescription: description,
+                             raw: raw.count > 400 ? String(raw.prefix(400)) + "…" : raw)
+    }
+
+    /// mobilebackup2 answers sometimes carry an integer, sometimes the same
+    /// number as a string, depending on which daemon is speaking.
+    private static func intValue(_ any: Any?) -> Int? {
+        if let number = any as? NSNumber { return number.intValue }
+        if let text = any as? String { return Int(text) }
+        return nil
+    }
+
     private func syncMountDeveloperImage(image: Data, signature: Data) throws {
         debugLog("[IdeviceGateway] mountDeveloperImage() called, image size: \(image.count), signature size: \(signature.count)")
         try verifyInitialized()
@@ -2550,7 +2628,18 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
             // or by failing the batch — but with `onEvent` nil those refusals
             // were never reported anywhere, so a restore that silently restored
             // nothing looked exactly like a restore that was merely slow.
-            let ctx = MobileBackup2BackupContext(onProgress: onProgress, onEvent: delegateLog)
+            //
+            // The device's own progress is the other half of that evidence, and
+            // it is recorded here rather than merely forwarded: the completion
+            // check after the exchange needs the final value, and `ctx` does not
+            // expose one.
+            let progressProbe = RestoreProgressProbe()
+            let ctx = MobileBackup2BackupContext(
+                onProgress: { overall in
+                    progressProbe.note(overall)
+                    onProgress?(overall)
+                },
+                onEvent: delegateLog)
             var delegate = makeRestoreDelegate(context: ctx)
             defer { withExtendedLifetime(ctx) {} }
 
@@ -2573,14 +2662,56 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
             // host answered, so it goes out before any error is raised.
             delegateLog?(ctx.errorSummary())
             delegateLog?(ctx.commitSummary())
+            // Files the device actually took, so "how much was restored" has a
+            // number behind it even when the device's own percentage is the
+            // thing that stopped early.
+            delegateLog?(ctx.servedSummary())
             if let err = err {
                 let msg = self.getErrorMessage(from: err)
                 debugLog("[IdeviceGateway] syncRestoreBackup() mobilebackup2_restore failed: \(msg)")
                 defer { idevice_error_free(err) }
                 throw IdeviceGatewayError(.serviceError, reason: "Restore failed, error: (\(msg))")
             }
-            if let response = response {
-                self.safeFreePlist(response)
+            // The device's own verdict has to be READ before the plist is freed.
+            //
+            // This used to be `safeFreePlist(response)` with nothing in between,
+            // and that is how "the device stopped at 55% and the app reported
+            // success" becomes possible: the FFI returns no IdeviceFfiError
+            // whenever the exchange terminated at the protocol level, and a
+            // restore the device abandoned part-way terminates just as cleanly
+            // as one it finished. The only place that difference is stated is
+            // this plist. Discarding it left the caller with nothing to check,
+            // so "success" degenerated into "nothing threw".
+            let verdict = self.deviceVerdict(from: response)
+            delegateLog?(verdict.summaryLine)
+            self.safeFreePlist(response)
+            if let code = verdict.errorCode, code != 0 {
+                throw IdeviceGatewayError(
+                    .serviceError,
+                    reason: "Restore did not complete: the device answered with error code \(code)"
+                        + (verdict.errorDescription.map { " — \($0)" } ?? ""))
+            }
+            // No error code is NOT the same as "finished".  A restore the device
+            // abandoned part-way answers without one, which is why the second,
+            // independent signal has to be checked: the device's own progress
+            // never reached the end.  Reporting success on the strength of "the
+            // FFI did not throw" is what produced a 55 % restore labelled
+            // "succeeded".
+            let reached = progressProbe.lastPercent
+            let served = ctx.servedFileCount()
+            if reached < IdeviceGateway.restoreCompletionPercent {
+                let shown = reached < 0 ? "never reported" : "\(Int(reached))%"
+                let expected = Int(IdeviceGateway.restoreCompletionPercent)
+                let verdictText = verdict.errorCode.map { "ErrorCode \($0)" } ?? "none"
+                throw IdeviceGatewayError(
+                    .serviceError,
+                    reason: "Restore stopped short: the device ended the exchange at \(shown) "
+                        + "(a completed restore reports \(expected)%), "
+                        + "after taking \(served) file(s) from the host. "
+                        + "device verdict: \(verdictText). "
+                        + "Nothing threw, so this is not a transport failure — the device decided it was "
+                        + "done. Check what the manifest offered against what the host actually has: "
+                        + "the 'commit:' and 'delegate errors:' lines above are the host-side half.")
             }
             verboseLog("[IdeviceGateway] syncRestoreBackup() mobilebackup2_restore completed")
         }

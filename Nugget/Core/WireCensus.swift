@@ -23,6 +23,23 @@ struct RustWireSample: Sendable {
     /// already is.
     var seq: UInt64?
 
+    /// jktcp `duplicate data seq=` lines: the peer re-sent a range it had
+    /// already sent, i.e. a retransmission — the ONLY thing that closes a hole.
+    ///
+    /// This is the counter that decides whether waiting can ever help, and it
+    /// had to be measured before it could be trusted.  A crawl on 2026-09-19 sat
+    /// for 88 s with 3,265,094 B held in the reorder buffer and produced
+    /// **zero** of these: the peer never resent the missing range, so no amount
+    /// of patience was going to unblock it.  "Out-of-order + a gap" on its own
+    /// cannot tell "recovering slowly" from "never recovering" — the difference
+    /// between waiting and rebuilding the connection.
+    var retransmits = 0
+
+    /// jktcp `held=false` lines: segments the reorder buffer had to REFUSE
+    /// because its window was full.  Any non-zero value means the hole is wider
+    /// than the buffer, which waiting cannot repair either.
+    var heldDropped = 0
+
     /// Bytes the device has sent that jktcp still cannot deliver.
     var gap: UInt64? {
         guard let expected, let seq, seq > expected else { return nil }
@@ -126,6 +143,14 @@ final class WireCensus: @unchecked Sendable {
             if RustLog.wireMarkers.contains(where: { line.contains($0) }) {
                 sample.dlMessages += 1
             }
+            // Counted before the out-of-order guard below, because neither line
+            // matches it.  Together they are the whole difference between a hole
+            // that is closing and one that is permanent.
+            if line.contains("duplicate data seq=") {
+                sample.retransmits += 1
+            } else if line.contains("held=false") {
+                sample.heldDropped += 1
+            }
             guard line.contains("out-of-order seq=") else { continue }
             sample.outOfOrder += 1
             if let value = number(after: "expected=", in: line) { sample.expected = value }
@@ -169,6 +194,14 @@ final class WireCensus: @unchecked Sendable {
                 line += String(format: ", %.1f MB stuck behind an unfilled gap",
                                Double(gap) / 1_048_576.0)
             }
+            // The half that decides whether patience is the right answer at all.
+            // Zero retransmissions means the hole cannot close by waiting.
+            line += s.retransmits > 0
+                ? ", peer retransmitted ×\(s.retransmits)"
+                : ", peer has retransmitted NOTHING"
+        }
+        if s.heldDropped > 0 {
+            line += ", \(s.heldDropped) segment(s) refused (reorder window full)"
         }
         return line
     }
@@ -194,6 +227,16 @@ final class WireCensus: @unchecked Sendable {
             if let seq = sample.seq, let expected = sample.expected {
                 line += " (device at byte \(seq), tunnel can only deliver up to \(expected))"
             }
+        }
+        // Whether the hole can still close.  This clause is the one that
+        // separates "the peer is recovering, give it time" from "the peer is not
+        // coming back for that range", and those two call for opposite actions.
+        line += sample.retransmits > 0
+            ? "; the peer re-sent \(sample.retransmits) range(s), so the gap is being worked on"
+            : "; the peer has re-sent NOTHING — this gap does not close by waiting"
+        if sample.heldDropped > 0 {
+            line += ". \(sample.heldDropped) segment(s) were refused (reorder window full), so part "
+                + "of the stream was dropped rather than held"
         }
         return line
     }

@@ -57,19 +57,34 @@ enum TransportFailure: Error, LocalizedError {
 
     /// Parked in `dl_version_exchange()` waiting for the device's FIRST
     /// DeviceLink message.  This side has not sent anything yet.
+    ///
+    /// ⚠️ **NOT PRODUCED ANY MORE** (2026-09-20). `StallGuard` no longer times a
+    /// call out; it reports this condition and keeps waiting. See `StallGuard`'s
+    /// header for the measured reason (abandoning a mid-flight exchange wedged
+    /// the device-side daemon). Kept, with its recovery ladder, so reinstating
+    /// the guard does not mean rewriting it.
     case handshakeSilent(label: String, heldSeconds: Int)
 
     /// Handshake completed, then the stream went quiet mid-operation.
+    ///
+    /// ⚠️ **NOT PRODUCED ANY MORE** — same note as `handshakeSilent`.
     case streamStalled(label: String, heldSeconds: Int, probeVerdict: String?)
 
     /// The device is still pushing bytes but jktcp cannot deliver them: the gap
-    /// is a contiguous run and the only thing that fills it is the peer's
-    /// retransmit timer — which hands over one segment per timeout.
+    /// is a contiguous run and the only thing that fills it is the peer
+    /// re-sending the missing range.
     ///
     /// (The doc used to say "a UDP segment was lost".  That is one candidate
     /// cause, not the measurement — see the note on the message below.)
+    ///
+    /// ⚠️ **NOT PRODUCED ANY MORE** — same note as `handshakeSilent`. The
+    /// measurement itself is alive: `StallGuard.crawlObservation` still computes
+    /// it every poll and prints it. Only the "abandon the call and rebuild the
+    /// tunnel" half was removed, because that teardown is what wedged the daemon
+    /// and it never once recovered a transfer.
     case tunnelCrawl(label: String, spanSeconds: Int, gapBytes: UInt64,
-                     deliveryBytesPerSecond: Double, outOfOrderSegments: Int)
+                     deliveryBytesPerSecond: Double, outOfOrderSegments: Int,
+                     retransmits: Int, heldDropped: Int)
 
     /// The socket-level session is gone (BrokenPipe / channel closed / SSLEOF /
     /// connection terminated / reset).
@@ -90,6 +105,21 @@ enum TransportFailure: Error, LocalizedError {
     /// minutes the earlier attempt spent crawling.
     case deviceLocked(label: String, raw: String)
 
+    /// The exchange ended without the device finishing the work, and without
+    /// naming an error.
+    ///
+    /// A third outcome next to "succeeded" and "failed", and the one this app
+    /// could not see: the device abandons a restore part-way and closes the
+    /// stream exactly as cleanly as it closes one it completed, so the FFI
+    /// raises nothing.  The distinction lives in the device's own response plist
+    /// and in how far its progress got — and the host side here used to free
+    /// that plist unread and never look at the final progress, which is how a
+    /// 55 % restore came to be reported as a success.
+    ///
+    /// Retrying is pointless (same manifest, same device) — the host-side
+    /// accounting is what has to be compared against what the manifest offered.
+    case restoreIncomplete(label: String, raw: String)
+
     /// The gateway was never started, so there is no session to retry on.
     case notReady(label: String, raw: String)
 
@@ -100,9 +130,9 @@ enum TransportFailure: Error, LocalizedError {
     var label: String {
         switch self {
         case .cancelled(let l), .handshakeSilent(let l, _), .streamStalled(let l, _, _),
-             .tunnelCrawl(let l, _, _, _, _), .channelLost(let l, _),
+             .tunnelCrawl(let l, _, _, _, _, _, _), .channelLost(let l, _),
              .deviceRejected(let l, _), .deviceLocked(let l, _),
-             .notReady(let l, _), .unknown(let l, _):
+             .restoreIncomplete(let l, _), .notReady(let l, _), .unknown(let l, _):
             return l
         }
     }
@@ -160,6 +190,11 @@ enum TransportFailure: Error, LocalizedError {
             return .failFast(reason: "the device rejected the request")
         case .deviceLocked:
             return .failFast(reason: "the device is locked")
+        // A short restore is deterministic: the same manifest goes to the same
+        // device and it stops at the same place.  The work is in the host-side
+        // accounting, not in another attempt.
+        case .restoreIncomplete:
+            return .failFast(reason: "the restore stopped short of completion")
         case .notReady:
             return .failFast(reason: "the device gateway is not initialized")
         case .unknown:
@@ -192,46 +227,63 @@ enum TransportFailure: Error, LocalizedError {
                 + "desynchronised after a host-side file error (see the 'delegate errors' line)."
             return s
 
-        case .tunnelCrawl(let label, let span, let gap, let rate, let outOfOrder):
+        case .tunnelCrawl(let label, let span, let gap, let rate, let outOfOrder,
+                          let retransmits, let heldDropped):
             var s = "the \(label) tunnel stopped delivering: jktcp is still receiving segments from "
                 + "the device (\(outOfOrder) out-of-order so far)"
             s += ", \(gap / 1024) KB of it stuck behind an unfilled gap"
             s += String(format: ", delivery crawled at %.1f KB/s", rate / 1024)
-            s += " for \(span)s. What was measured is the transport refusing to hand bytes up. Two "
-                + "numbers from the Rust log are worth reading before deciding what broke: the gap is "
-                + "CONTIGUOUS (one run of segments, not scattered single losses), and the deliverable "
-                + "position advances by exactly one ~1 KB segment per ~310 ms — the peer's retransmit "
-                + "timer, one segment per timeout. Recovery at that rate is 3.3 KB/s against a backlog "
-                + "of \(gap / 1024) KB, i.e. about \(gap / 1024 / 3) s to clear, while the peer keeps "
-                + "refilling its send window with data that has to be discarded meanwhile — so it does "
-                + "not clear. Everything above this layer looks healthy throughout (lockdown answers, "
-                + "and a liveness probe calls the device alive)."
-            // The amplifier, and the reason a small loss costs an unbounded
-            // time: out-of-order data is DISCARDED, not buffered (the deliverable
-            // position never jumps — it only ever steps by one segment), so the
-            // peer has to resend everything that arrived behind the hole.
-            // 2026-09-19 measured the ratio: a 26 KB prefix loss, then a 2.46 MB
-            // burst in 45.6 ms that all had to be resent — ~100x amplification,
-            // and at one segment per RTO that is ~13 minutes.
-            s += " The cost is amplified by the receiver: out-of-order data is discarded rather than "
-                + "buffered, so the peer has to resend everything that arrived behind the hole. A "
-                + "measured run lost a 26 KB prefix of a 2.46 MB burst and paid for the whole burst."
+            s += " for \(span)s. What was measured is the transport refusing to hand bytes up. "
+                + "Everything above this layer looks healthy throughout (lockdown answers, and a "
+                + "liveness probe calls the device alive)."
+            // The measurement that decides what to do next.  A hole closes only
+            // when the peer re-sends the missing range, so "did it re-send
+            // anything" separates a slow recovery from a dead end.
+            if retransmits > 0 {
+                s += " The peer did re-send \(retransmits) range(s), so the gap is being worked on — "
+                    + "it is closing slowly rather than not at all."
+            } else {
+                s += " The peer has re-sent NOTHING across the whole window (jktcp logged no "
+                    + "retransmission at all), so waiting cannot clear this: the bytes behind the gap "
+                    + "are already held, but the missing range never comes back. Rebuilding the "
+                    + "connection is what closes it."
+            }
+            // What the receiver did with the data behind the gap.
+            //
+            // This clause used to say the opposite — "out-of-order data is
+            // discarded rather than buffered, so the peer has to resend
+            // everything" — which was accurate before the reorder buffer existed
+            // and is not any more.  Measured 2026-09-19: every one of 3,509
+            // out-of-order lines read `held=true`, the buffer reached 3,265,094 B,
+            // and `held=false` / "reorder window full" never appeared.  Leaving
+            // the old wording in place would send the next reader after a
+            // receiver bug that is not there.
+            if heldDropped > 0 {
+                s += " \(heldDropped) segment(s) had to be refused because the reorder window was "
+                    + "full, so part of the stream WAS dropped rather than held — that part needs a "
+                    + "retransmission too."
+            } else {
+                s += " The receiver held every segment it received (the reorder window never filled), "
+                    + "so nothing behind the gap was thrown away — it is simply undeliverable until "
+                    + "the missing range arrives."
+            }
             // Do NOT assert that a datagram was dropped.  The contiguous run
             // makes "one datagram lost" a good guess — a tunnel datagram carries
             // many segments, so losing one costs a whole consecutive range — but
             // it is a guess: nothing in the repo exposes the tunnel's datagram
             // size, so the framing cannot be checked from here.
             //
-            // The discriminator that IS available is reproducibility: compare
+            // The discriminator that IS available is reproducibility.  Compare
             // this crawl's gap and out-of-order count against the previous one.
-            // Identical values after a FRESH tunnel rule randomness out —
-            // 2026-09-19 produced exactly that (2544 segments / 2838 KB / 85
-            // files, twice, in two separate runs), which is a fixed position in a
-            // replayed stream.
+            // 2026-09-19 is instructive in both directions: one earlier pair DID
+            // match exactly (2544 segments / 2838 KB, twice), but five later
+            // attempts produced gaps of the same magnitude and different bytes
+            // (2915 / 2920 / 3048 / 3083 / 3184 / 3277 KB).  Same size, different
+            // range, is not a fixed offset in a replayed stream.
             s += " Whether this was one lost tunnel datagram (a contiguous hole is what that looks "
-                + "like) or a deterministic stall at a fixed offset, check before concluding: if a "
-                + "crawl reproduces the SAME gap and the SAME out-of-order count after a fresh tunnel, "
-                + "it is not random loss."
+                + "like) or a deterministic stall at a fixed offset, check before concluding: "
+                + "identical gap AND identical out-of-order count on a fresh tunnel rule randomness "
+                + "out; a gap of the same SIZE but different bytes does not."
             return s
 
         case .channelLost(let label, let raw):
@@ -255,6 +307,17 @@ enum TransportFailure: Error, LocalizedError {
                 + "Worth knowing when this appears on a later attempt: a crawl leaves the screen "
                 + "alone for minutes, so the device locks itself in the middle of the run and the "
                 + "NEXT attempt is the one that reports it."
+
+        case .restoreIncomplete(let label, let raw):
+            return "\(label) stopped short: \(raw). The device ended the exchange without naming an "
+                + "error, which is exactly why nothing looked wrong — a restore it abandons part-way "
+                + "closes the stream as cleanly as one it finishes, and the host used to free the "
+                + "device's response plist unread instead of asking it what happened. Two independent "
+                + "signals are now checked (the response plist's ErrorCode, and how far the device's "
+                + "progress got), and this one says both came back empty. Retrying sends the same "
+                + "manifest to the same device, so the next step is the host-side accounting: compare "
+                + "the 'commit:' / 'delegate errors:' lines and 'device pulled N file(s)' against how "
+                + "many payloads the manifest offered, and check what the filter kept versus drained."
 
         case .notReady(let label, let raw):
             return "\(label) could not run: the device gateway is not ready (\(raw))"
@@ -314,6 +377,18 @@ enum TransportFailureClassifier {
         "invalidhostid",
     ]
 
+    /// "The exchange ended without the device finishing the work."
+    ///
+    /// Both spellings are produced by `IdeviceGateway.syncRestoreBackup`: one
+    /// when the device named an error code in its final plist, one when it named
+    /// nothing and simply stopped before the end.  They share a case because the
+    /// operator action is the same — look at the manifest and the host-side
+    /// accounting, not at the tunnel.
+    static let restoreIncompleteLiterals: [String] = [
+        "restore stopped short",
+        "restore did not complete",
+    ]
+
     /// Cached config that makes `deviceRejected` a false negative; checked last
     /// so a genuine socket error still wins the classification.
     static let notReadyLiterals: [String] = [
@@ -338,6 +413,11 @@ enum TransportFailureClassifier {
         }
         if deviceRejectionLiterals.contains(where: { lower.contains($0) }) {
             return .deviceRejected(label: label, raw: raw)
+        }
+        // Checked after the rejection literals so a device error we can name
+        // still wins; this catches "no error at all, it just stopped".
+        if restoreIncompleteLiterals.contains(where: { lower.contains($0) }) {
+            return .restoreIncomplete(label: label, raw: raw)
         }
         if notReadyLiterals.contains(where: { lower.contains($0) }) {
             return .notReady(label: label, raw: raw)

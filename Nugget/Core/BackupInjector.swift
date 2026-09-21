@@ -49,23 +49,32 @@ enum BackupInjector {
         }
         rows.append((relativePath, 1))                          // the file itself
 
-        let fileDigest = Data(Insecure.SHA1.hash(data: contents))
         let dataprotection = buildDataprotectionExtendedAttributes()
 
         for row in rows {
             let isFile = row.flags == 1
+            let rowID = ManifestStore.fileID(domain: domain, relativePath: row.path)
+            // Every field below is copied from the shape the device writes for
+            // the same kind of row — see `MBFileBlob`'s constants for the
+            // measurement. A record the device did not write itself is the one
+            // place a wrong value cannot be repaired by re-uploading, which is
+            // why these are not "reasonable defaults" but the observed values.
             let blob = buildMBFileBlob(
                 relativePath: row.path,
+                // `Int`, not `UInt32`: the archived `Mode` has to be an inline
+                // integer or the device cannot read the file type out of the row
+                // (MBErrorDomain/205 — "Invalid file type: 00").  See
+                // `MBFileArchiver.mode`.
                 mode: isFile
-                    ? (UInt32(MODE_DEFAULT) | UInt32(S_IFREG))
-                    : (UInt32(MODE_DEFAULT) | UInt32(S_IFDIR)),
+                    ? (Int(MODE_FILE_DEFAULT) | Int(S_IFREG))
+                    : (Int(MODE_DIR_DEFAULT) | Int(S_IFDIR)),
                 size: isFile ? contents.count : 0,
-                isDirectory: !isFile,
-                digest: isFile ? fileDigest : nil,
+                protectionClass: isFile ? PROTECTION_CLASS_FILE : PROTECTION_CLASS_DIR,
+                inodeNumber: inode(for: rowID),
                 extendedAttributes: isFile ? dataprotection : nil
             )
             try store.upsert(
-                fileID: ManifestStore.fileID(domain: domain, relativePath: row.path),
+                fileID: rowID,
                 domain: domain,
                 relativePath: row.path,
                 flags: row.flags,
@@ -77,6 +86,26 @@ enum BackupInjector {
         try HostManifests.registerApp(deviceDir: deviceDir, app: appInfo)
 
         AppLog.write("Injected \(domain)/\(relativePath) (fileID=\(fileID))")
+        // The device reads a "file type" out of these blobs, and the four rows
+        // written just above are the only ones in this backup that are not the
+        // device's own. Log both key sets side by side so the next run can say
+        // whether they differ — see `blobKeySample`.
+        AppLog.write(store.blobKeySample(ours: fileID))
+    }
+
+    /// A stable, plausible inode for one manifest row.
+    ///
+    /// The device writes an `InodeNumber` on every row it creates (4000/4000
+    /// sampled `AppDomain-*` file rows) and never 0, and two rows sharing an
+    /// inode would be a lie about the tree.  Derived from the `fileID`, so a
+    /// re-run reproduces the same numbers, and mapped into the band the device's
+    /// own inodes occupy (87278…1306390 in that backup) rather than an obviously
+    /// synthetic value.
+    private static func inode(for fileID: String) -> Int {
+        let head = Insecure.SHA1.hash(data: Data(fileID.utf8))
+            .prefix(4)
+            .reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        return 100_000 + Int(head % 900_000)
     }
 
     /// Stage 2+3 of the full flow: ensure the host-side metadata, prune the
