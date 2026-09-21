@@ -28,13 +28,6 @@ enum AppPaths {
         URL.documents.appendingPathComponent(udid, conformingTo: .data)
     }
 
-    /// `<Documents>/<udid>-partial/` — the backup built for the partial-restore
-    /// flow.  Deliberately separate from `fullBackupRoot`: the two flows write
-    /// different manifest trees and must never stomp each other's baseline.
-    static func partialBackupRoot(udid: String) -> URL {
-        URL.documents.appendingPathComponent("\(udid)-partial", conformingTo: .data)
-    }
-
     /// `<backupRoot>/<udid>/` — the per-device directory inside a backup root.
     static func deviceDir(backupRoot: URL, udid: String) -> URL {
         backupRoot.appendingPathComponent(udid)

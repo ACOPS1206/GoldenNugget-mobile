@@ -38,8 +38,8 @@ enum HostManifests {
         if !fm.fileExists(atPath: manifestURL.path) {
             try? PropertyListSerialization.data(fromPropertyList: ["DataProtection": true,
                                                                    "Lockdown": [:],
-                                                                   "SystemDomainsVersion": "20.0",
-                                                                   "Version": "9.1",
+                                                                   "SystemDomainsVersion": "24.0",
+                                                                   "Version": "10.0",
                                                                    "Applications": [:]],
                                                 format: .xml, options: 0)
                 .write(to: manifestURL)

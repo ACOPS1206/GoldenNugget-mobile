@@ -1,6 +1,13 @@
 version: 1
 product: PoC
 bundleID: com.awesomenull.poc
+# iOS 26: Liquid Glass (Liquid Glass) renders only when MinimumOSVersion >= 26.
+# Matches Package.swift's .iOS(.v16) -> bumped here so the xtool/binary and
+# Xcode builds both carry MinimumOSVersion 26.0.
+deploymentTarget: 26.0
 infoPath: layout/Applications/PoC.app/Info.plist
 iconPath: layout/Applications/PoC.app/AppIcon60x60@2x.png
+resources:
+  # Mirrors PoC.xcodeproj's Copy Bundle Resources, which ships both icons.
+  - layout/Applications/PoC.app/AppIcon76x76@2x~ipad.png
 entitlementsPath: entitlements.plist

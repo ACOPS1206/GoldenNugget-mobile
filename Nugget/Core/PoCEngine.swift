@@ -168,102 +168,16 @@ class PoCEngine {
             contents: data
         )
 
-        // Stage 4: restore.  Same transient channel-drop handling as the
-        // partial path — the device can drop the channel here too.
+        // Stage 4: restore.  The device can drop the channel here too.
         try await runRestore(backupRoot: backupRoot, udid: udid, label: "restore") {
             log("PoC restore succeeded: the device confirmed it finished.")
             log("If the device did NOT erase, iOS 27 app-container restores are safe.")
         }
     }
 
-    // MARK: - Run: partial restore (light protective auth + minimal 3.3 backup)
-
-    /// Restore ONLY the injected app container file via a minimal backup 3.3
-    /// built host-side — the full protective data pull is NOT restored.
-    ///
-    /// Unlike the original "file-only, no backup" design, a *lightweight*
-    /// protective backup is still performed FIRST.  On iOS 27 the restore
-    /// daemon refuses a mobilebackup2 restore from an un-authorized session
-    /// and simply closes the channel (BrokenPipe "channel closed") with NO
-    /// popup on the device.  The light protective backup is what triggers the
-    /// Trust / backup-password popup and authorizes the session; it is
-    /// selective (empty Applications, no photos/videos — see
-    /// `ProtectiveBackup.isProtectiveFile`), so it runs fast.  Its uploaded
-    /// data is then pruned to the GN keep-set and the injected file is added
-    /// on top, which is what actually gets restored.
-    ///
-    /// Backup layout written to `<Documents>/<udid>-partial/<udid>/`:
-    ///   - Manifest.db   pulled from the device, pruned, then one AppDomain row
-    ///   - Status.plist  Version 3.3
-    ///   - Manifest.plist / Info.plist with the target app registered
-    ///   - payload file under `<fileID.prefix(2)>/<fileID>`
-    func runPartialRestore(
-        bundleID: String,
-        fileName: String = "poc.txt",
-        contents: String = "PoC: iOS 27 partial container restore OK"
-    ) async throws {
-        AppLog.shared.memory.reset()
-        warnIfPreviousCallStillRunning()
-        clearCancel()
-        let runStage = StageTimer("RUN partial restore")
-        defer { runStage.done() }
-
-        let (udid, data) = try await prepareRun(bundleID: bundleID, contents: contents)
-        let backupRoot = AppPaths.partialBackupRoot(udid: udid)
-        try resetDirectory(backupRoot)
-
-        // Stage 0b: LIGHT protective backup.  On iOS 27 the restore daemon
-        // refuses a mobilebackup2 restore from an un-authorized session and
-        // just closes the channel (BrokenPipe "channel closed") with NO popup.
-        // A protective backup is what triggers the Trust / backup-password
-        // popup and authorizes the session.  This one is selective (empty
-        // Applications, drains photos/videos) per `ProtectiveBackup.run`, so
-        // it is fast — then we keep only its protective keep-set and add the
-        // injected file on top.
-        try await ProtectiveBackup.run(backupRoot: backupRoot, udid: udid) { overall in
-            self.logProgress("protective backup progress", overall)
-        }
-        log("Light protective backup complete — session authorized, popup handled.")
-        // iOS 27 (and GN's restore_files) does NOT accept a synthetic file-only
-        // rebuild: it rejects it PERMANENTLY (validation, not transient).  GN
-        // keeps the pulled protective keep-set (springboard + system prefs +
-        // home domain + addressbook/messages/posterboard), prunes Manifest.db to
-        // that keep-set (clean_backup_for_restore mirror), then on restore it
-        // re-prunes the pulled payload the same way and injects the new file.
-        log("Keeping the pulled protective keep-set (no discard) and pruning Manifest.db "
-            + "to the GN keep-set...")
-        let deviceDir = AppPaths.deviceDir(backupRoot: backupRoot, udid: udid)
-        ManifestStore(deviceDir: deviceDir).pruneToDiskState()
-
-        let appInfo = try await InstProxy.lookup(bundleID: bundleID)
-        log("Target app: \(bundleID) v\(appInfo.version)")
-
-        let domain = "AppDomain-\(bundleID)"
-        log("Injecting \(domain)/Documents/\(fileName) into minimal 3.3 backup…")
-        try BackupInjector.inject(
-            into: deviceDir,
-            domain: domain,
-            relativePath: "Documents/\(fileName)",
-            contents: data,
-            appInfo: appInfo
-        )
-        log("Partial backup ready (one AppDomain row, no device data pulled).")
-
-        // Stage 2b: restore with iOS-27 TRANSIENT retry.  The device drops
-        // the mobilebackup2 channel mid-restore (SpringBoard restart ->
-        // BrokenPipe "channel closed" / ConnectionTerminated); that is the
-        // EXPECTED transient that GoldenNugget rides out (18x3s).  PoC: 3x3s.
-        try await runRestore(backupRoot: backupRoot, udid: udid, label: "partial restore") {
-            log("Partial restore succeeded: the device confirmed it finished.")
-            log("No full backup happened — if the device did NOT erase, iOS 27 accepts file-only 3.3 restores.")
-        }
-    }
-
     // MARK: - Shared run plumbing
     //
-    // `runPoC` and `runPartialRestore` used to carry their own copy of all of
-    // this — 26 of 29 preamble lines were byte-identical.  The sequence below is
-    // order-sensitive, so it lives in one place.
+    // The sequence below is order-sensitive, so it lives in one place.
 
     /// A run must not start on top of one that was cancelled but is still
     /// running, and this makes that state visible.

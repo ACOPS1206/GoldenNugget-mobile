@@ -16,10 +16,10 @@ struct PoCView: View {
     @State var bundleID: String = "com.goldens.victim"
     @State var fileName: String = "poc.txt"
     @State var contents: String = "PoC: iOS 27 app container restore OK"
-    @State var partialOnly: Bool = false
     @State var running: Bool = false
     @State var showPairingImporter: Bool = false
     @State var showTargetImporter: Bool = false
+    @State var showRebootNotice: Bool = false
     @State var logs: [String] = []
     @State var errorText: String?
     @State var runStarted: Date?
@@ -37,14 +37,7 @@ struct PoCView: View {
             }
 
             Section("Mode") {
-                Picker("Restore mode", selection: $partialOnly) {
-                    Text("Partial — minimal 3.3, no backup").tag(true)
-                    Text("Full — protective backup → inject").tag(false)
-                }
-                .pickerStyle(.segmented)
-                Text(partialOnly
-                     ? "Builds a minimal Manifest.db (backup 3.3) host-side with only the injected app-container file and restores it. No device backup, no photos pulled."
-                     : "Runs a real mobilebackup2 protective backup, prunes it, injects the app-container file, then restores the whole pruned backup.")
+                Text("Runs a real mobilebackup2 protective backup, prunes it, injects the app-container file, then restores the whole pruned backup.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -119,7 +112,7 @@ struct PoCView: View {
                         }
                         .frame(maxWidth: .infinity)
                     } else {
-                        Text(partialOnly ? "Run Partial Restore (3.3)" : "Run Backup → Inject → Restore")
+                        Text("Run Backup → Inject → Restore")
                             .frame(maxWidth: .infinity)
                     }
                 }
@@ -210,6 +203,11 @@ struct PoCView: View {
             Button("OK") {}
         } message: {
             Text(errorText ?? "?")
+        }
+        .alert("Apply complete", isPresented: $showRebootNotice) {
+            Button("OK") {}
+        } message: {
+            Text("Reboot the target device so the injected file takes effect.")
         }
     }
 
@@ -357,12 +355,10 @@ struct PoCView: View {
         runStarted = Date()
         logs = []
         Task {
+            var succeeded = false
             do {
-                if partialOnly {
-                    try await PoCEngine.shared.runPartialRestore(bundleID: bundleID, fileName: fileName, contents: contents)
-                } else {
-                    try await PoCEngine.shared.runPoC(bundleID: bundleID, fileName: fileName, contents: contents)
-                }
+                try await PoCEngine.shared.runPoC(bundleID: bundleID, fileName: fileName, contents: contents)
+                succeeded = true
             } catch let failure as TransportFailure where failure.isCancellation {
                 // Stopping on purpose is not a failure — say so, and do not let it
                 // read like the device did something wrong.
@@ -373,6 +369,9 @@ struct PoCView: View {
             await MainActor.run {
                 running = false
                 runStarted = nil
+                if succeeded {
+                    showRebootNotice = true
+                }
             }
         }
     }
