@@ -141,7 +141,8 @@ class PoCEngine {
     func runPoC(
         bundleID: String,
         fileName: String = "poc.txt",
-        contents: String = "PoC: iOS 27 app container restore OK"
+        contents: String = "PoC: iOS 27 app container restore OK",
+        footnote: String? = nil
     ) async throws {
         AppLog.shared.memory.reset()
         warnIfPreviousCallStillRunning()
@@ -150,22 +151,97 @@ class PoCEngine {
         defer { runStage.done() }
 
         let (udid, data) = try await prepareRun(bundleID: bundleID, contents: contents)
+        try await runProtectiveStages(udid: udid, data: data, bundleID: bundleID,
+                                      fileName: fileName, footnote: footnote)
+    }
+
+    // MARK: - Run: apply the ported GoldenNugget tweaks
+
+    /// Apply a tweak selection: the same protective backup → prune → inject →
+    /// restore flow, carrying the compiled plist tweaks instead of an
+    /// app-container file.
+    ///
+    /// This is GoldenNugget's apply (`device_manager._apply_tweak_pass`) ported
+    /// onto this app's restore pipeline.  The compile step runs *before* the
+    /// device is touched, so an empty or impossible selection fails without
+    /// paying for a backup first.
+    func applyTweaks(
+        selection: TweakSelection,
+        deviceVersion: String,
+        isIPhone: Bool
+    ) async throws {
+        AppLog.shared.memory.reset()
+        warnIfPreviousCallStillRunning()
+        clearCancel()
+        let runStage = StageTimer("RUN tweak apply")
+        defer { runStage.done() }
+
+        let compiled = TweakCompiler.compile(selection: selection,
+                                             deviceVersion: deviceVersion,
+                                             isIPhone: isIPhone)
+        guard !compiled.payloads.isEmpty else {
+            throw PoCError("No tweaks are enabled (or every enabled tweak was skipped) — nothing to apply.")
+        }
+        log("Tweaks: \(compiled.payloads.count) file(s) from \(compiled.locations.count) plist(s)")
+        for location in compiled.locations { log("  → \(location.rawValue)") }
+        for item in compiled.skipped { log("  ⚠️ skipped \(item.label): \(item.reason)") }
+
+        let (udid, _) = try await prepareRun(bundleID: nil, contents: "")
+        let backupRoot = try await protectiveBackup(udid: udid)
+
+        try await BackupInjector.pruneAndInject(
+            backupRoot: backupRoot,
+            udid: udid,
+            bundleID: nil,
+            fileName: "",
+            contents: Data(),
+            footnote: nil,
+            tweakPayloads: compiled.payloads
+        )
+
+        try await runRestore(backupRoot: backupRoot, udid: udid, label: "tweak restore") {
+            log("Tweak apply succeeded: the device confirmed it finished.")
+            log("Reboot the device so the injected preferences take effect.")
+        }
+    }
+
+    // MARK: - Protective flow stages
+    //
+    // The full flow, kept in one place because the order is load-bearing.
+
+    /// Stage 1: a real protective backup into `<Documents>/<udid>/`.
+    ///
+    /// Factored out because the tweak apply runs this same first stage with a
+    /// different inject set behind it, and "the order is load-bearing" is as
+    /// true of that flow as of this one.
+    private func protectiveBackup(udid: String) async throws -> URL {
         let backupRoot = AppPaths.fullBackupRoot(udid: udid)
         try resetDirectory(backupRoot)
-
-        // Stage 1: real protective backup
         try await ProtectiveBackup.run(backupRoot: backupRoot, udid: udid) { overall in
             self.logProgress("backup progress", overall)
         }
         log("Protective backup complete.")
+        return backupRoot
+    }
 
-        // Stage 2+3: prune + inject
+    private func runProtectiveStages(
+        udid: String,
+        data: Data,
+        bundleID: String,
+        fileName: String,
+        footnote: String? = nil
+    ) async throws {
+        let backupRoot = try await protectiveBackup(udid: udid)
+
+        // Stage 2+3: prune + inject (the app-container file, and the Lock Screen
+        // footnote when one was asked for)
         try await BackupInjector.pruneAndInject(
             backupRoot: backupRoot,
             udid: udid,
             bundleID: bundleID,
             fileName: fileName,
-            contents: data
+            contents: data,
+            footnote: footnote
         )
 
         // Stage 4: restore.  The device can drop the channel here too.
@@ -210,22 +286,28 @@ class PoCEngine {
     ///
     /// Returns the device UDID (needed to name the backup root) and the payload
     /// already encoded.  Throws `PoCError` for the operator-facing failures.
+    ///
+    /// `bundleID` is optional: the tweak apply has no target app, so there is no
+    /// bundle to require.  A non-nil value is still validated, which is what
+    /// keeps the app-container flow from starting with an empty field.
     private func prepareRun(
-        bundleID: String,
+        bundleID: String?,
         contents: String
     ) async throws -> (udid: String, data: Data) {
         let minimuxer = Minimuxer.shared()
         guard await testReady(minimuxer) else {
             throw PoCError("minimuxer is not ready. Ensure WiFi and a working tunnel (LocalDevVPN or WireGuard + em_proxy), then select a pairing file.")
         }
-        guard !bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw PoCError("Enter a bundle identifier to target (e.g. com.apple.PosterBoard)")
+        if let bundleID {
+            guard !bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw PoCError("Enter a bundle identifier to target (e.g. com.apple.PosterBoard)")
+            }
         }
         guard let udid = try await minimuxer.core.fetchUDID() else {
             throw PoCError("Could not fetch device UDID")
         }
         log("UDID: \(udid)")
-        log("Target bundle: \(bundleID)")
+        if let bundleID { log("Target bundle: \(bundleID)") }
         log("Tunnel: \(Tunnel.describe())")
         try await Diagnostics.preflightBackupEncryption()
         // Everything after this byte offset is this run's Rust output.

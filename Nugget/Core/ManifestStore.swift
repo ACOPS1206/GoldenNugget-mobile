@@ -13,22 +13,16 @@ enum ManifestSchema {
     /// SQLite's destructor sentinel for "copy this buffer now".
     static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-    static let createFilesTable =
-        "CREATE TABLE Files (fileID TEXT PRIMARY KEY, domain TEXT, relativePath TEXT, flags INTEGER, file BLOB)"
-
-    static let createPropertiesTable =
-        "CREATE TABLE Properties (key TEXT PRIMARY KEY, value BLOB)"
-
     static let insertOrReplaceRow =
         "INSERT OR REPLACE INTO Files (fileID, domain, relativePath, flags, file) VALUES (?, ?, ?, ?, ?)"
 }
 
 /// The single owner of a backup's `Manifest.db`.
 ///
-/// Every mutation of the manifest — pruning it to what is on disk, seeding an
-/// empty one, inserting an injected file row — goes through here.  Nothing else
-/// in the app opens this database, which is what makes the fileID rule and the
-/// schema checkable in one read.
+/// Every mutation of the manifest — pruning it to what is on disk, inserting an
+/// injected file row — goes through here.  Nothing else in the app opens this
+/// database, which is what makes the fileID rule and the schema checkable in one
+/// read.
 struct ManifestStore {
     /// `<backupRoot>/<udid>/` — the directory holding Manifest.db and the shards.
     let deviceDir: URL
@@ -78,28 +72,6 @@ struct ManifestStore {
         return db
     }
 
-    private func exec(_ db: OpaquePointer, _ sql: String) throws {
-        var errMsg: UnsafeMutablePointer<CChar>?
-        guard sqlite3_exec(db, sql, nil, nil, &errMsg) == SQLITE_OK else {
-            let reason = errMsg.map { String(cString: $0) } ?? "unknown error"
-            if let errMsg { sqlite3_free(errMsg) }
-            throw PoCError("Manifest.db: \(sql) failed — \(reason)")
-        }
-    }
-
-    // MARK: - Creating
-
-    /// Create a bare 3.3 Manifest.db (Files + Properties tables, no rows).
-    ///
-    /// Used by a path that builds a minimal backup from scratch instead of
-    /// pulling one from the device first.
-    func createEmpty() throws {
-        let db = try open()
-        defer { sqlite3_close(db) }
-        try exec(db, ManifestSchema.createFilesTable)
-        try exec(db, ManifestSchema.createPropertiesTable)
-    }
-
     // MARK: - Writing rows
 
     /// Insert (or replace) one file row.
@@ -136,7 +108,6 @@ struct ManifestStore {
     }
 
     // MARK: - Pruning
-
     /// What `pruneToDiskState()` did, for the log line and for callers that want
     /// to react to a shortfall.
     struct PruneReport {
@@ -471,6 +442,32 @@ struct ManifestStore {
             + "device=[\(deviceKeys ?? "no other row to compare against")]"
             + " | shape ours: \(oursShape ?? "-")"
             + " | shape device: \(deviceShape ?? "-")"
+    }
+
+    /// The largest `InodeNumber` any row in this manifest claims, or 0.
+    ///
+    /// The restore agent deduplicates by inode, so a synthetic row must not
+    /// reuse one the manifest already claims — GoldenNugget's injector counts up
+    /// from this value ("it deduplicates by inode — a clone sharing the donor's
+    /// inode gets restored with the donor's content", `src/restore/inject.py:
+    /// 254-266`).  The field lives inside each row's blob rather than in a
+    /// column, so answering it means decoding every blob.
+    func maxInode() -> Int {
+        guard exists, let db = try? open() else { return 0 }
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT file FROM Files WHERE file IS NOT NULL",
+                                 -1, &stmt, nil) == SQLITE_OK, let stmt else { return 0 }
+        defer { sqlite3_finalize(stmt) }
+        var highest = 0
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let count = sqlite3_column_bytes(stmt, 0)
+            guard count > 0, let raw = sqlite3_column_blob(stmt, 0) else { continue }
+            if let inode = mbFileBlobInode(Data(bytes: raw, count: Int(count))) {
+                highest = max(highest, inode)
+            }
+        }
+        return highest
     }
 
     /// Phase 3: remove payload files that no keep row references.

@@ -30,6 +30,18 @@ let MODE_DIR_DEFAULT: UInt16 = 0o755
 let PROTECTION_CLASS_FILE: Int = 3
 let PROTECTION_CLASS_DIR: Int = 0
 
+/// The class the device puts on a **system-container** file row — 4, the
+/// minority value among `AppDomain-*` rows but what the device writes for the
+/// file class `injectSystemPlist` delivers.
+///
+/// Measured on the device's own row for the exact file that path injects
+/// (`…/Manifest.db`, fileID `0affc9c4722175be11a30bb60e96880ffedf29d5` =
+/// `SysSharedContainerDomain-systemgroup.com.apple.configurationprofiles/…/
+/// SharedDeviceConfiguration.plist`) — which is also where the app-container
+/// class-3 default comes from, so the two constants are two classes of one
+/// measurement, not a smear of "3 or 4 is fine".
+let PROTECTION_CLASS_SYSTEM_FILE: Int = 4
+
 /// The `MBFile` object graph the device decodes out of a Files row's `file` blob.
 ///
 /// The `@objc` name is load-bearing: `NSKeyedArchiver` writes the class name
@@ -138,10 +150,18 @@ func buildMBFileBlob(relativePath: String, mode: Int, size: Int,
 /// say `com.apple.springboard`, which no sampled row carries; the caller's
 /// comment claimed that is what "lets SpringBoard write into the container",
 /// but the device's own records disagree, and they are the contract.
-func buildDataprotectionExtendedAttributes() -> Data {
+///
+/// `publisher` is a parameter because the device does not use one value
+/// everywhere: measured off the same backup, a `ManagedPreferencesDomain` row
+/// says `com.apple.BackupAgent2` and a HomeDomain `.GlobalPreferences.plist`
+/// says `com.apple.cfprefsd`.  The default is the app-container value, so every
+/// pre-existing call site keeps the bytes it had.
+func buildDataprotectionExtendedAttributes(
+    publisher: String = "com.apple.containermanagerd_system"
+) -> Data {
     let ea: [String: Any] = [
         "com.apple.dataprotection.policy.exception-applied-by":
-            Data("com.apple.containermanagerd_system".utf8)
+            Data(publisher.utf8)
     ]
     return (try? PropertyListSerialization.data(fromPropertyList: ea, format: .binary, options: 0)) ?? Data()
 }
@@ -204,6 +224,18 @@ private func mbFileBlobObject(_ data: Data) -> [String: Any]? {
 /// `MBErrorDomain/205 — "Invalid file type: 00"`.
 func mbFileBlobMode(_ data: Data) -> Int? {
     (mbFileBlobObject(data)?["Mode"] as? NSNumber)?.intValue
+}
+
+/// The `InodeNumber` a row's blob claims, or nil when it carries none.
+///
+/// Needed because the restore agent deduplicates by inode: GoldenNugget's
+/// injector reads the largest inode in the manifest and counts up from it, "the
+/// agent deduplicates by inode — a clone sharing the donor's inode gets restored
+/// with the donor's content" (`src/restore/inject.py:254-266`).  Reading it back
+/// out of the archive is the only way to compute that maximum, since the field
+/// lives inside the blob and not in a column.
+func mbFileBlobInode(_ data: Data) -> Int? {
+    (mbFileBlobObject(data)?["InodeNumber"] as? NSNumber)?.intValue
 }
 
 /// How a blob's values are *encoded*, not just which keys they are under.

@@ -1,6 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import Minimuxer
+import Foundation
 
 struct RootView: View {
     var body: some View {
@@ -23,6 +24,8 @@ struct PoCView: View {
     @State var logs: [String] = []
     @State var errorText: String?
     @State var runStarted: Date?
+    @State var footnote: String = ""
+    @State var tweakSelection = TweakSelection()
 
     var body: some View {
         List {
@@ -30,16 +33,23 @@ struct PoCView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("PoC: iOS 27 app-container restore")
                         .font(.subheadline.bold())
-                    Text("Writes a txt file into a target app's Documents and restores via mobilebackup2 (NOT sparse restore). If the device ignores it without wiping, app-only restores are safe on iOS 27.")
+                    Text("Writes a txt file into a target app's Documents and restores via mobilebackup2. If the device ignores it without wiping, app-only restores are safe on iOS 27.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
 
-            Section("Mode") {
-                Text("Runs a real mobilebackup2 protective backup, prunes it, injects the app-container file, then restores the whole pruned backup.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            Section("Tweaks") {
+                NavigationLink {
+                    TweaksView(selection: $tweakSelection)
+                } label: {
+                    HStack {
+                        Label("GoldenNugget tweaks", systemImage: "slider.horizontal.3")
+                        Spacer()
+                        Text("\(tweakSelection.enabledCount)")
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             Section("Connection") {
@@ -93,6 +103,13 @@ struct PoCView: View {
                     .autocorrectionDisabled()
                 TextField("Contents", text: $contents, axis: .vertical)
                     .lineLimit(1...4)
+                // Injected as a row into the pulled backup; see
+                // `BackupInjector.injectSystemPlist`.
+                TextField("Lock Screen footnote (empty = skip)", text: $footnote)
+                    .autocorrectionDisabled()
+                Text("Footnote goes to \(LockScreenFootnoteTweak.domain)/\(LockScreenFootnoteTweak.relativePath). A long text is cut off by the Lock Screen — keep it short.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section {
@@ -357,7 +374,12 @@ struct PoCView: View {
         Task {
             var succeeded = false
             do {
-                try await PoCEngine.shared.runPoC(bundleID: bundleID, fileName: fileName, contents: contents)
+                try await PoCEngine.shared.runPoC(
+                    bundleID: bundleID,
+                    fileName: fileName,
+                    contents: contents,
+                    footnote: footnote.isEmpty ? nil : footnote
+                )
                 succeeded = true
             } catch let failure as TransportFailure where failure.isCancellation {
                 // Stopping on purpose is not a failure — say so, and do not let it

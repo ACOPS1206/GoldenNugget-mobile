@@ -15,8 +15,10 @@
 		B37B8CC1C1B46CD15DAF3381 /* AsyncRacing.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAC71EBF95E1574B88783B6B /* AsyncRacing.swift */; };
 		E6A1A5E439330FF34ACA9B86 /* BackupInjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3B0606577F22DD11B401E93 /* BackupInjector.swift */; };
 		3E0DA5B2355E5D21A0216CFA /* ChannelRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6049D8D015CF48961C744709 /* ChannelRecovery.swift */; };
+		96CCD31F8F6C1B323200AABD /* DeviceIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2F7065D06BCC3DD26401D93 /* DeviceIdentity.swift */; };
 		881B6D5DEB7B29D35D0FCFA2 /* Diagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E11FBF9A047B56F2E66E5FD /* Diagnostics.swift */; };
 		6FAF80E23DED37E68DF5C4EB /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E2884CFA985B6561938C066 /* Extensions.swift */; };
+		D8CB50EA9A6F61C7683E54A6 /* GoldenNuggetPreset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37369801556192F20D0DF2D8 /* GoldenNuggetPreset.swift */; };
 		49D6B9D95723713BD06BE44A /* HostManifests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1586D9A781CB24F33910162E /* HostManifests.swift */; };
 		D72E5E9591A66FAB046A24E0 /* InFlightCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5DC362DFE508D1A75B921BC /* InFlightCall.swift */; };
 		1BA8F77F705E3F66B2FB684F /* InstProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5BE188496CD2352DD095A6E /* InstProxy.swift */; };
@@ -33,6 +35,12 @@
 		88BF13A4B64876644E9B178D /* StallGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 989555D74B847B3F468BC1DC /* StallGuard.swift */; };
 		495EAECFEA30AF8C2A6C9BF0 /* TransportFailure.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7270E65A4703F9C0AB9AA65F /* TransportFailure.swift */; };
 		37ED7E92BD392586B1D0A4DF /* Tunnel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D1BC98037C6BDC8AF58496B /* Tunnel.swift */; };
+		4E0010FD17DF55D881CB25AA /* TweakCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77B7AF6A5B6F051A9CA68A4D /* TweakCatalog.swift */; };
+		701F631AFAECD47690B8FB7D /* TweakCompiler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17F2C43731423B70CB6C4334 /* TweakCompiler.swift */; };
+		B455D7BEF37CFB628AB7865C /* TweakDomainMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9346ED8851E31EE614F7302D /* TweakDomainMap.swift */; };
+		6EAA0BD3E97DAA974DBCCAF4 /* TweakInjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5115129235D0DAF38C497A28 /* TweakInjector.swift */; };
+		28E9216B55D8DB6B7F1F4AF6 /* TweakModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 980679A3C896C7012DDD8F66 /* TweakModel.swift */; };
+		1F4598565EB3ECC262843292 /* TweaksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB4799584FF11C9BF5BE59FF /* TweaksView.swift */; };
 		637D690748869293AAB5B9C8 /* WireCensus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 343E173B6BF30E9113DD3CA4 /* WireCensus.swift */; };
 		E801AE73005EB73126FC4367 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 92FE9028690931EFD26A8AFF /* libsqlite3.tbd */; };
 /* End PBXBuildFile section */
@@ -46,8 +54,10 @@
 		BAC71EBF95E1574B88783B6B /* AsyncRacing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AsyncRacing.swift; sourceTree = "<group>"; };
 		E3B0606577F22DD11B401E93 /* BackupInjector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupInjector.swift; sourceTree = "<group>"; };
 		6049D8D015CF48961C744709 /* ChannelRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelRecovery.swift; sourceTree = "<group>"; };
+		A2F7065D06BCC3DD26401D93 /* DeviceIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceIdentity.swift; sourceTree = "<group>"; };
 		6E11FBF9A047B56F2E66E5FD /* Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diagnostics.swift; sourceTree = "<group>"; };
 		4E2884CFA985B6561938C066 /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
+		37369801556192F20D0DF2D8 /* GoldenNuggetPreset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoldenNuggetPreset.swift; sourceTree = "<group>"; };
 		1586D9A781CB24F33910162E /* HostManifests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostManifests.swift; sourceTree = "<group>"; };
 		A5DC362DFE508D1A75B921BC /* InFlightCall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InFlightCall.swift; sourceTree = "<group>"; };
 		E5BE188496CD2352DD095A6E /* InstProxy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstProxy.swift; sourceTree = "<group>"; };
@@ -65,6 +75,12 @@
 		989555D74B847B3F468BC1DC /* StallGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StallGuard.swift; sourceTree = "<group>"; };
 		7270E65A4703F9C0AB9AA65F /* TransportFailure.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportFailure.swift; sourceTree = "<group>"; };
 		9D1BC98037C6BDC8AF58496B /* Tunnel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tunnel.swift; sourceTree = "<group>"; };
+		77B7AF6A5B6F051A9CA68A4D /* TweakCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweakCatalog.swift; sourceTree = "<group>"; };
+		17F2C43731423B70CB6C4334 /* TweakCompiler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweakCompiler.swift; sourceTree = "<group>"; };
+		9346ED8851E31EE614F7302D /* TweakDomainMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweakDomainMap.swift; sourceTree = "<group>"; };
+		5115129235D0DAF38C497A28 /* TweakInjector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweakInjector.swift; sourceTree = "<group>"; };
+		980679A3C896C7012DDD8F66 /* TweakModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweakModel.swift; sourceTree = "<group>"; };
+		FB4799584FF11C9BF5BE59FF /* TweaksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweaksView.swift; sourceTree = "<group>"; };
 		6AB24A4C7742CD2E32B8F55D /* Vendor */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Vendor; sourceTree = SOURCE_ROOT; };
 		343E173B6BF30E9113DD3CA4 /* WireCensus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WireCensus.swift; sourceTree = "<group>"; };
 		92FE9028690931EFD26A8AFF /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
@@ -98,7 +114,9 @@
 				BAC71EBF95E1574B88783B6B /* AsyncRacing.swift */,
 				E3B0606577F22DD11B401E93 /* BackupInjector.swift */,
 				6049D8D015CF48961C744709 /* ChannelRecovery.swift */,
+				A2F7065D06BCC3DD26401D93 /* DeviceIdentity.swift */,
 				6E11FBF9A047B56F2E66E5FD /* Diagnostics.swift */,
+				37369801556192F20D0DF2D8 /* GoldenNuggetPreset.swift */,
 				1586D9A781CB24F33910162E /* HostManifests.swift */,
 				A5DC362DFE508D1A75B921BC /* InFlightCall.swift */,
 				E5BE188496CD2352DD095A6E /* InstProxy.swift */,
@@ -112,6 +130,11 @@
 				3811B9C088A0FF54B774F0FA /* RustLog.swift */,
 				989555D74B847B3F468BC1DC /* StallGuard.swift */,
 				7270E65A4703F9C0AB9AA65F /* TransportFailure.swift */,
+				77B7AF6A5B6F051A9CA68A4D /* TweakCatalog.swift */,
+				17F2C43731423B70CB6C4334 /* TweakCompiler.swift */,
+				9346ED8851E31EE614F7302D /* TweakDomainMap.swift */,
+				5115129235D0DAF38C497A28 /* TweakInjector.swift */,
+				980679A3C896C7012DDD8F66 /* TweakModel.swift */,
 				343E173B6BF30E9113DD3CA4 /* WireCensus.swift */,
 			);
 			path = Core;
@@ -169,6 +192,7 @@
 			isa = PBXGroup;
 			children = (
 				F4432398FF02541D88F5E11B /* PoCView.swift */,
+				FB4799584FF11C9BF5BE59FF /* TweaksView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -281,8 +305,10 @@
 				B37B8CC1C1B46CD15DAF3381 /* AsyncRacing.swift in Sources */,
 				E6A1A5E439330FF34ACA9B86 /* BackupInjector.swift in Sources */,
 				3E0DA5B2355E5D21A0216CFA /* ChannelRecovery.swift in Sources */,
+				96CCD31F8F6C1B323200AABD /* DeviceIdentity.swift in Sources */,
 				881B6D5DEB7B29D35D0FCFA2 /* Diagnostics.swift in Sources */,
 				6FAF80E23DED37E68DF5C4EB /* Extensions.swift in Sources */,
+				D8CB50EA9A6F61C7683E54A6 /* GoldenNuggetPreset.swift in Sources */,
 				49D6B9D95723713BD06BE44A /* HostManifests.swift in Sources */,
 				D72E5E9591A66FAB046A24E0 /* InFlightCall.swift in Sources */,
 				1BA8F77F705E3F66B2FB684F /* InstProxy.swift in Sources */,
@@ -299,6 +325,12 @@
 				88BF13A4B64876644E9B178D /* StallGuard.swift in Sources */,
 				495EAECFEA30AF8C2A6C9BF0 /* TransportFailure.swift in Sources */,
 				37ED7E92BD392586B1D0A4DF /* Tunnel.swift in Sources */,
+				4E0010FD17DF55D881CB25AA /* TweakCatalog.swift in Sources */,
+				701F631AFAECD47690B8FB7D /* TweakCompiler.swift in Sources */,
+				B455D7BEF37CFB628AB7865C /* TweakDomainMap.swift in Sources */,
+				6EAA0BD3E97DAA974DBCCAF4 /* TweakInjector.swift in Sources */,
+				28E9216B55D8DB6B7F1F4AF6 /* TweakModel.swift in Sources */,
+				1F4598565EB3ECC262843292 /* TweaksView.swift in Sources */,
 				637D690748869293AAB5B9C8 /* WireCensus.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
