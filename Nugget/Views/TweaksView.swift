@@ -38,8 +38,17 @@ struct TweaksView: View {
     @State private var tail: [String] = []
     /// Tweak categories the user has folded away. Per session, like the rest of
     /// this page's state -- a collapse is a view preference, not a tweak.
-    @State private var collapsedSections: Set<TweakSection> =
-        Set(TweakSection.allCases.filter { $0 != .daemons })
+    /// Sections the user has explicitly folded or unfolded.
+    ///
+    /// Empty on purpose, and paired with `foldedByHand`. Collapsing every section
+    /// on launch made the page short and the page useless: there was nothing
+    /// under a header to tap, not even a restored tweak, and a header that only
+    /// toggles on tap reads as dead UI rather than as a disclosure. So the
+    /// default for an untouched section is derived from its contents -- see
+    /// `collapsedBinding(for:specs:)` -- and this set only holds the ones the
+    /// user has since overridden.
+    @State private var collapsedSections: Set<TweakSection> = []
+    @State private var foldedByHand: Set<TweakSection> = []
 
     var body: some View {
         GoldenPage(spacing: GoldenTheme.rowSpacing) {
@@ -78,10 +87,20 @@ struct TweaksView: View {
     }
 
     /// Set membership as a `Binding`, which is what the collapsible header wants.
-    private func collapsedBinding(for section: TweakSection) -> Binding<Bool> {
+    /// Open a section that has something enabled in it; fold one that does not.
+    ///
+    /// The point is that whatever is switched on is always visible without a
+    /// tap, which is the whole reason to look at this page. A section whose
+    /// tweaks are all off stays folded so the page does not become 130 rows of
+    /// switches, and the first tap on its header records the choice and sticks.
+    private func collapsedBinding(for section: TweakSection, specs: [TweakSpec]) -> Binding<Bool> {
         Binding(
-            get: { collapsedSections.contains(section) },
+            get: {
+                if foldedByHand.contains(section) { return collapsedSections.contains(section) }
+                return !specs.contains { selection.isOn($0) }
+            },
             set: { collapsed in
+                foldedByHand.insert(section)
                 if collapsed { collapsedSections.insert(section) } else { collapsedSections.remove(section) }
             })
     }
@@ -137,7 +156,7 @@ struct TweaksView: View {
                 let on = specs.filter { selection.isOn($0) }.count
                 GoldenCollapsibleSection(
                     title: "\(section.rawValue) (\(on)/\(specs.count))",
-                    isCollapsed: collapsedBinding(for: section),
+                    isCollapsed: collapsedBinding(for: section, specs: specs),
                     content: AnyView(
                         VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
                             ForEach(specs, id: \.id) { spec in
