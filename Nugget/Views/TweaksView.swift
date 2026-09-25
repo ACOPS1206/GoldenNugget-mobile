@@ -35,22 +35,17 @@ struct TweaksView: View {
     /// thing Apply compiles and writes — held something else entirely.
     @State private var formEpoch = 0
     @State private var running = false
-    @State private var outcome: String?
-    /// The reference colours its status line by outcome (`process_status_green`
-    /// / `_red` / `_blue`), so the outcome carries its tone rather than being
-    /// pattern-matched back out of the string.
-    @State private var outcomeTone: GoldenTone = .primary
     @State private var tail: [String] = []
     /// Tweak categories the user has folded away. Per session, like the rest of
     /// this page's state -- a collapse is a view preference, not a tweak.
-    @State private var collapsedSections: Set<TweakSection> = []
+    @State private var collapsedSections: Set<TweakSection> =
+        Set(TweakSection.allCases.filter { $0 != .daemons })
 
     var body: some View {
         GoldenPage(spacing: GoldenTheme.rowSpacing) {
             identityCard
             importSection
             tweakSections
-            applySection
             if let importReport { reportSection(importReport) }
             if let importError { errorSection(importError) }
             if !tail.isEmpty { logSection }
@@ -156,30 +151,6 @@ struct TweaksView: View {
         }
     }
 
-    private var applySection: some View {
-        GoldenSection(
-            title: "Apply",
-            content: AnyView(
-                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-                    GoldenPrimaryButton(title: running ? "Applying…"
-                                                       : "Apply \(selection.enabledCount) tweak(s)",
-                                        running: running,
-                                        disabled: selection.enabledCount == 0) {
-                        apply()
-                    }
-                    if let outcome {
-                        GoldenStatusText(text: outcome, tone: outcomeTone)
-                    }
-                    GoldenMutedNote(text: "Partial Restore: the backup is built from nothing — the "
-                        + "host-side manifests, then rows and payloads for the compiled plists only. "
-                        + "No device content is pulled, so nothing is protected and nothing is wiped; "
-                        + "the restore lands on the live device. Reboot afterwards for the "
-                        + "preferences to take effect.")
-                }
-            )
-        )
-    }
-
     private func reportSection(_ report: TweakImportReport) -> some View {
         GoldenSection(
             title: "Import result",
@@ -241,7 +212,16 @@ struct TweaksView: View {
         autosaveTask = Task {
             try? await Task.sleep(for: GoldenNuggetAutosave.debounce)
             guard !Task.isCancelled else { return }
-            autosaveSaved = GoldenNuggetAutosave.save(snapshot, identity: device)
+            // The document is 130+ specs of JSON written into Documents, and it
+            // was being written on the main actor -- in the same runloop as the
+            // tap that triggered it and as the scroll in progress. That is what
+            // made the switches feel dead and the list stutter. The snapshot and
+            // the identity are value types, so the write can go off-actor; only
+            // the resulting flag comes back.
+            let saved = await Task.detached(priority: .utility) {
+                GoldenNuggetAutosave.save(snapshot, identity: device)
+            }.value
+            autosaveSaved = saved
         }
     }
 
@@ -290,36 +270,6 @@ struct TweaksView: View {
         }
     }
 
-    private func apply() {
-        running = true
-        outcome = nil
-        let snapshot = selection
-        let device = identity
-        Task {
-            var result: String
-            var tone: GoldenTone
-            do {
-                try await GoldenNuggetEngine.shared.applyTweaks(selection: snapshot,
-                                                       deviceVersion: device.version,
-                                                       isIPhone: device.isIPhone)
-                result = "Applied. Reboot the device so the injected preferences take effect."
-                tone = .success
-            } catch let failure as TransportFailure where failure.isCancellation {
-                result = "⏹ stopped by the user (\(failure.label))"
-                tone = .warning
-            } catch {
-                result = "❌ \(error.localizedDescription)"
-                tone = .error
-            }
-            let lines = Array(GoldenNuggetEngine.shared.pendingLog.suffix(30))
-            await MainActor.run {
-                outcome = result
-                outcomeTone = tone
-                tail = lines
-                running = false
-            }
-        }
-    }
 }
 
 /// One tweak as one card: the control band on top, then the id and the
