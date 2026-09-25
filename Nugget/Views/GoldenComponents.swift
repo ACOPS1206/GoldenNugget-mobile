@@ -446,15 +446,25 @@ struct GoldenLogo: View {
         .clipShape(RoundedRectangle(cornerRadius: GoldenTheme.logoRadius))
     }
 
-    /// The icon ships as a loose PNG at the bundle root (`project.yml`), not in
-    /// an asset catalog, so it is loaded by file name with both spellings tried.
+    /// The same icon the home screen shows.
+    ///
+    /// The icon is an Icon Composer bundle compiled into `Assets.car`, so
+    /// `UIImage(named:)` resolves it out of the catalog and returns the variant
+    /// for the current appearance. That is tried first, and it is what makes the
+    /// in-app logo follow the light/dark theme instead of being a frozen PNG.
+    ///
+    /// The loose `AppIcon60x60@2x` / `AppIcon76x76@2x~ipad` fallbacks are gone
+    /// from the bundle on purpose -- they are light-only and they shadowed the
+    /// iconstack on the home screen, which is why the icon came out white in
+    /// both themes. `Logo@1x/@2x` are the same artwork under names that no
+    /// icon key can claim, kept as the fallback for a catalog lookup that comes
+    /// back empty.
     private static let bundledIcon: UIImage? = {
-        for name in ["AppIcon60x60@2x", "AppIcon76x76@2x~ipad"] {
-            if let path = Bundle.main.path(forResource: name, ofType: "png"),
-               let image = UIImage(contentsOfFile: path) {
-                return image
-            }
-        }
+        if let catalog = UIImage(named: "AppIcon") { return catalog }
+        if let path = Bundle.main.path(forResource: "Logo@2x", ofType: "png"),
+           let image = UIImage(contentsOfFile: path) { return image }
+        if let path = Bundle.main.path(forResource: "Logo@1x", ofType: "png"),
+           let image = UIImage(contentsOfFile: path) { return image }
         return nil
     }()
 }
