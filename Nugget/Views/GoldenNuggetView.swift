@@ -164,18 +164,57 @@ struct GoldenNuggetView: View {
     }
 
     private var tweakCards: some View {
-        GoldenCardGrid(itemCount: 1) { _ in
-            NavigationLink {
-                TweaksView(selection: $tweakSelection)
-            } label: {
-                GoldenFeatureCardLabel(
-                    title: "Tweaks",
-                    subtitle: "Customize system settings",
-                    // The count that used to be this row's trailing badge.
-                    detail: "\(tweakSelection.enabledCount) enabled")
+        GoldenCardGrid(itemCount: 3) { index in
+            switch index {
+            case 0:
+                NavigationLink {
+                    TweaksView(selection: $tweakSelection)
+                } label: {
+                    GoldenFeatureCardLabel(
+                        title: "Tweaks",
+                        subtitle: "Customize system settings",
+                        // The count that used to be this row's trailing badge.
+                        detail: "\(registryTweakCount) enabled")
+                }
+                .buttonStyle(.plain)
+            case 1:
+                NavigationLink {
+                    DaemonsView(selection: $tweakSelection)
+                } label: {
+                    GoldenFeatureCardLabel(
+                        title: "Daemons",
+                        subtitle: "Disable launchd services",
+                        detail: "\(enabledDaemonCount) of \(DaemonGroups.all.count) groups")
+                }
+                .buttonStyle(.plain)
+            default:
+                NavigationLink {
+                    SupervisionView(selection: $tweakSelection)
+                } label: {
+                    GoldenFeatureCardLabel(
+                        title: "Supervision",
+                        subtitle: "Lithium profiles and device supervision",
+                        detail: supervisionDetail)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
+    }
+
+    /// Only the registry tweaks carry this badge; daemons are counted by group
+    /// because that is the unit their switches work in.
+    private var registryTweakCount: Int {
+        tweakSelection.enabledCount - enabledDaemonCount
+    }
+
+    private var enabledDaemonCount: Int {
+        DaemonGroups.all.filter { group in
+            tweakSelection.isOn(TweakCatalog.byID["Daemon.\(group.name)"]!)
+        }.count
+    }
+
+    private var supervisionDetail: String {
+        SupervisionSettings.shared.isSupervised ? "supervised" : "not supervised"
     }
 
     /// The reference's apply card (`IOSApplyPage`: a description, the button, and

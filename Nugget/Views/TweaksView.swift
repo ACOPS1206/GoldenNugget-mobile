@@ -124,7 +124,7 @@ struct TweaksView: View {
 
     @ViewBuilder
     private var tweakSections: some View {
-        ForEach(TweakSection.allCases) { section in
+        ForEach(TweakSection.allCases.filter { $0 != .daemons }) { section in
             let specs = visibleSpecs.filter { $0.section == section }
             if !specs.isEmpty {
                 let on = specs.filter { selection.isOn($0) }.count
@@ -200,9 +200,15 @@ struct TweaksView: View {
     /// A tweak the device cannot run is hidden, not disabled — that is what
     /// `gui/ios/tweaks.py` does with `is_tweak_compatible`, and an always-inert
     /// switch would be a worse lie than an absent one.
+    /// The registry tweaks only. `daemons` is a section of its own with a page
+    /// of its own (`DaemonsView`), because upstream renders it from
+    /// `load_daemons()` and a hand-built widget list rather than from the
+    /// registry, and folding it in here would show 40 rows with no master
+    /// switch and no Recommended set.
     private var visibleSpecs: [TweakSpec] {
         TweakCatalog.all.filter {
-            $0.isCompatible(deviceVersion: identity.version, isIPhone: identity.isIPhone)
+            $0.section != .daemons
+                && $0.isCompatible(deviceVersion: identity.version, isIPhone: identity.isIPhone)
         }
     }
 

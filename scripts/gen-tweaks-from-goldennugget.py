@@ -35,6 +35,8 @@ OUTPUT = ROOT / "Nugget" / "Core" / "TweakCatalog.swift"
 DEFAULT_SOURCE = os.path.expanduser("~/GoldenNugget")
 
 # Python Section member name -> Swift case name.
+DAEMONS_SECTION_TITLE = "Daemons to Disable"
+
 SECTION_CASES = {
     "LIQUID_GLASS": "liquidGlass",
     "SPRINGBOARD": "springboard",
@@ -135,6 +137,11 @@ def emit(output: list[str], FileLocation, SPECS, Kind, Section) -> None:
     w("enum TweakSection: String, CaseIterable, Identifiable, Sendable {")
     for member in Section:
         w(f"    case {SECTION_CASES[member.name]} = {swift_string(member.value)}")
+    # Daemons is not a member of the reference's `Section`: upstream renders it
+    # as its own page built in code (`load_daemons()` plus `gui/ios/daemons.py`)
+    # rather than from the registry.  The port folds it into the same enum so
+    # one catalog drives both pages; the raw value is the page's own header text.
+    w(f"    case daemons = {swift_string(DAEMONS_SECTION_TITLE)}")
     w("    var id: String { rawValue }")
     w("}")
     w("")
@@ -184,8 +191,14 @@ def emit(output: list[str], FileLocation, SPECS, Kind, Section) -> None:
         w(f"        ),")
     w("    ]")
     w("")
+    w("    /// The daemon groups, appended after the registry rows.  They are not in")
+    w("    /// `registry.py` upstream -- `gen-daemons-from-goldennugget.py` emits them")
+    w("    /// from `daemons_tweak.py` -- and they are last so every registry key still")
+    w("    /// merges into a shared plist before any daemon label does.")
+    w("    static let allWithDaemons: [TweakSpec] = all + daemonSpecs + [screenTimeSpec]")
+    w("")
     w("    static let byID: [String: TweakSpec] =")
-    w("        Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })")
+    w("        Dictionary(uniqueKeysWithValues: allWithDaemons.map { ($0.id, $0) })")
     w("")
     w("    static func inSection(_ section: TweakSection) -> [TweakSpec] {")
     w("        all.filter { $0.section == section }")

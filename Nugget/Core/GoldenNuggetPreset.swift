@@ -191,9 +191,34 @@ enum GoldenNuggetPresetImport {
         "Templates": "PosterBoard templates — needs the template asset store",
         "StatusBar": "Status Bar — needs the StatusBarOverrideData struct over CFFI",
         "IconThemes": "Icon Themes — needs the icon asset store",
-        "Daemons": "daemons — force-disables launchd daemons; deliberately not carried",
         "ClearScreenTimeAgentPlist": "daemons page — a NullifyFileTweak writing a 0-byte plist",
     ]
+
+    /// Desktop presets carry daemons as one entry: `Daemons` with a `value` dict
+    /// mapping every launchd label to whether it is disabled. The port models one
+    /// spec per group instead, so the labels are folded back up into groups --
+    /// a group is on when the reference would have written all of its labels.
+    ///
+    /// Labels outside `INTERFACE_KEYS` are dropped, which is the whitelist
+    /// upstream enforces before a preset or the apply pass ever sees them.
+    private static func applyDaemons(_ entry: GoldenNuggetPreset.Entry,
+                                     to selection: inout TweakSelection) {
+        guard let values = entry.multiValues ?? entry.value.map({ [$0.display: $0] }) else {
+            return
+        }
+        for group in DaemonGroups.all {
+            let wanted = group.labels.filter { label in
+                guard DaemonGroups.allowedKeys.contains(label) else { return false }
+                return values[label]?.display == "true"
+            }
+            // A group whose labels are all disabled is on. A group with none is
+            // left off rather than forced off, so a partial preset does not
+            // clear a choice the user made by hand.
+            if wanted.count == group.labels.count, let spec = TweakCatalog.byID["Daemon.\(group.name)"] {
+                selection.restore(enabled: true, value: nil, multiValues: nil, for: spec)
+            }
+        }
+    }
 
     @discardableResult
     static func apply(_ preset: GoldenNuggetPreset,
@@ -204,6 +229,13 @@ enum GoldenNuggetPresetImport {
         report.metadataLine = preset.metadata.summary
 
         for entry in preset.entries {
+            // Daemons is not a registry spec: it is one upstream entry covering
+            // every label, and the port carries a spec per group.
+            if entry.id == "Daemons" {
+                applyDaemons(entry, to: &selection)
+                report.applied.append(entry.id)
+                continue
+            }
             guard let spec = TweakCatalog.byID[entry.id] else {
                 if let reason = unported[entry.id] {
                     report.skippedUnported.append((entry.id, reason))

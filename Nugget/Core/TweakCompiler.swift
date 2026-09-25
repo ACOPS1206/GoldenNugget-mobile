@@ -56,23 +56,49 @@ enum TweakCompiler {
         // files reach the backup.
         var order: [TweakFileLocation] = []
         var plists: [TweakFileLocation: [String: Any]] = [:]
+        // Locations to overwrite with a 0-byte file rather than a serialised
+        // plist. Upstream's `NullifyFileTweak` does exactly that, and the
+        // injector writes `contents` verbatim, so an empty payload is it.
+        var nullified: [TweakFileLocation] = []
         var skipped: [(label: String, reason: String)] = []
 
-        for spec in TweakCatalog.all where !spec.disabled {
+        // `allWithDaemons`, not `all`: the daemon group specs are not registry
+        // rows, and compiling only the registry would drop the launchd
+        // `disabled.plist` entirely.
+        for spec in TweakCatalog.allWithDaemons where !spec.disabled {
             guard selection.isOn(spec) else { continue }
             guard spec.isCompatible(deviceVersion: deviceVersion, isIPhone: isIPhone) else {
                 skipped.append((spec.id, "not compatible with this device / iOS version"))
                 continue
             }
 
-            // An `AdvancedPlistTweak` (a spec with a factory) REPLACES the
-            // location's dict; the single-key merge below is the other half of
-            // the reference's two `apply_tweak` shapes.  The dict comes from the
-            // selection so an imported preset's own dict wins over the
+            // An `AdvancedPlistTweak` (a spec with a factory) contributes the
+            // whole location's dict; the single-key merge below is the other half
+            // of the reference's two `apply_tweak` shapes.  The dict comes from
+            // the selection so an imported preset's own dict wins over the
             // registry's, exactly as `_apply_tweak` overwrites `tweak.value`.
+            //
+            // Merged, not assigned. Upstream registers daemons as *one*
+            // `AdvancedPlistTweak` whose value holds every label, so a second
+            // spec writing the same location has never come up -- until the port
+            // modelled one spec per daemon group, all writing
+            // `/var/db/com.apple.xpc.launchd/disabled.plist`. Assigning here
+            // would leave exactly one group's labels in the file. Key-level
+            // precedence is unchanged: a later spec still wins a shared key.
             if spec.writesWholeDict, let multiValues = selection.multiValues(for: spec) {
                 if plists[spec.location] == nil { order.append(spec.location) }
-                plists[spec.location] = multiValues.mapValues { $0.plistObject }
+                var dict = plists[spec.location] ?? [:]
+                for (key, value) in multiValues { dict[key] = value.plistObject }
+                plists[spec.location] = dict
+                continue
+            }
+
+            // `ClearScreenTimeAgentPlist` is a `NullifyFileTweak`: it writes a
+            // 0-byte file over the ScreenTime plist instead of serialising one,
+            // so it must not fall into the "no plist key" skip below.
+            if spec.id == TweakCatalog.screenTimeSpec.id {
+                if !nullified.contains(spec.location) { nullified.append(spec.location) }
+                if !order.contains(spec.location) { order.append(spec.location) }
                 continue
             }
 
@@ -90,6 +116,17 @@ enum TweakCompiler {
         var emitted: [TweakFileLocation] = []
 
         for location in order {
+            if nullified.contains(location) {
+                guard let dest = TweakDomainMap.split(path: location.rawValue) else {
+                    skipped.append((location.rawValue, "no backup-domain prefix matches this location"))
+                    continue
+                }
+                payloads.append(TweakPayload(domain: dest.domain,
+                                             relativePath: dest.relativePath,
+                                             contents: Data()))
+                emitted.append(location)
+                continue
+            }
             guard let plist = plists[location] else { continue }
             // Every `FileLocation` has a prefix rule in `TweakDomainMap`, so
             // this cannot fail for the ported catalog — but the reference

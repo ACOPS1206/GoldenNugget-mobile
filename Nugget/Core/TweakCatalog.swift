@@ -40,6 +40,7 @@ enum TweakSection: String, CaseIterable, Identifiable, Sendable {
     case liquidGlass = "Liquid Glass"
     case springboard = "SpringBoard"
     case internalOptions = "Internal Options"
+    case daemons = "Daemons to Disable"
     var id: String { rawValue }
 }
 
@@ -2594,8 +2595,14 @@ enum TweakCatalog {
         ),
     ]
 
+    /// The daemon groups, appended after the registry rows.  They are not in
+    /// `registry.py` upstream -- `gen-daemons-from-goldennugget.py` emits them
+    /// from `daemons_tweak.py` -- and they are last so every registry key still
+    /// merges into a shared plist before any daemon label does.
+    static let allWithDaemons: [TweakSpec] = all + daemonSpecs + [screenTimeSpec]
+
     static let byID: [String: TweakSpec] =
-        Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
+        Dictionary(uniqueKeysWithValues: allWithDaemons.map { ($0.id, $0) })
 
     static func inSection(_ section: TweakSection) -> [TweakSpec] {
         all.filter { $0.section == section }
