@@ -141,8 +141,8 @@ struct DaemonsView: View {
             content: AnyView(
                 VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
                     let spec = TweakCatalog.screenTimeSpec
-                    TweakRow(spec: spec, isOn: { isOn(spec) },
-                             setOn: { setOn($0, for: spec) })
+                    TweakRow(spec: spec, selection: $selection,
+                             isOn: { isOn(spec) }, setOn: { setOn($0, for: spec) })
                     GoldenMutedNote(text: "Writes a 0-byte file over "
                         + "\(DaemonGroups.screenTime.path). Upstream models this as "
                         + "a NullifyFileTweak: it removes a plist rather than "
@@ -160,8 +160,8 @@ struct DaemonsView: View {
     @ViewBuilder
     private func groupRow(_ group: DaemonGroup) -> some View {
         if let spec = spec(group) {
-            TweakRow(spec: spec, isOn: { isOn(spec) },
-                     setOn: { setOn($0, for: spec) })
+            TweakRow(spec: spec, selection: $selection,
+                     isOn: { isOn(spec) }, setOn: { setOn($0, for: spec) })
         } else {
             // A group with no spec would be a switch that does nothing. Say so
             // rather than rendering a row that cannot be tapped.
