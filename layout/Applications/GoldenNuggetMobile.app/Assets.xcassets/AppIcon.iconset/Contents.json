@@ -1,13 +1,4 @@
 {
-  "info" : {
-    "author" : "xcode",
-    "version" : 1
-  },
-  "properties" : {
-    "content-reference" : {
-      "type" : "iconstack",
-      "name" : "AppIcon",
-      "matching-style" : "fully-qualified-name"
-    }
-  }
+  "info" : { "author" : "xcode", "version" : 1 },
+  "properties" : { "content-reference" : "THIS-IS-NOT-A-DICTIONARY-ON-PURPOSE" }
 }

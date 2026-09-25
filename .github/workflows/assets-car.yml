@@ -97,6 +97,7 @@ jobs:
             --include-all-app-icons \
             --output-format human-readable-text \
             --output-partial-info-plist "$OUT/AppIcon-partial.plist" \
+            --notices --warnings \
             "$CATALOG"
 
           test -s "$OUT/Assets.car"
