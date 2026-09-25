@@ -1,0 +1,146 @@
+name: Assets.car
+
+# Produces the real `Assets.car` for the app icon with Apple's own actool.
+#
+# Why this exists: the Linux/xtool build has to ship an asset catalog, and
+# xtool cannot compile one -- it copies actool out of the darwin SDK into
+# xtool/.xtool-tmp/actool and execs it, and that copy loses the executable bit
+# (the SDK's actool is 0755, the copy lands 0664), so the launch dies with
+# ".xtool-tmp/actool is not an executable file" before any argument parsing.
+# Even with the bit restored it would fail again: that actool is arm64 Mach-O
+# and the build host is x86_64 Linux.
+#
+# The in-tree fallback (tools/AssetKit, driven by scripts/compile-assets.sh) is
+# a clean-room writer. Its rendition keys were reworked to match actool's
+# layout, but its BITMAPKEYS descriptor is still a guess, and a catalog with a
+# wrong descriptor is rejected by CoreUI -- the app then has no icon at all.
+# So the only trustworthy source of a car is actool itself, and actool only
+# runs on macOS. This workflow is that step, isolated from the app build.
+#
+# The result is uploaded as an artifact and, when the workflow is triggered
+# with `commit: true`, written back into the tree so the Linux build can ship
+# the same bytes the device would have got from Xcode.
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "Write Assets.car back into the repository"
+        type: boolean
+        default: false
+  push:
+    paths:
+      - "layout/Applications/GoldenNuggetMobile.app/Assets.xcassets/**"
+      - ".github/workflows/assets-car.yml"
+  schedule:
+    # Weekly, so an actool format change upstream surfaces without a catalog
+    # edit. Cron is deliberately off the hour to avoid the scheduled-run peak.
+    - cron: "37 4 * * 1"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: assets-car-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  assets-car:
+    name: Compile catalog with actool
+    # macos-latest tracks the newest Xcode; the car format is versioned by the
+    # CoreUI build in the SDK, so the newest actool is the one worth capturing.
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk iphoneos --find actool
+
+      - name: Select Xcode
+        # Pin to a named install so a runner image change cannot silently
+        # change the car format. Falls back to the default when the named one
+        # is absent (older images, self-hosted).
+        run: |
+          for candidate in /Applications/Xcode_16.4.app /Applications/Xcode_16.app; do
+            if [ -d "$candidate" ]; then
+              sudo xcode-select -s "$candidate"
+              echo "using $candidate"
+              break
+            fi
+          done
+          xcodebuild -version
+
+      - name: Compile Assets.xcassets
+        run: |
+          set -euo pipefail
+          CATALOG="layout/Applications/GoldenNuggetMobile.app/Assets.xcassets"
+          OUT="$RUNNER_TEMP/car-out"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+
+          # Keep in sync with project.yml / pbxproj / xtool.yml / the shim in
+          # scripts/compile-assets.sh: all four carry 26.0 and a mismatch
+          # shows up as a different rendition set rather than an error.
+          xcrun --sdk iphoneos actool \
+            --compile "$OUT" \
+            --platform iphoneos \
+            --minimum-deployment-target 26.0 \
+            --app-icon AppIcon \
+            --product-type com.apple.product-type.application \
+            --target-device iphone \
+            --target-device ipad \
+            --include-all-app-icons \
+            --output-format human-readable-text \
+            --output-partial-info-plist "$OUT/AppIcon-partial.plist" \
+            "$CATALOG"
+
+          test -s "$OUT/Assets.car"
+          ls -l "$OUT"
+
+      - name: Report what the catalog produced
+        # The appearance split is the whole point of this catalog, so it is
+        # printed where a CI log can be read rather than hidden behind a diff.
+        # A dropped `luminosity=dark` half must be visible here.
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/car-out"
+          xcrun --sdk iphoneos assetutil --info "$OUT/Assets.car" > "$RUNNER_TEMP/car-info.txt" || true
+          grep -E "AppIcon|Appearance|appearance" "$RUNNER_TEMP/car-info.txt" | head -80 || true
+          echo "--- rendition summary ---"
+          grep -cE "Rendition|appearance" "$RUNNER_TEMP/car-info.txt" || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Assets.car
+          path: |
+            ${{ runner.temp }}/car-out/Assets.car
+            ${{ runner.temp }}/car-out/AppIcon-partial.plist
+            ${{ runner.temp }}/car-info.txt
+          if-no-files-found: error
+
+      - name: Write Assets.car back into the tree
+        # Committed under the app bundle so the Linux build can copy it straight
+        # into build/assets and ship byte-identical bytes.  build/ is
+        # gitignored, and the bundle path is the one xtool.yml already reads.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.commit == true }}
+        run: |
+          set -euo pipefail
+          DEST="layout/Applications/GoldenNuggetMobile.app/Assets.car"
+          cp "$RUNNER_TEMP/car-out/Assets.car" "$DEST"
+          cp "$RUNNER_TEMP/car-out/AppIcon-partial.plist" \
+             "layout/Applications/GoldenNuggetMobile.app/AppIcon-partial.plist"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$DEST" "layout/Applications/GoldenNuggetMobile.app/AppIcon-partial.plist"
+          if git diff --cached --quiet; then
+            echo "car unchanged, nothing to commit"
+            exit 0
+          fi
+          git commit -m "chore(assets): recompile Assets.car with actool ${{ runner.os }}"
+          git push
