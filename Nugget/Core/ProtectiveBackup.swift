@@ -133,16 +133,28 @@ enum ProtectiveBackup {
             // the error: they are the only record of what the device called the
             // domains that got dropped.
             guard trace.kept > 0 else {
-                AppLog.write("protective backup kept 0 of \(trace.total) file(s) — "
-                    + "every payload was dropped by shouldPreserve")
+                // Two failures look identical from the outside and need opposite
+                // fixes, so they are named separately rather than guessed at:
+                //
+                //   total == 0  the host delegate never fired at all. The device
+                //                streamed nothing we were asked to judge, so the
+                //                filter is not what is wrong -- the transfer shape
+                //                on iOS 27 is.
+                //   total  > 0  the filter rejected every name the device used.
+                //                The sample lines below are then the only record
+                //                of what the device actually called its domains.
+                let cause = trace.total == 0
+                    ? "the host keep-filter callback was never called, so the device streamed nothing to judge — the filter is not the problem, the iOS 27 transfer shape is"
+                    : "the keep-filter rejected all \(trace.total) name(s) the device used"
+                AppLog.write("protective backup kept 0 of \(trace.total) file(s) — \(cause)")
                 for line in trace.sampleLines() { AppLog.write(line) }
+                if trace.total == 0 {
+                    AppLog.write("Rust log tail, to see what the device did stream:")
+                    AppLog.write(RustLog.excerpt())
+                }
                 beat.stop()
                 stage.done("FAILED — kept 0 files")
-                throw GoldenNuggetError(
-                    "Protective backup kept no files (0 of \(trace.total)). "
-                    + "The keep-filter matched none of the device's domains, so "
-                    + "there is nothing to inject into. See the log for the "
-                    + "domain names the device reported.")
+                throw GoldenNuggetError("Protective backup kept no files: \(cause).")
             }
             AppLog.write("protective backup finished — \(trace.summary())")
             beat.stop()
