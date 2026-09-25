@@ -204,12 +204,15 @@ class GoldenNuggetEngine {
         for item in compiled.skipped { log("  ⚠️ skipped \(item.label): \(item.reason)") }
 
         let udid = try await prepareRun()
-        let backupRoot = try await protectiveBackup(udid: udid)
+        let backupRoot = try await partialRestore(udid: udid)
 
         try await BackupInjector.pruneAndInject(
             backupRoot: backupRoot,
             udid: udid,
-            tweakPayloads: compiled.payloads
+            tweakPayloads: compiled.payloads,
+            // Nothing was pulled, so there is no device state to reconcile
+            // against -- the backup is what this run built.
+            prune: false
         )
 
         try await runRestore(backupRoot: backupRoot, udid: udid, label: "tweak restore") {
@@ -222,7 +225,22 @@ class GoldenNuggetEngine {
     //
     // The full flow, kept in one place because the order is load-bearing.
 
-    /// Stage 1: a real protective backup into `<Documents>/<udid>/`.
+    /// Stage 1: the working backup, into `<Documents>/<udid>/`.
+    ///
+    /// A Partial Restore, so it is built rather than pulled: an empty device
+    /// directory, then the host-side manifests, then this run's rows and
+    /// payloads. There is no user content to preserve and nothing to wipe, which
+    /// is why the reference's three-phase flow (and its safe-state recovery) has
+    /// no part here on iOS 26 -- the restore lands on the live device.
+    private func partialRestore(udid: String) async throws -> URL {
+        let backupRoot = AppPaths.fullBackupRoot(udid: udid)
+        try resetDirectory(backupRoot)
+        log("Partial Restore: synthesising backup at \(backupRoot.lastPathComponent) "
+            + "(no device content pulled)")
+        return backupRoot
+    }
+
+    /// A real protective backup into `<Documents>/<udid>/`.
     private func protectiveBackup(udid: String) async throws -> URL {
         let backupRoot = AppPaths.fullBackupRoot(udid: udid)
         try resetDirectory(backupRoot)

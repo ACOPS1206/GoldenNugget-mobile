@@ -157,9 +157,11 @@ struct TweaksView: View {
                     if let outcome {
                         GoldenStatusText(text: outcome, tone: outcomeTone)
                     }
-                    GoldenMutedNote(text: "Runs the same protective backup → prune → inject → restore the "
-                        + "app-container flow uses, carrying the compiled plists instead. Reboot the device "
-                        + "afterwards.")
+                    GoldenMutedNote(text: "Partial Restore: the backup is built from nothing — the "
+                        + "host-side manifests, then rows and payloads for the compiled plists only. "
+                        + "No device content is pulled, so nothing is protected and nothing is wiped; "
+                        + "the restore lands on the live device. Reboot afterwards for the "
+                        + "preferences to take effect.")
                 }
             )
         )

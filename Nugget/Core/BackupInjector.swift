@@ -177,10 +177,16 @@ enum BackupInjector {
     /// The injection rides *after* the prune for one reason: the prune keeps only
     /// the reference's keep-set, and no tweak row is in it — a row written before
     /// the prune would be deleted on the way past.
+    /// - Parameter prune: pass `false` to build the backup rather than trim one.
+    ///   A Partial Restore has no device content to protect: the backup is
+    ///   synthesised from the host-side manifests plus this run's rows and
+    ///   payloads, so there is nothing to reconcile against the filesystem and
+    ///   `pruneToDiskState` would only walk an empty payload store.
     static func pruneAndInject(
         backupRoot: URL,
         udid: String,
-        tweakPayloads: [TweakPayload]
+        tweakPayloads: [TweakPayload],
+        prune: Bool = true
     ) async throws {
         let deviceDir = AppPaths.deviceDir(backupRoot: backupRoot, udid: udid)
         let store = ManifestStore(deviceDir: deviceDir)
@@ -192,10 +198,14 @@ enum BackupInjector {
         try HostManifests.ensure(deviceDir: deviceDir, udid: udid)
         manifestStage.done()
 
-        AppLog.write("Pruning Manifest.db…")
-        let pruneStage = StageTimer("prune Manifest.db")
-        store.pruneToDiskState()
-        pruneStage.done()
+        if prune {
+            AppLog.write("Pruning Manifest.db…")
+            let pruneStage = StageTimer("prune Manifest.db")
+            store.pruneToDiskState()
+            pruneStage.done()
+        } else {
+            AppLog.write("Partial Restore: synthesising the backup, nothing to prune.")
+        }
 
         let tweakStage = StageTimer("inject tweaks")
         AppLog.write("Injecting \(tweakPayloads.count) tweak file(s)…")
