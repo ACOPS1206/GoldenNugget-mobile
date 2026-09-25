@@ -41,6 +41,9 @@ struct TweaksView: View {
     /// pattern-matched back out of the string.
     @State private var outcomeTone: GoldenTone = .primary
     @State private var tail: [String] = []
+    /// Tweak categories the user has folded away. Per session, like the rest of
+    /// this page's state -- a collapse is a view preference, not a tweak.
+    @State private var collapsedSections: Set<TweakSection> = []
 
     var body: some View {
         GoldenPage(spacing: GoldenTheme.rowSpacing) {
@@ -77,6 +80,15 @@ struct TweaksView: View {
             case .failure(let error): importError = error.localizedDescription
             }
         }
+    }
+
+    /// Set membership as a `Binding`, which is what the collapsible header wants.
+    private func collapsedBinding(for section: TweakSection) -> Binding<Bool> {
+        Binding(
+            get: { collapsedSections.contains(section) },
+            set: { collapsed in
+                if collapsed { collapsedSections.insert(section) } else { collapsedSections.remove(section) }
+            })
     }
 
     // MARK: - Sections
@@ -128,8 +140,9 @@ struct TweaksView: View {
             let specs = visibleSpecs.filter { $0.section == section }
             if !specs.isEmpty {
                 let on = specs.filter { selection.isOn($0) }.count
-                GoldenSection(
+                GoldenCollapsibleSection(
                     title: "\(section.rawValue) (\(on)/\(specs.count))",
+                    isCollapsed: collapsedBinding(for: section),
                     content: AnyView(
                         VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
                             ForEach(specs, id: \.id) { spec in

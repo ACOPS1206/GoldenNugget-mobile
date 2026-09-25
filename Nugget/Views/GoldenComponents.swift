@@ -67,6 +67,40 @@ struct GoldenSection: View {
     }
 }
 
+/// A section whose rows fold away. The tweaks page has three registry
+/// sections and a long SpringBoard list, so the header doubles as the toggle.
+///
+/// Kept separate from `GoldenSection` rather than added as an option, because
+/// the Daemons and Supervision pages want their sections pinned open: only the
+/// tweak categories are meant to collapse.
+struct GoldenCollapsibleSection: View {
+    let title: String
+    @Binding var isCollapsed: Bool
+    let content: AnyView
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { isCollapsed.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    GoldenSectionHeader(text: title)
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(GoldenTheme.textSecondary)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if !isCollapsed {
+                content
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 /// `styles.py: safety_note` — 12 px italic in the danger tone.  Used for the
 /// lines that say what an action costs (reboot, overwrite).
 struct GoldenSafetyNote: View {
