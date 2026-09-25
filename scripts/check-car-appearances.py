@@ -143,19 +143,29 @@ def main(argv):
     print("  %s identifiers: %s" % (want_name, sorted(x for x in target_ids if x is not None) or "none"))
 
     histogram = Counter()
+    parts = Counter()
     total = 0
+    part_slot = attrs.index(2) if 2 in attrs else None
     for values, name in bom.renditions():
         if target_ids and values[attrs.index(17)] not in target_ids:
             continue
         histogram[values[slot]] += 1
+        if part_slot is not None:
+            # 220 is the classic appiconset bitmap, 245 the Icon Composer
+            # iconstack (layout 1019).  Only the stack carries per-appearance
+            # variants, so which of the two landed says whether the `.icon`
+            # was picked up at all.
+            parts[values[part_slot]] += 1
         total += 1
 
     rows = bom.appearance_rows()
-    print("  APPEARANCEKEYS: %s" % (rows or "absent"))
     labels = {value: key for key, value in rows}
-    print("  %s renditions: %d total" % (want_name, total))
+    print("  APPEARANCEKEYS: %s" % (rows or "absent"))
+    print("  %s renditions: %d total, by part: %s"
+          % (want_name, total, dict(sorted(parts.items())) or "n/a"))
     for value, count in sorted(histogram.items()):
         print("    appearance=%-3s (%s): %d" % (value, labels.get(value, "unmapped"), count))
+
 
     if total == 0:
         print("  FAIL: no renditions matched %s" % want_name)
