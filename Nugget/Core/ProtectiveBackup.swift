@@ -124,6 +124,26 @@ enum ProtectiveBackup {
                 AppLog.write("backup call returned — device commit done, checking the staging tree…")
                 reportStagingLeftovers(backupRoot: backupRoot, udid: udid)
             }
+            // A backup that kept nothing is not a successful backup. The pull
+            // completes, the manifest is written, and the run then prunes an
+            // empty set and restores nothing -- which looks identical to "the
+            // backup did not happen" and says nothing about why. On iOS 27 this
+            // is the failure mode when `shouldPreserve` no longer matches the
+            // domain names the device reports, so the sample lines go out with
+            // the error: they are the only record of what the device called the
+            // domains that got dropped.
+            guard trace.kept > 0 else {
+                AppLog.write("protective backup kept 0 of \(trace.total) file(s) — "
+                    + "every payload was dropped by shouldPreserve")
+                for line in trace.sampleLines() { AppLog.write(line) }
+                beat.stop()
+                stage.done("FAILED — kept 0 files")
+                throw GoldenNuggetError(
+                    "Protective backup kept no files (0 of \(trace.total)). "
+                    + "The keep-filter matched none of the device's domains, so "
+                    + "there is nothing to inject into. See the log for the "
+                    + "domain names the device reported.")
+            }
             AppLog.write("protective backup finished — \(trace.summary())")
             beat.stop()
             stage.done(trace.summary())

@@ -141,6 +141,14 @@ final class BackupTrace: @unchecked Sendable {
         return droppedCount
     }
 
+    /// Every file the device offered, kept or not. `kept == 0` with a non-zero
+    /// total is the "backup ran but matched nothing" case, which is
+    /// indistinguishable from no backup at all without this.
+    var total: Int {
+        lock.lock(); defer { lock.unlock() }
+        return totalCount
+    }
+
     /// Timestamp of the last sign of life from the device.
     ///
     /// The Rust DeviceLink read has no timeout of its own, so this is the only
