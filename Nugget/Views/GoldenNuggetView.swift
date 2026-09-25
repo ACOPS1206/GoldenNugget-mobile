@@ -200,7 +200,7 @@ struct GoldenNuggetView: View {
                 .buttonStyle(.plain)
             case 2:
                 NavigationLink {
-                    SupervisionView(selection: $tweakSelection)
+                    SupervisionView()
                 } label: {
                     GoldenFeatureCardLabel(
                         title: "Supervision",
@@ -266,18 +266,18 @@ struct GoldenNuggetView: View {
         }
     }
 
-    /// The reference's "Reset Tweaks" restores the original values on the device.
-    /// That is not something this button can do — undoing an apply means putting
-    /// back a backup taken before it — so it says what it actually does instead
-    /// of borrowing the reference's name for it.
+    /// Named for the reference's button, but not the reference's behaviour: that
+    /// one restores the original values on the device, and undoing an apply here
+    /// would mean putting back a backup taken before it. So the title is the
+    /// familiar one and the card says what this actually does.
     private var clearCard: some View {
         GoldenCard {
             GoldenMutedNote(text: "Turns every tweak off in this app. The device is not "
                 + "touched: to undo an apply, restore a backup from before it.")
-            GoldenDangerButton(title: "Clear Selection",
+            GoldenDangerButton(title: "Reset Tweaks",
                                disabled: tweakSelection.enabledCount == 0) {
                 tweakSelection.removeAll()
-                showStatus("Selection cleared.", .warning)
+                showStatus("Tweaks reset.", .warning)
             }
         }
     }
