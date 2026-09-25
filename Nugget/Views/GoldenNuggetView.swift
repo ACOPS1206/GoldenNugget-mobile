@@ -184,7 +184,7 @@ struct GoldenNuggetView: View {
     }
 
     private var tweakCards: some View {
-        GoldenCardGrid(itemCount: 4) { index in
+        GoldenCardGrid(itemCount: 5) { index in
             switch index {
             case 0:
                 NavigationLink {
@@ -217,7 +217,7 @@ struct GoldenNuggetView: View {
                         detail: supervisionDetail)
                 }
                 .buttonStyle(.plain)
-            default:
+            case 3:
                 NavigationLink {
                     MediaView()
                 } label: {
@@ -225,6 +225,16 @@ struct GoldenNuggetView: View {
                         title: "Media",
                         subtitle: "Photos and videos",
                         detail: mediaDetail)
+                }
+                .buttonStyle(.plain)
+            default:
+                NavigationLink {
+                    FilesView()
+                } label: {
+                    GoldenFeatureCardLabel(
+                        title: "Files",
+                        subtitle: "Browse the device",
+                        detail: "Over AFC")
                 }
                 .buttonStyle(.plain)
             }
