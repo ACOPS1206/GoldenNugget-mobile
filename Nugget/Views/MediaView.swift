@@ -20,6 +20,25 @@ struct MediaView: View {
 
     private var free: Int64 { AfcMediaBackup.containerFreeBytes() }
 
+    /// Read once on entry rather than starting at nil. The two store-dependent
+    /// buttons gate on `manifest?.entries`, so a nil manifest disabled both of
+    /// them for the whole session -- including after a pull from a previous run,
+    /// which is exactly when you come back to push or clear.
+    private func loadManifest() {
+        manifest = try? AfcMediaBackup.read()
+    }
+
+    /// Whether the store holds anything, from the filesystem rather than from
+    /// the last run's manifest: a pull that was interrupted, or files left by an
+    /// earlier build, are real data that "Empty" must still be able to remove.
+    private var hasStoredFiles: Bool {
+        if let m = manifest, !m.entries.isEmpty { return true }
+        let fm = FileManager.default
+        guard let walker = fm.enumerator(atPath: AfcMediaBackup.storeRoot.path) else { return false }
+        for case let name as String in walker where name.hasSuffix(".afcpartial") { return true }
+        return false
+    }
+
     var body: some View {
         GoldenPage {
             GoldenSection(
@@ -38,13 +57,22 @@ struct MediaView: View {
                         GoldenActionRow(title: "Push back to device", systemImage: "arrow.up.doc", tone: .primary) {
                             Task { await push() }
                         }
-                        .disabled(busy || (manifest?.entries.isEmpty ?? true))
+                        .disabled(busy || !hasStoredFiles)
                         GoldenActionRow(title: "Empty the local store", systemImage: "trash", tone: .error) {
-                            try? AfcMediaBackup.clear()
-                            manifest = try? AfcMediaBackup.read()
-                            lines = ["Local media store emptied."]
+                            // Was `try?` with a success message printed either way,
+                            // so a failure looked identical to a success. It is
+                            // routed through run() so the error surfaces, and
+                            // loadManifest() re-reads rather than assuming the
+                            // store is empty now.
+                            Task {
+                                await run {
+                                    try AfcMediaBackup.clear()
+                                    loadManifest()
+                                    lines.append("Local media store emptied.")
+                                }
+                            }
                         }
-                        .disabled(busy || (manifest?.entries.isEmpty ?? true))
+                        .disabled(busy || !hasStoredFiles)
                         GoldenSafetyNote(text: "Emptying the store is only safe once the originals are "
                             + "back on the device and verified there.")
                     }
@@ -65,6 +93,7 @@ struct MediaView: View {
                 }))
             }
         }
+        .task { loadManifest() }
         .confirmationDialog(
             "Remove \(survey?.files.count ?? 0) original(s) after copying?",
             isPresented: $confirmPull, titleVisibility: .visible
@@ -145,6 +174,7 @@ struct MediaView: View {
             try await AfcMediaBackup.push { line in
                 Task { @MainActor in lines.append(line) }
             }
+            loadManifest()
         }
     }
 

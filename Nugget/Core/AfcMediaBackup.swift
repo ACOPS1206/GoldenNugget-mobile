@@ -227,31 +227,82 @@ enum AfcMediaBackup {
         let manifest = try read()
         let gateway = try await gateway()
         var restored = 0
+        var skipped = 0
 
         for entry in manifest.entries {
             let local = storeRoot.appendingPathComponent(entry.storedAs, conformingTo: .data)
             guard FileManager.default.fileExists(atPath: local.path) else {
                 onProgress?("AFC push: missing \(entry.storedAs) — skipped")
+                skipped += 1
                 continue
             }
-            let directory = (entry.source as NSString).deletingLastPathComponent
-            if !directory.isEmpty, directory != "/" {
+            // Every level has to exist before the leaf. One afcMakeDirectory call
+            // for "/DCIM/100APPLE" fails when /DCIM is absent, and `try?` used to
+            // swallow exactly that, so the write then failed with a message that
+            // pointed nowhere near the real cause.
+            for directory in ancestors(of: entry.source) {
                 try? await gateway.afcMakeDirectory(path: directory)
             }
+
+            // `afcWrite` takes the whole file as one `Data`, and there is no
+            // streaming write in the gateway API — so unlike the pull there is
+            // no way to avoid holding it in memory. A file that does not fit is
+            // reported and skipped rather than risking a jetsam kill that takes
+            // the run down with it; the local copy is left untouched either way.
+            let size = (try? FileManager.default
+                .attributesOfItem(atPath: local.path)[.size] as? NSNumber)??.int64Value ?? 0
+            guard size <= Self.inlineWriteLimit else {
+                onProgress?("AFC push: \(entry.storedAs) is \(size) byte(s) — too large "
+                    + "to write over AFC (limit \(Self.inlineWriteLimit)); left on the device")
+                skipped += 1
+                continue
+            }
+
             let data = try Data(contentsOf: local)
             try await gateway.afcWrite(path: entry.source, data: data)
+
+            // The pull verifies before deleting, so the push verifies before
+            // reporting: a short write is caught here rather than discovered
+            // later as a truncated photo.
+            let written = (try? await gateway.afcEntryInfo(path: entry.source))?.size ?? -1
+            guard written == size else {
+                onProgress?("AFC push: \(entry.source) size mismatch — device reports "
+                    + "\(written), expected \(size)")
+                skipped += 1
+                continue
+            }
             restored += 1
             onProgress?("AFC push: \(entry.source)")
         }
-        onProgress?("AFC push: \(restored) file(s) restored")
+        onProgress?("AFC push: \(restored) restored, \(skipped) skipped")
     }
+
+    /// `/DCIM/100APPLE/IMG_0001.JPG` -> `["/DCIM", "/DCIM/100APPLE"]`, outermost
+    /// first, which is the order AFC needs them created in.
+    private static func ancestors(of path: String) -> [String] {
+        var out: [String] = []
+        var parts = path.split(separator: "/").map(String.init)
+        guard parts.count > 1 else { return [] }
+        parts.removeLast()
+        var prefix = ""
+        for part in parts {
+            prefix += "/" + part
+            out.append(prefix)
+        }
+        return out
+    }
+
+    /// The largest file `afcWrite` will take. Chosen to stay clear of the memory
+    /// a jetsam kill would cost, not to match anything the device reports.
+    static let inlineWriteLimit: Int64 = 64 << 20
 
     /// Empty the store, once the originals are back and verified on the device.
     static func clear() throws {
-        if FileManager.default.fileExists(atPath: storeRoot.path) {
-            try FileManager.default.removeItem(at: storeRoot)
-        }
-        try? FileManager.default.removeItem(at: manifestURL)
+        let fm = FileManager.default
+        if fm.fileExists(atPath: storeRoot.path) { try fm.removeItem(at: storeRoot) }
+        // The manifest lives inside the store, so the line above normally takes
+        // it. Kept for the case where only the file is there.
+        if fm.fileExists(atPath: manifestURL.path) { try fm.removeItem(at: manifestURL) }
     }
 
     // MARK: - Internals
