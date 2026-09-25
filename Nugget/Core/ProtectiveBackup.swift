@@ -335,24 +335,15 @@ extension ProtectiveBackup {
 
 extension ProtectiveBackup {
     /// Domains whose rows are kept whole.
+    /// Restored to the `a351d89` set minus `MediaDomain`, which is the one
+    /// thing deliberately left out: it is photo metadata (PhotoData,
+    /// PhotoStream), not pictures, and it is the half that cannot be listed over
+    /// AFC (`PhotoData/UBF` fails with PERM_DENIED on iOS 27). Bulk media goes
+    /// over AFC instead, from `AfcMediaBackup`.
     private static let protectiveDomains: Set<String> = [
+        "CameraRollDomain",   // actual photos and videos (DCIM/)
         "MessagesDomain",     // iMessage / SMS / MMS
     ]
-
-    /// `CameraRollDomain` (DCIM) and `MediaDomain` (PhotoData, PhotoStream)
-    /// used to be here, which is what made every protective run pull the whole
-    /// photo library over AFC-speed USB before throwing it away at the prune.
-    ///
-    /// They are not kept any more, and the *mid-stream* filter has never kept
-    /// them either — `isProtectiveFile` above only ever matched metadata files,
-    /// SystemPreferencesDomain, MessagesDomain and the HomeDomain paths, so
-    /// those two domains were already being rejected mid-transfer. Dropping them
-    /// here too makes the prune agree with the filter instead of keeping rows
-    /// whose payload was deliberately never written.
-    ///
-    /// Media is therefore neither backed up nor moved anywhere: the app has no
-    /// file browser and no media vault, so photos, videos and audio stay on the
-    /// device and are simply outside what a backup run collects.
 
     /// HomeDomain prefixes holding Apple ID account data and user settings.
     private static let appleIDPrefixes = [
