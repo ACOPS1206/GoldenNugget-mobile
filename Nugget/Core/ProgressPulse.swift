@@ -130,6 +130,15 @@ final class BackupTrace: @unchecked Sendable {
     private var lastStep = -1
     private var samples: [String] = []
     private var lastActivity = Date()
+    /// Every distinct `device_name` the callback was handed, with how many files
+    /// it carried and how many survived the filter.
+    ///
+    /// This is the one thing that decides whether a zero-kept run is fixable in
+    /// Swift: the keep-rules match on `device_name`, so if iOS 27 hands over a
+    /// bare domain where a path prefix is expected, every rule misses and the
+    /// counts here are the proof. `samples` shows twelve individual files, which
+    /// is enough to guess from and not enough to rely on.
+    private var byDomain: [String: (total: Int, kept: Int)] = [:]
 
     var kept: Int {
         lock.lock(); defer { lock.unlock() }
@@ -139,6 +148,17 @@ final class BackupTrace: @unchecked Sendable {
     var dropped: Int {
         lock.lock(); defer { lock.unlock() }
         return droppedCount
+    }
+
+    /// One line naming every domain the device offered and how much of it
+    /// survived. Sorted so two runs diff cleanly.
+    func domainSummary() -> String {
+        lock.lock(); defer { lock.unlock() }
+        guard !byDomain.isEmpty else { return "no domains seen" }
+        return byDomain
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)(\($0.value.total) seen, \($0.value.kept) kept)" }
+            .joined(separator: " ")
     }
 
     /// Every file the device offered, kept or not. `kept == 0` with a non-zero
@@ -163,7 +183,9 @@ final class BackupTrace: @unchecked Sendable {
     /// (the head of the stream is where an unexpected domain shows up first).
     func note(file: String, domain: String, keep: Bool) {
         lock.lock()
-        defer { lock.unlock() }
+        defer { lock.unlock()
+        let bucket = byDomain[domain] ?? (0, 0)
+        byDomain[domain] = (bucket.total + 1, bucket.kept + (keep ? 1 : 0)) }
         totalCount += 1
         if keep { keptCount += 1 } else { droppedCount += 1 }
         lastActivity = Date()

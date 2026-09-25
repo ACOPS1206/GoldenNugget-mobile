@@ -147,6 +147,7 @@ enum ProtectiveBackup {
                     ? "the host keep-filter callback was never called, so the device streamed nothing to judge — the filter is not the problem, the iOS 27 transfer shape is"
                     : "the keep-filter rejected all \(trace.total) name(s) the device used"
                 AppLog.write("protective backup kept 0 of \(trace.total) file(s) — \(cause)")
+                AppLog.write("domains: \(trace.domainSummary())")
                 for line in trace.sampleLines() { AppLog.write(line) }
                 if trace.total == 0 {
                     AppLog.write("Rust log tail, to see what the device did stream:")
@@ -154,7 +155,8 @@ enum ProtectiveBackup {
                 }
                 beat.stop()
                 stage.done("FAILED — kept 0 files")
-                throw GoldenNuggetError("Protective backup kept no files: \(cause).")
+                throw GoldenNuggetError("Protective backup kept no files: \(cause). "
+                    + "Domains: \(trace.domainSummary())")
             }
             AppLog.write("protective backup finished — \(trace.summary())")
             beat.stop()
