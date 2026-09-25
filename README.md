@@ -1,5 +1,5 @@
-# PoC
-Write files via backups.
+# GoldenNugget (Mobile)
+Unlock your device fullest potential without pc!
 # Quick start
 1st Grab latest release\
 2nd install localdevvpn from app store\
