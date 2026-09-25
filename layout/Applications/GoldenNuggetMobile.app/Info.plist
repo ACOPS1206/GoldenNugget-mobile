@@ -8,21 +8,12 @@
 	<string>GoldenNugget</string>
 	<key>CFBundleExecutable</key>
 	<string>GoldenNuggetMobile</string>
-	<key>CFBundleIconFile</key>
-	<string>AppIcon60x60@2x</string>
 	<key>CFBundleIconName</key>
 	<string>AppIcon</string>
 	<key>CFBundleIcons</key>
 	<dict>
 		<key>CFBundlePrimaryIcon</key>
 		<dict>
-			<key>CFBundleIconFiles</key>
-			<array>
-				<string>AppIcon20x20</string>
-				<string>AppIcon29x29</string>
-				<string>AppIcon40x40</string>
-				<string>AppIcon60x60</string>
-			</array>
 			<key>CFBundleIconName</key>
 			<string>AppIcon</string>
 		</dict>
@@ -31,15 +22,6 @@
 	<dict>
 		<key>CFBundlePrimaryIcon</key>
 		<dict>
-			<key>CFBundleIconFiles</key>
-			<array>
-				<string>AppIcon20x20</string>
-				<string>AppIcon29x29</string>
-				<string>AppIcon40x40</string>
-				<string>AppIcon60x60</string>
-				<string>AppIcon76x76</string>
-				<string>AppIcon83.5x83.5</string>
-			</array>
 			<key>CFBundleIconName</key>
 			<string>AppIcon</string>
 		</dict>

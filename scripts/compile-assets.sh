@@ -28,6 +28,31 @@ if [[ ! -d "$CATALOG" ]]; then
     exit 1
 fi
 
+ACTOOL_CAR="$ROOT/layout/Applications/GoldenNuggetMobile.app/Assets.car"
+
+if [[ -s "$ACTOOL_CAR" ]]; then
+    # Authoritative path. The car comes from Apple's own actool via
+    # .github/workflows/assets-car.yml, and the catalog is an Icon Composer
+    # bundle, so there is no appiconset for the shim to compile and no loose
+    # PNGs to emit.
+    #
+    # The loose PNGs are deliberately absent, not merely unused. They are
+    # light-only by construction, and the asset-catalog compiler emits them so
+    # that "external management tools can display a representative icon
+    # without reading the CAR file" (AssetCatalogCompiler.xcspec,
+    # standalone-icon-behavior). Shipping them alongside an iconstack means the
+    # light artwork wins and the dark variant never reaches the home screen --
+    # which is exactly the bug this build path exists to fix.
+    echo "compile-assets: using the actool car ($(stat -c%s "$ACTOOL_CAR") bytes), no loose PNGs"
+    rm -rf "$OUT"
+    mkdir -p "$OUT"
+    cp "$ACTOOL_CAR" "$OUT/Assets.car"
+    cp "$ROOT/layout/Applications/GoldenNuggetMobile.app/AppIcon-partial.plist" \
+       "$OUT/AppIcon-partial.plist" 2>/dev/null || true
+    echo "compile-assets: wrote $(ls -1 "$OUT" | wc -l) files to build/assets"
+    exit 0
+fi
+
 echo "compile-assets: building the shim"
 (cd "$ROOT/tools/assetkit-cli" && swift build -c release)
 
