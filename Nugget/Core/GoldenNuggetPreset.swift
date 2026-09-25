@@ -61,7 +61,7 @@ struct GoldenNuggetPreset {
     let metadata: Metadata
     let entries: [Entry]
 
-    /// Parse a preset document.  Throws `PoCError` when the JSON is not a
+    /// Parse a preset document.  Throws `GoldenNuggetError` when the JSON is not a
     /// preset at all — the same "Invalid preset format" gate the reference's
     /// `import_preset` applies (a document with neither `tweaks` nor `metadata`
     /// is not one).
@@ -70,13 +70,13 @@ struct GoldenNuggetPreset {
         do {
             root = try JSONSerialization.jsonObject(with: data, options: [])
         } catch {
-            throw PoCError("autosave.json: not valid JSON (\(error.localizedDescription))")
+            throw GoldenNuggetError("autosave.json: not valid JSON (\(error.localizedDescription))")
         }
         guard let object = root as? [String: Any] else {
-            throw PoCError("autosave.json: top level is not a JSON object")
+            throw GoldenNuggetError("autosave.json: top level is not a JSON object")
         }
         guard object["tweaks"] != nil || object["metadata"] != nil else {
-            throw PoCError("autosave.json: no \"tweaks\" or \"metadata\" — not a GoldenNugget preset")
+            throw GoldenNuggetError("autosave.json: no \"tweaks\" or \"metadata\" — not a GoldenNugget preset")
         }
 
         return GoldenNuggetPreset(metadata: parseMetadata(object["metadata"]),

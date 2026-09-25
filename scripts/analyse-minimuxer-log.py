@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tabulate jktcp's delivery clock from a minimuxer.log.
 
-The question the poc.log could not answer: is `expected` (the next byte jktcp can
+The question the goldennugget.log could not answer: is `expected` (the next byte jktcp can
 hand upstream) standing still, advancing steadily, or advancing in steps?  That
 separates "the tunnel is dead" from "the tunnel is delivering in chunks".
 """

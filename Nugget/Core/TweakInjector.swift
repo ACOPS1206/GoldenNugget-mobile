@@ -11,7 +11,7 @@ import Foundation
 /// is `-2/-2`, a `DatabaseDomain` row is `0/0`), and the device wins.
 ///
 /// `verified` records whether this app has ever *shipped* a restore against
-/// that shape.  The two set to `true` are the classes the PoC already delivers
+/// that shape.  The two set to `true` are the classes this app already delivers
 /// (`AppDomain-*` and the footnote's `SysSharedContainerDomain`); the others are
 /// measured off the backup but have not been through a run, so they are warned
 /// about in the log rather than quietly presented as proven.
@@ -51,7 +51,7 @@ struct TweakRowProfile {
     /// to the file row.
     ///
     /// The two `false` values are the two classes this app had shipped a restore
-    /// with — AppDomain (the app-container PoC) and SysSharedContainer (the Lock
+    /// with — AppDomain (the app-container flow) and SysSharedContainer (the Lock
     /// Screen footnote) — which is exactly why an injector that never wrote a
     /// digest passed for both and could not pass for the four below.
     let carriesDigest: Bool
@@ -77,7 +77,7 @@ struct TweakRowProfile {
 
 extension TweakRowProfile {
     /// `AppDomain-*`: the class `BackupInjector.inject` already delivers, with
-    /// production evidence (the PoC's own app-container restores).
+    /// production evidence (this app's own app-container restores).
     static let appContainer = TweakRowProfile(
         fileOwner: 501, fileGroup: 501, fileProtectionClass: PROTECTION_CLASS_FILE,
         fileExceptionPublisher: "com.apple.containermanagerd_system",

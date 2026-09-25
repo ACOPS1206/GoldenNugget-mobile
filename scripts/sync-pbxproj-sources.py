@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reconcile the Xcode project's project.pbxproj with Package.swift.
 
-Package.swift is the single source of truth for which files the PoC target
+Package.swift is the single source of truth for which files the GoldenNuggetMobile target
 compiles.  It did not use to be: the manifest carried a hand-maintained list of
 50 paths that had to be kept in step with the Xcode project by hand, and that
 list had already drifted — Nugget/Core/InFlightCall.swift was missing from it.

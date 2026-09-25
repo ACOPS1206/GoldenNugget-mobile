@@ -14,7 +14,7 @@
 // Run:  xcrun swiftc -O -o /tmp/crawl-verdict-harness scripts/crawl-verdict-harness.swift \
 //         && /tmp/crawl-verdict-harness
 //
-// Numbers are taken from the 2026-09-19 poc.log runs; `pollSeconds` is 5 s in the
+// Numbers are taken from the 2026-09-19 goldennugget.log runs; `pollSeconds` is 5 s in the
 // real guard, and the streams below step at the same rate.
 //
 // Expected output (current rule):
@@ -29,7 +29,7 @@
 import Foundation
 
 // Replays StallGuard's crawl decision against three synthetic poll streams whose
-// numbers are taken from the 2026-09-19 poc.log runs.  Purpose: show that the
+// numbers are taken from the 2026-09-19 goldennugget.log runs.  Purpose: show that the
 // OLD term (gap must grow, +8 KB) rejects the static-gap shape that wedged a run
 // at 52 % for 200 s, and that the NEW term (gap must not be closing) accepts both
 // shapes while still leaving a healthy stream alone.

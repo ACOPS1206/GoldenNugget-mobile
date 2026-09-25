@@ -10,6 +10,10 @@ xcuserdata/
 
 # scratch dir xtool regenerates on every run
 **/.xtool-tmp/
+# xtool's build output: the .app bundle, its Frameworks and the .ipa.  `*.ipa`
+# covers the ipa only, so the assembled .app showed up as untracked after every
+# build; the whole directory is generated.
+xtool/
 # local Rust toolchain + upstream idevice checkout used by
 # scripts/build-idevice-ios.sh (keeps ~/.cargo and ~/.rustup untouched)
 .rust/

@@ -2,7 +2,7 @@ import Foundation
 
 /// A destination for one already-formatted log line.
 ///
-/// The engine used to log through `PoCEngine.shared.log`, which made every
+/// The engine used to log through `GoldenNuggetEngine.shared.log`, which made every
 /// helper that merely wanted to say something — the stage timer, the heartbeat,
 /// the stall guard, the wire tailer — depend on the whole engine type.  A narrow
 /// sink is what lets those helpers move out of it.
@@ -10,7 +10,7 @@ protocol LogSink: AnyObject, Sendable {
     func write(_ line: String)
 }
 
-/// `<Documents>/poc.log` — append-only sink, rotated by dropping the older half.
+/// `<Documents>/goldennugget.log` — append-only sink, rotated by dropping the older half.
 ///
 /// The on-screen list alone is not enough: it only ever shows the tail and dies
 /// with the process, so anything written there (the host-side delegate
@@ -100,7 +100,7 @@ final class MemoryLogSink: LogSink, @unchecked Sendable {
 ///
 /// The sinks are installed by this type itself rather than by an owner, because
 /// logging is the one dependency every other layer has — a helper that logs
-/// before the engine exists must still land in `poc.log`.
+/// before the engine exists must still land in `goldennugget.log`.
 final class AppLog: @unchecked Sendable {
     static let shared = AppLog()
 

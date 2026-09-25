@@ -35,103 +35,16 @@ enum LockScreenFootnoteTweak {
     }
 }
 
-/// Builds the rows and payload that turn "one file for one app" into a restorable
-/// backup.
+/// Turns the backup the device just gave us into one the restore daemon will
+/// accept: prune `Manifest.db` down to what is actually on disk, then write the
+/// rows and payloads for the files this run is delivering.
 ///
-/// The whole point of the PoC: take the backup the device just gave us, make the
-/// manifest agree with what is actually on disk, then add a single
-/// `AppDomain-<bundleId>/Documents/<file>` on top and restore.
-///
-/// Two file classes are injected, and they do **not** share a row shape: an app
-/// container (`inject` — needs the bundle registered, 501/501, protection class
-/// 3) and a system-container plist (`injectSystemPlist` — no registration,
-/// `nobody`, class 4).  The split is not cosmetic; the shapes come from the
-/// device's own rows for each class.
+/// The delivered files are system-container plists, and the row shape for one of
+/// those is *not* the shape an app container takes — no `Applications`
+/// registration, `nobody` as owner, protection class 4.  The shape comes from
+/// the device's own row for the same path, which is the only version of it that
+/// cannot be wrong.
 enum BackupInjector {
-    /// Inject one file into an existing backup directory.
-    ///
-    /// Writes the payload, creates the directory + file rows in Manifest.db, and
-    /// registers the app in Manifest.plist / Info.plist.
-    static func inject(
-        into deviceDir: URL,
-        domain: String,
-        relativePath: String,
-        contents: Data,
-        appInfo: NuggetAppInfo
-    ) throws {
-        let fileID = ManifestStore.fileID(domain: domain, relativePath: relativePath)
-        let store = ManifestStore(deviceDir: deviceDir)
-        let fm = FileManager.default
-
-        // 1. Write the payload where the fileID says it lives.
-        let payloadDir = store.payloadURL(forFileID: fileID).deletingLastPathComponent()
-        try fm.createDirectory(at: payloadDir, withIntermediateDirectories: true)
-        try contents.write(to: store.payloadURL(forFileID: fileID))
-
-        // 2. Insert rows.
-        //
-        //    One flags=2 directory row per parent path component (domain root
-        //    first), each keyed by sha1("<domain>-<dirRel>"), then one flags=1
-        //    file row keyed by sha1("<domain>-<relativePath>").
-        //
-        //    The dir rows MUST NOT reuse the file row's ID: on a fresh empty
-        //    Manifest.db a PRIMARY KEY collision would make the file-row INSERT
-        //    fail and the restore would silently do nothing.
-        let parentComponents = (relativePath as NSString).deletingLastPathComponent
-            .split(separator: "/").map(String.init)
-
-        var rows: [(path: String, flags: Int32)] = [("", 2)]   // domain root dir
-        var accumulated = ""
-        for component in parentComponents {
-            accumulated = accumulated.isEmpty ? component : "\(accumulated)/\(component)"
-            rows.append((accumulated, 2))
-        }
-        rows.append((relativePath, 1))                          // the file itself
-
-        let dataprotection = buildDataprotectionExtendedAttributes()
-
-        for row in rows {
-            let isFile = row.flags == 1
-            let rowID = ManifestStore.fileID(domain: domain, relativePath: row.path)
-            // Every field below is copied from the shape the device writes for
-            // the same kind of row — see `MBFileBlob`'s constants for the
-            // measurement. A record the device did not write itself is the one
-            // place a wrong value cannot be repaired by re-uploading, which is
-            // why these are not "reasonable defaults" but the observed values.
-            let blob = buildMBFileBlob(
-                relativePath: row.path,
-                // `Int`, not `UInt32`: the archived `Mode` has to be an inline
-                // integer or the device cannot read the file type out of the row
-                // (MBErrorDomain/205 — "Invalid file type: 00").  See
-                // `MBFileArchiver.mode`.
-                mode: isFile
-                    ? (Int(MODE_FILE_DEFAULT) | Int(S_IFREG))
-                    : (Int(MODE_DIR_DEFAULT) | Int(S_IFDIR)),
-                size: isFile ? contents.count : 0,
-                protectionClass: isFile ? PROTECTION_CLASS_FILE : PROTECTION_CLASS_DIR,
-                inodeNumber: inode(for: rowID),
-                extendedAttributes: isFile ? dataprotection : nil
-            )
-            try store.upsert(
-                fileID: rowID,
-                domain: domain,
-                relativePath: row.path,
-                flags: row.flags,
-                blob: blob
-            )
-        }
-
-        // 3. Register the app so the restore daemon accepts the domain.
-        try HostManifests.registerApp(deviceDir: deviceDir, app: appInfo)
-
-        AppLog.write("Injected \(domain)/\(relativePath) (fileID=\(fileID))")
-        // The device reads a "file type" out of these blobs, and the four rows
-        // written just above are the only ones in this backup that are not the
-        // device's own. Log both key sets side by side so the next run can say
-        // whether they differ — see `blobKeySample`.
-        AppLog.write(store.blobKeySample(ours: fileID))
-    }
-
     /// Inject one file that is NOT an app container — currently only the Lock
     /// Screen footnote, a `SysSharedContainerDomain` plist.
     ///
@@ -261,28 +174,13 @@ enum BackupInjector {
     /// device's manifest down to what is on disk, then inject what the run is
     /// delivering.
     ///
-    /// Three kinds of payload can ride this stage, and each is injected *after*
-    /// the prune for the same reason: the prune keeps only the reference's
-    /// keep-set, and none of these rows are in it — a row written before the
-    /// prune would be deleted on the way past.
-    ///
-    ///   * the app-container file (`bundleID` given) — needs the bundle
-    ///     registered in `Manifest.plist`;
-    ///   * the Lock Screen footnote (`footnote` given) — a system-container
-    ///     plist, no registration;
-    ///   * the compiled plist tweaks (`tweakPayloads`) — a set of files across
-    ///     the domains `TweakRowProfile` describes.
-    ///
-    /// `bundleID` is optional because GoldenNugget's tweak-only apply carries no
-    /// app container at all (`device_manager._apply_tweak_pass` builds the file
-    /// list from the tweaks alone).
+    /// The injection rides *after* the prune for one reason: the prune keeps only
+    /// the reference's keep-set, and no tweak row is in it — a row written before
+    /// the prune would be deleted on the way past.
     static func pruneAndInject(
         backupRoot: URL,
         udid: String,
-        bundleID: String?,
-        fileName: String,
-        contents: Data,
-        tweakPayloads: [TweakPayload] = []
+        tweakPayloads: [TweakPayload]
     ) async throws {
         let deviceDir = AppPaths.deviceDir(backupRoot: backupRoot, udid: udid)
         let store = ManifestStore(deviceDir: deviceDir)
@@ -299,33 +197,14 @@ enum BackupInjector {
         store.pruneToDiskState()
         pruneStage.done()
 
-        if let bundleID, !bundleID.isEmpty {
-            let lookupStage = StageTimer("InstProxy lookup \(bundleID)")
-            let appInfo = try await InstProxy.lookup(bundleID: bundleID)
-            lookupStage.done("v\(appInfo.version)")
-            AppLog.write("Target app: \(bundleID) v\(appInfo.version)")
-
-            let domain = "AppDomain-\(bundleID)"
-            AppLog.write("Injecting \(domain)/Documents/\(fileName)…")
-            let injectStage = StageTimer("inject")
-            try inject(into: deviceDir,
-                       domain: domain,
-                       relativePath: "Documents/\(fileName)",
-                       contents: contents,
-                       appInfo: appInfo)
-            injectStage.done()
-        }
-        
-        if !tweakPayloads.isEmpty {
-            let tweakStage = StageTimer("inject tweaks")
-            AppLog.write("Injecting \(tweakPayloads.count) tweak file(s)…")
-            let report = try TweakInjector.inject(into: deviceDir, payloads: tweakPayloads)
-            tweakStage.done(report.summary)
-            AppLog.write("Tweaks injected: \(report.summary)")
-            for domain in report.unverifiedDomains {
-                AppLog.write("note: the \(domain) row shape is measured from the device's own "
-                    + "backup but has not been confirmed by a run yet")
-            }
+        let tweakStage = StageTimer("inject tweaks")
+        AppLog.write("Injecting \(tweakPayloads.count) tweak file(s)…")
+        let report = try TweakInjector.inject(into: deviceDir, payloads: tweakPayloads)
+        tweakStage.done(report.summary)
+        AppLog.write("Tweaks injected: \(report.summary)")
+        for domain in report.unverifiedDomains {
+            AppLog.write("note: the \(domain) row shape is measured from the device's own "
+                + "backup but has not been confirmed by a run yet")
         }
     }
 }

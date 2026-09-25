@@ -8,15 +8,29 @@ and 4 sideload programm via: Livecontainer, Alt/SideStore or ILoader
 
 # Building
 
+The app binary is `GoldenNuggetMobile`, and `CFBundleExecutable` in
+`layout/Applications/GoldenNuggetMobile.app/Info.plist` has to agree with the
+SwiftPM product name in `Package.swift` — a mismatch fails the xtool build at
+the signing step with `Can't parse BundleExecute file!`.
+
+xtool (works on Linux and macOS, driven by `xtool.yml`):
+
 ```sh
-scripts/build-ipa.sh Release      # -> build/PoC.ipa (unsigned)
+xtool dev build -c release -i     # -> xtool/GoldenNuggetMobile.ipa
 ```
 
-Source layout and the conventions that matter live in `Nugget/Core/PoCEngine.swift`.
+Xcode (macOS only, driven by `GoldenNuggetMobile.xcodeproj`):
 
-`Package.swift` is the single source of truth for which files the `PoC` target
-compiles. After adding or removing a file under `Nugget/`, reconcile the Xcode
-project:
+```sh
+scripts/build-ipa.sh Release      # -> build/GoldenNuggetMobile.ipa (unsigned)
+```
+
+Source layout and the conventions that matter live in
+`Nugget/Core/GoldenNuggetEngine.swift`.
+
+`Package.swift` is the single source of truth for which files the
+`GoldenNuggetMobile` target compiles. After adding or removing a file under
+`Nugget/`, reconcile the Xcode project:
 
 ```sh
 scripts/sync-pbxproj-sources.py           # rewrite project.pbxproj

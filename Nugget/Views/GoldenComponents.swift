@@ -108,11 +108,14 @@ struct GoldenValueLabel: View {
 struct GoldenStatusText: View {
     let text: String
     var tone: GoldenTone = .primary
+    var centered = false
 
     var body: some View {
         Text(text)
             .font(GoldenFont.status)
             .foregroundColor(tone.color)
+            .multilineTextAlignment(centered ? .center : .leading)
+            .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -315,16 +318,18 @@ struct GoldenPrimaryButton: View {
 /// `styles.py: danger_button` — the same geometry in the error ramp.
 struct GoldenDangerButton: View {
     let title: String
-    var action: () -> Void
+    var disabled = false
+    let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             GoldenButtonLabel(title: title,
-                              grayed: false,
+                              grayed: disabled,
                               showsSpinner: false,
                               gradient: [GoldenTheme.error, GoldenTheme.errorPressed])
         }
         .buttonStyle(.plain)
+        .disabled(disabled)
     }
 }
 
@@ -361,10 +366,11 @@ struct GoldenButtonLabel: View {
 /// The home header: 80×80 logo with radius 14, 32/700 title, and the line under
 /// it — the reference keeps this one `text_secondary`, and tints only its
 /// separate status label, so the tone stays a parameter rather than a constant.
-struct GoldenHeader: View {
+struct GoldenHeader<Trailing: View>: View {
     let title: String
     let subtitle: String
     var subtitleTone: GoldenTone = .secondary
+    @ViewBuilder var trailing: Trailing
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
@@ -378,7 +384,41 @@ struct GoldenHeader: View {
                     .foregroundColor(subtitleTone.color)
             }
             Spacer(minLength: 0)
+            trailing
         }
+    }
+}
+
+/// The header as the reference's home page draws it when there is nothing to
+/// put on the right (`home.py`: logo + title + subtitle, and the device picker
+/// only when the host can see more than one device).
+extension GoldenHeader where Trailing == EmptyView {
+    init(title: String, subtitle: String, subtitleTone: GoldenTone = .secondary) {
+        self.init(title: title, subtitle: subtitle, subtitleTone: subtitleTone) {
+            EmptyView()
+        }
+    }
+}
+
+/// `styles.py: home_icon_button` — 36×36, `bg_secondary`, radius 10, 18 pt
+/// glyph.  `home.py` puts a refresh and a settings button in the header; this
+/// is the one the refresh uses.
+struct GoldenIconButton: View {
+    let systemImage: String
+    var enabled = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 18, weight: .medium))
+                .foregroundColor(GoldenTheme.textPrimary)
+                .frame(width: 36, height: 36)
+                .background(RoundedRectangle(cornerRadius: 10)
+                    .fill(GoldenTheme.backgroundSecondary))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
     }
 }
 

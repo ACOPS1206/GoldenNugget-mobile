@@ -115,7 +115,7 @@ enum ProtectiveBackup {
                 // stage runs on top of it.
                 // Marker, not decoration.  On 2026-09-19 a run reached 100 %,
                 // the delegate logged `filtered payloads: 28490 … removed`, and
-                // then poc.log simply stopped — no `protective backup finished`,
+                // then goldennugget.log simply stopped — no `protective backup finished`,
                 // no stage timer, no crash line.  That left the widest window in
                 // this file unexplained: the crash was somewhere between the
                 // Rust call's own teardown, the staging walk below, and the log
@@ -285,9 +285,14 @@ extension ProtectiveBackup {
 // MARK: - The protective keep-set in MANIFEST coordinates
 //
 // A port of GoldenNugget's `_is_protective_file` / `_keep_protective_entry`
-// (`src/restore/protective.py`), which is the keep-set the PRUNE uses — called
-// with production's arguments, `include_photos: true` and
-// `include_keychain: false` (see `clean_backup_for_restore`'s only real caller).
+// (`src/restore/protective.py`), which is the keep-set the PRUNE uses.  It is
+// called with production's `include_keychain: false` (see
+// `clean_backup_for_restore`'s only real caller) and with photos **off**, which
+// is the one argument this port no longer mirrors: `CameraRollDomain` and
+// `MediaDomain` were dropped from `protectiveDomains` below, so a protective
+// run no longer re-collects a second copy of every picture on every run.
+// `isProtectiveFile` above already behaved that way — it never matched a media
+// domain — so the two predicates now agree.
 //
 // Two predicates exist on purpose, in both codebases: `isProtectiveFile` above
 // matches a **device-side upload name** and drives the mid-stream filter, while
@@ -299,10 +304,23 @@ extension ProtectiveBackup {
 extension ProtectiveBackup {
     /// Domains whose rows are kept whole.
     private static let protectiveDomains: Set<String> = [
-        "CameraRollDomain",   // actual photos and videos (DCIM/)
-        "MediaDomain",        // photo metadata (PhotoData/), PhotoStream, other media
         "MessagesDomain",     // iMessage / SMS / MMS
     ]
+
+    /// `CameraRollDomain` (DCIM) and `MediaDomain` (PhotoData, PhotoStream)
+    /// used to be here, which is what made every protective run pull the whole
+    /// photo library over AFC-speed USB before throwing it away at the prune.
+    ///
+    /// They are not kept any more, and the *mid-stream* filter has never kept
+    /// them either — `isProtectiveFile` above only ever matched metadata files,
+    /// SystemPreferencesDomain, MessagesDomain and the HomeDomain paths, so
+    /// those two domains were already being rejected mid-transfer. Dropping them
+    /// here too makes the prune agree with the filter instead of keeping rows
+    /// whose payload was deliberately never written.
+    ///
+    /// Media is therefore neither backed up nor moved anywhere: the app has no
+    /// file browser and no media vault, so photos, videos and audio stay on the
+    /// device and are simply outside what a backup run collects.
 
     /// HomeDomain prefixes holding Apple ID account data and user settings.
     private static let appleIDPrefixes = [
@@ -335,8 +353,9 @@ extension ProtectiveBackup {
         ".GlobalPreferences.plist",
     ]
 
-    /// `_is_protective_file(domain, relative_path, include_photos: true,
-    /// include_keychain: false)`.
+    /// `_is_protective_file(domain, relative_path, include_photos: false,
+    /// include_keychain: false)` — photos off, because `MediaVault` owns the
+    /// media now.
     static func isProtectiveEntry(domain: String, relativePath: String) -> Bool {
         let filename = relativePath.split(separator: "/").last.map(String.init) ?? relativePath
         // `keychain-backup.plist` is only let through when the backup is

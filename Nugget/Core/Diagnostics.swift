@@ -21,6 +21,18 @@ enum Diagnostics {
         let tail = RustLog.tail(30, since: RustLog.mark)
 
         lines.append("  tunnel: \(Tunnel.describe())")
+        // The one field a user gets wrong, with the value that fixes it.  A dump
+        // that says "tunnel not detected" and nothing else sends the reader to
+        // the VPN app, where the rejection they get back ("only allows a prefix
+        // length from 0 to 32") does not name the field or the expected value.
+        lines.append("  tunnel requires: \(Tunnel.requirements)")
+        // What the library itself resolved, when it said anything: the app's
+        // probe and the Rust connection manager have to be looking at the same
+        // pair of addresses, and before this was recorded nothing in a dump
+        // could show whether they were.
+        if let resolved = Tunnel.reported.line {
+            lines.append("  \(resolved)")
+        }
         lines.append("  peer \(Tunnel.peerIP):\(Tunnel.servicePort) reachable: \(Tunnel.probePeer())")
         if let gw = minimuxer.ideviceGateway {
             lines.append("  gateway endpoint IP: \(gw.deviceEndpointIp ?? "nil")")
@@ -46,7 +58,7 @@ enum Diagnostics {
         lines.append("  wire: \(WireCensus.healthLine())")
         let encrypt = await backupEncryptionEnabled()
         lines.append("  backup encryption (com.apple.mobile.backup/WillEncrypt): "
-            + (encrypt.map { $0 ? "ON — PoC premise broken (encrypted Manifest.db)" : "off" } ?? "unknown"))
+            + (encrypt.map { $0 ? "ON — premise broken (encrypted Manifest.db)" : "off" } ?? "unknown"))
         // Keyword slice first (the actual evidence), raw tail last (proves the
         // sink is live and shows an unclassified failure).  Both were captured
         // before the probes above wrote a single line.
@@ -57,7 +69,7 @@ enum Diagnostics {
         // verdict.  Without it a shared diagnostics.txt cannot distinguish "the
         // device refused" from "we refused the device".
         let memory = AppLog.shared.memory
-        lines.append("  app log tail (last 80 of \(memory.count) lines, full file: poc.log):\n"
+        lines.append("  app log tail (last 80 of \(memory.count) lines, full file: goldennugget.log):\n"
             + memory.tail(80))
         lines.append("── end diagnostics ──")
 
@@ -104,7 +116,7 @@ enum Diagnostics {
 
     /// Reads `com.apple.mobile.backup / WillEncrypt` from the device.
     ///
-    /// This is the one precondition that silently breaks the whole PoC and the
+    /// This is the one precondition that silently breaks the whole app and the
     /// one we could not read before: the gateway's `getLockdownValue(key:)`
     /// passes a NULL domain (so this domain-scoped key is invisible) and reads
     /// through `plist_get_string_val` (a no-op on a boolean node).  Hence
@@ -127,15 +139,15 @@ enum Diagnostics {
     static func preflightBackupEncryption() async throws {
         switch await backupEncryptionEnabled() {
         case .some(true):
-            throw PoCError("""
+            throw GoldenNuggetError("""
                 设备「加密本地备份」已开启（lockdown com.apple.mobile.backup / WillEncrypt = true）。
-                这个 PoC 的前提是明文 Manifest.db：prune / inject 用裸 sqlite3 直接改写它，
+                GoldenNugget 的前提是明文 Manifest.db：prune / inject 用裸 sqlite3 直接改写它，
                 而 vendored 的 Rust 库完全没有 encrypt/keybag 处理（pymobice3 那条路要先解密、修剪、再加密）。
                 请先在 设置 → 你的名字 → iCloud → 设备备份 里关掉「加密本地备份」，
                 或用 Finder/iTunes 设备页取消勾选「加密本地备份」，然后再跑。
                 """)
         case .some(false):
-            AppLog.write("preflight: 加密本地备份 = OFF（明文 Manifest.db，PoC 前提成立）")
+            AppLog.write("preflight: 加密本地备份 = OFF（明文 Manifest.db，前提成立）")
         case .none:
             AppLog.write("preflight: WillEncrypt 读取失败（domain/key 不可用）——继续，但请注意加密备份会让 prune/inject 失效")
         }

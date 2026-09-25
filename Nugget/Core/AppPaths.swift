@@ -8,8 +8,8 @@ import Foundation
 /// "which file is actually being read?" a grep exercise and left two spellings
 /// of the same directory (`URL.documents` and the inline form) side by side.
 enum AppPaths {
-    /// `<Documents>/poc.log` — the app-side log sink.
-    static let appLog = URL.documents.appendingPathComponent("poc.log")
+    /// `<Documents>/goldennugget.log` — the app-side log sink.
+    static let appLog = URL.documents.appendingPathComponent("goldennugget.log")
 
     /// `<Documents>/minimuxer.log` — the Rust `tracing` sink installed by
     /// `enableRustFileLogging()`.

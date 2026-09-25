@@ -19,15 +19,16 @@ jobs:
           xcodebuild -version
           swift --version
 
-      # The only supported build path.  It drives PoC.xcodeproj through
-      # xcodebuild and packages build/PoC.ipa; the same script is what the
-      # local workflow runs, so CI and the host cannot drift apart.
+      # The only supported build path.  It drives GoldenNuggetMobile.xcodeproj
+      # through xcodebuild and packages build/GoldenNuggetMobile.ipa; the same
+      # script is what the local workflow runs, so CI and the host cannot
+      # drift apart.
       - name: Build IPA
         run: ./scripts/build-ipa.sh Release
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: poc-ipa
-          path: build/PoC.ipa
+          name: goldennugget-ipa
+          path: build/GoldenNuggetMobile.ipa
           if-no-files-found: error

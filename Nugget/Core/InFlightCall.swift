@@ -18,7 +18,7 @@ import Foundation
 //   * `StallGuard.run` calls `enter()` / `defer leave()` around the guarded call,
 //     and `noteAbandoned(label:)` on the one path that abandons it (the operator's
 //     cancel).  So `isBusy` / `hasAbandonedCall` are now truthful.
-//   * `PoCEngine.warnIfPreviousCallStillRunning()` reads them at the start of a
+//   * `GoldenNuggetEngine.warnIfPreviousCallStillRunning()` reads them at the start of a
 //     run and logs the state — it does NOT block.
 //   * Nothing calls `waitUntilDrained(seconds:)` yet.
 //

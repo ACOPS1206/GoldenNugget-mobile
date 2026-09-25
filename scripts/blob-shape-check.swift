@@ -65,7 +65,7 @@ let fileMode = Int(MODE_FILE_DEFAULT) | Int(S_IFREG)
 let dirMode = Int(MODE_DIR_DEFAULT) | Int(S_IFDIR)
 
 let fileBlob = buildMBFileBlob(
-    relativePath: "Documents/poc.txt", mode: fileMode, size: 5,
+    relativePath: "Documents/goldennugget.txt", mode: fileMode, size: 5,
     protectionClass: PROTECTION_CLASS_FILE, inodeNumber: 123_456,
     extendedAttributes: buildDataprotectionExtendedAttributes())
 let dirBlob = buildMBFileBlob(

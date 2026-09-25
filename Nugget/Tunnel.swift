@@ -7,10 +7,162 @@ import Foundation
 // the app must NOT start its own em_proxy WireGuard server when a native
 // LocalDevVPN (NEPacketTunnelProvider-based) tunnel already provides the
 // same loopback plumbing.
+//
+// The three addresses below are settings, not constants: a LocalDevVPN on a
+// different subnet is a normal configuration, and before this was configurable
+// the only way to use one was to rebuild the app with the constants edited.
 enum Tunnel {
-    static let ifaceIP = "10.7.1.1"
-    static let peerIP = "10.7.0.1"
-    static let servicePort: UInt16 = 62078
+    /// UserDefaults keys, shared with the UI's `@AppStorage` bindings so the text
+    /// fields and every reader below cannot disagree about the current values.
+    enum Key {
+        static let ifaceIP = "TunnelIfaceIP"
+        static let peerIP = "TunnelPeerIP"
+        static let port = "TunnelServicePort"
+        static let prefixLength = "TunnelIfacePrefixLength"
+    }
+
+    static let defaultIfaceIP = "10.7.1.1"
+    static let defaultPeerIP = "10.7.0.1"
+    static let defaultServicePort: UInt16 = 62078
+    /// Prefix length for the interface address.
+    ///
+    /// LocalDevVPN's "tunnel IP" field is a CIDR, and it rejects anything whose
+    /// suffix is not 0...32 — so the peer/port pair does not belong there.  The
+    /// app waits for the tunnel IP on an interface, and a VPN configured with
+    /// anything else never produces it.
+    static let defaultPrefixLength = 24
+
+    private static var defaults: UserDefaults { .standard }
+
+    // Every reader below goes through a validator and falls back to the default.
+    // A half-typed value in a text field ("10.7.1." while the user is still
+    // editing) must not become a 60 s wait for an interface that can never
+    // appear — falling back keeps the probe honest, and the UI marks the field
+    // red so the fallback is never silent for long.
+    static var ifaceIP: String {
+        isValidIPv4(defaults.string(forKey: Key.ifaceIP)) ?? defaultIfaceIP
+    }
+
+    static var peerIP: String {
+        isValidIPv4(defaults.string(forKey: Key.peerIP)) ?? defaultPeerIP
+    }
+
+    static var servicePort: UInt16 {
+        defaults.string(forKey: Key.port).flatMap(validPort) ?? defaultServicePort
+    }
+
+    /// Only used to render the copy-pasteable "what LocalDevVPN must be set to"
+    /// line — the app never masks anything itself.
+    static var ifacePrefixLength: Int {
+        defaults.string(forKey: Key.prefixLength).flatMap(validPrefixLength)
+            ?? defaultPrefixLength
+    }
+
+    /// True when any of the three differs from the shipped default, so the
+    /// diagnostics block can say the addressing was overridden.
+    static var isCustomised: Bool {
+        ifaceIP != defaultIfaceIP || peerIP != defaultPeerIP
+            || servicePort != defaultServicePort
+    }
+
+    static func resetToDefaults() {
+        for key in [Key.ifaceIP, Key.peerIP, Key.port, Key.prefixLength] {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    // MARK: - What the library says it resolved
+
+    /// Addresses the Rust connection manager pushed into
+    /// `ConnectionConfigBinding`.
+    ///
+    /// Those `setTunnel*IfaceIp` / `*PeerIp` / `*SubnetMask` closures are the
+    /// library reporting which addresses it resolved out of the route table, and
+    /// this app answered every one of them with `{ _ in }` — the answer was
+    /// thrown away.  That is why "my VPN uses a different subnet" could not be
+    /// settled from a dump: the app's own probe and the library's idea of the
+    /// tunnel were both invisible, so there was nothing to compare.  Keeping them
+    /// costs nothing and settles it.
+    struct Reported: Equatable {
+        var ifaceIP: String?
+        var peerIP: String?
+        var ifaceSubnetMask: String?
+        var peerSubnetMask: String?
+        var peerReachable: Bool?
+
+        var isEmpty: Bool { self == Reported() }
+
+        /// One line for the diagnostics block, or nil when the library never
+        /// reported anything.
+        var line: String? {
+            guard !isEmpty else { return nil }
+            var parts: [String] = []
+            if let ifaceIP { parts.append("iface \(ifaceIP)\(ifaceSubnetMask.map { "/\($0)" } ?? "")") }
+            if let peerIP { parts.append("peer \(peerIP)\(peerSubnetMask.map { "/\($0)" } ?? "")") }
+            if let peerReachable { parts.append("peer reachable=\(peerReachable)") }
+            return "tunnel as resolved by the connection manager: " + parts.joined(separator: ", ")
+        }
+    }
+
+    private static let reportLock = NSLock()
+    private static var storedReport = Reported()
+
+    static var reported: Reported {
+        reportLock.lock()
+        defer { reportLock.unlock() }
+        return storedReport
+    }
+
+    static func noteReported(_ update: (inout Reported) -> Void) {
+        reportLock.lock()
+        update(&storedReport)
+        reportLock.unlock()
+    }
+
+    /// Called when a start attempt begins: the previous attempt's answers
+    /// describe a tunnel that may not exist any more.
+    static func resetReported() {
+        reportLock.lock()
+        storedReport = Reported()
+        reportLock.unlock()
+    }
+
+    // MARK: - Validation
+
+    /// `inet_pton` is the authority on what a probe can match: anything it
+    /// rejects can never be an interface address, so it is not stored as one.
+    static func isValidIPv4(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        var addr = sockaddr_in()
+        return inet_pton(AF_INET, trimmed, &addr.sin_addr) == 1 ? trimmed : nil
+    }
+
+    static func validPort(_ value: String) -> UInt16? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        // UInt16's own init rejects anything that is not a number in range;
+        // port 0 is rejected on top because connect() to it is never a tunnel.
+        guard let port = UInt16(trimmed), port > 0 else { return nil }
+        return port
+    }
+
+    static func validPrefixLength(_ value: String) -> Int? {
+        guard let length = Int(value.trimmingCharacters(in: .whitespacesAndNewlines)),
+              (0...32).contains(length) else { return nil }
+        return length
+    }
+
+    /// The one line that says what a working tunnel is configured like.  Shown in
+    /// the diagnostics block, under the tunnel fields and in the tunnel-failure
+    /// alert, because the field LocalDevVPN gets wrong is the tunnel IP and the
+    /// error it produces ("only allows a prefix length from 0 to 32") does not
+    /// name the field.
+    static var requirements: String {
+        var line = "LocalDevVPN: tunnel IP \(ifaceIP)/\(ifacePrefixLength), "
+            + "peer \(peerIP), port \(servicePort)"
+        if isCustomised { line += " (custom)" }
+        return line
+    }
 
     // Enumerate interface addresses via getifaddrs and report whether the
     // LocalDevVPN interface IP is configured on any interface.
@@ -27,27 +179,53 @@ enum Tunnel {
     // - Phase 2: TCP-probe the peer service port until it accepts a connect
     //            (this is exactly what minimuxer's test_device_connection and
     //            the em_proxy debug-client path do when start() runs).
+    //
+    // Each phase gets its own deadline.  They used to share one `start`, so a
+    // tunnel whose interface appeared at 59 s had 1 s left to answer on the peer
+    // port and failed the run it had actually passed.
     static func waitForTunnel(
         timeout: TimeInterval = 60,
         log: @escaping (String) -> Void = { _ in }
     ) -> Bool {
-        let start = Date()
-        while Date().timeIntervalSince(start) < timeout {
+        // The loop polls every 500 ms, so an unthrottled wait wrote up to 120
+        // identical lines per call — and with several waits in flight (every
+        // pairing-file load spawns one) that buried the one line that says the
+        // interface never appeared.  First poll, then every 5 s, then a summary.
+        let logEvery: TimeInterval = 5
+        var polls = 0
+        var nextLogAt: TimeInterval = 0
+
+        func waiting(_ what: String, _ elapsed: TimeInterval) {
+            polls += 1
+            guard elapsed >= nextLogAt else { return }
+            nextLogAt = elapsed + logEvery
+            log("tunnel: waiting for \(what)… (\(polls) poll(s), \(Int(elapsed))s of \(Int(timeout))s)")
+        }
+
+        let phase1Start = Date()
+        while Date().timeIntervalSince(phase1Start) < timeout {
             if isInterfaceUp() { break }
-            log("tunnel: waiting for iface \(ifaceIP) to come up…")
+            waiting("iface \(ifaceIP) to come up", Date().timeIntervalSince(phase1Start))
             usleep(500_000)
         }
         guard isInterfaceUp() else {
-            log("tunnel: FAILED — iface \(ifaceIP) never appeared within \(Int(timeout))s")
+            log("tunnel: FAILED — iface \(ifaceIP) never appeared within \(Int(timeout))s "
+                + "after \(polls) poll(s). \(requirements).")
             return false
         }
         log("tunnel: iface \(ifaceIP) up, probing \(peerIP):\(servicePort)…")
-        while Date().timeIntervalSince(start) < timeout {
+
+        polls = 0
+        nextLogAt = 0
+        let phase2Start = Date()
+        while Date().timeIntervalSince(phase2Start) < timeout {
             if probePeer(timeout: 2.0) { return true }
-            log("tunnel: \(peerIP):\(servicePort) not reachable yet, retrying…")
+            waiting("\(peerIP):\(servicePort) to accept a connection", Date().timeIntervalSince(phase2Start))
             usleep(500_000)
         }
-        log("tunnel: FAILED — \(peerIP):\(servicePort) unreachable within \(Int(timeout))s")
+        log("tunnel: FAILED — \(peerIP):\(servicePort) did not answer within \(Int(timeout))s "
+            + "after \(polls) poll(s). The interface is up, so the VPN is connected but nothing "
+            + "is serving lockdown on the peer port.")
         return false
     }
 

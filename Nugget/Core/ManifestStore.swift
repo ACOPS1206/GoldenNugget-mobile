@@ -67,7 +67,7 @@ struct ManifestStore {
     private func open() throws -> OpaquePointer {
         var db: OpaquePointer?
         guard sqlite3_open(dbPath, &db) == SQLITE_OK, let db else {
-            throw PoCError("Failed to open Manifest.db at \(dbPath)")
+            throw GoldenNuggetError("Failed to open Manifest.db at \(dbPath)")
         }
         return db
     }
@@ -83,7 +83,7 @@ struct ManifestStore {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, ManifestSchema.insertOrReplaceRow, -1, &stmt, nil) == SQLITE_OK,
               let stmt else {
-            throw PoCError("Manifest.db: failed to prepare INSERT for \(domain)/\(relativePath)")
+            throw GoldenNuggetError("Manifest.db: failed to prepare INSERT for \(domain)/\(relativePath)")
         }
         defer { sqlite3_finalize(stmt) }
 
@@ -103,7 +103,7 @@ struct ManifestStore {
         }
         let rc = sqlite3_step(stmt)
         guard rc == SQLITE_DONE else {
-            throw PoCError("Manifest.db: INSERT for \(domain)/\(relativePath) failed with code \(rc)")
+            throw GoldenNuggetError("Manifest.db: INSERT for \(domain)/\(relativePath) failed with code \(rc)")
         }
     }
 

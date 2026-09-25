@@ -1,10 +1,52 @@
 version: 1
-product: PoC
-bundleID: com.awesomenull.poc
+# `product` must be the single static library product in Package.swift: xtool
+# names the app binary after it, and CFBundleExecutable in the Info.plist below
+# has to match or the signing step fails with "Can't parse BundleExecute file!".
+product: GoldenNuggetMobile
+bundleID: com.awesomenull.goldennugget
+# iOS 26: Liquid Glass renders only when MinimumOSVersion >= 26, which
+# Info.plist's MinimumOSVersion and this target both carry.  Package.swift,
+# project.yml and project.pbxproj carry the same 26.0 — the four files have to
+# agree, or the binary's LC_BUILD_VERSION ends up stamping a different pair of
+# numbers than the Info.plist the device reads.
 deploymentTarget: 26.0
-infoPath: layout/Applications/PoC.app/Info.plist
-iconPath: layout/Applications/PoC.app/AppIcon60x60@2x.png
+infoPath: layout/Applications/GoldenNuggetMobile.app/Info.plist
+iconPath: layout/Applications/GoldenNuggetMobile.app/AppIcon60x60@2x.png
 resources:
-  # Mirrors PoC.xcodeproj's Copy Bundle Resources, which ships both icons.
-  - layout/Applications/PoC.app/AppIcon76x76@2x~ipad.png
+  - layout/Applications/GoldenNuggetMobile.app/AppIcon76x76@2x~ipad.png
+  # The light/dark icon set, compiled on this host.
+  #
+  # xtool cannot compile the catalog itself: it copies actool out of the darwin
+  # SDK into xtool/.xtool-tmp/actool and execs it, and that copy loses the
+  # executable bit — the SDK's actool is 0755, the copy lands 0664 — so the
+  # launch dies with ".xtool-tmp/actool is not an executable file" before any
+  # argument is parsed.  There is no hook between the copy and the exec, and
+  # xtool execs an absolute path, so PATH does not help.  Even with the bit
+  # restored it would fail again: that actool is "Mach-O 64-bit arm64" and this
+  # is an x86_64 Linux host.
+  #
+  # So scripts/compile-assets.sh runs the AssetKit-backed actool shim over
+  # Assets.xcassets first and leaves Assets.car plus the loose PNGs in
+  # build/assets/, and xtool ships them here as ordinary resources.  Run that
+  # script before `xtool dev build`; see the build order in scripts/build-ipa.sh.
+  #
+  # AppIcon60x60@2x is deliberately absent: iconPath above already puts a file
+  # of that name in the bundle root, and two entries would fight over one
+  # destination.  AppIcon1024x1024 is absent too — the 1024 artwork (both
+  # appearances) lives in Assets.car, and shipping it loose as well would add
+  # ~500 KB of PNG for nothing.
+  - build/assets/Assets.car
+  - build/assets/AppIcon20x20.png
+  - build/assets/AppIcon20x20@2x.png
+  - build/assets/AppIcon20x20@3x.png
+  - build/assets/AppIcon29x29.png
+  - build/assets/AppIcon29x29@2x.png
+  - build/assets/AppIcon29x29@3x.png
+  - build/assets/AppIcon40x40.png
+  - build/assets/AppIcon40x40@2x.png
+  - build/assets/AppIcon40x40@3x.png
+  - build/assets/AppIcon60x60@3x.png
+  - build/assets/AppIcon76x76.png
+  - build/assets/AppIcon76x76@2x.png
+  - build/assets/AppIcon83.5x83.5@2x.png
 entitlementsPath: entitlements.plist

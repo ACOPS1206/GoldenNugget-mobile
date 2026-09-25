@@ -2542,6 +2542,469 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
         afc_client_free(client)
     }
 
+    // MARK: - AFC filesystem (com.apple.afc + house_arrest)
+    //
+    // Read *and* write access to two roots, over the same AFC client:
+    //
+    //   * **Media** — `/var/mobile/Media` (DCIM, Downloads, Books, Recordings).
+    //     Opened by asking lockdown for `com.apple.afc` directly.
+    //   * **App containers** — an app's whole data container, or just its
+    //     Documents.  house_arrest vends the AFC handle; the protocol under it
+    //     is identical, which is why the primitives below take a client and
+    //     both roots share them.
+    //
+    // This is the same split the `afc://<udid>:<n>/` URLs a desktop file
+    // manager opens mean: the number in the URL picks the service, and the
+    // container services are the house_arrest ones.
+    //
+    // Every call opens its own client and closes it, because AFC handles are
+    // not safe to share across threads and the app's UI hops between tasks.  One
+    // connection per user action is cheap next to the round trip the user just
+    // paid to trigger it.
+
+    /// Open the plain AFC service and run `action` against it, closing the
+    /// client afterwards whatever the outcome.
+    private func withAfcFs<T: Sendable>(
+        _ action: (OpaquePointer) throws -> T
+    ) throws -> T {
+        try performWithEitherService(
+            connectRP: afc_client_connect_rsd,
+            connectLockdown: afc_client_connect,
+            cleanup: afc_client_free,
+            serviceName: "AFC filesystem"
+        ) { client in
+            try action(client)
+        }
+    }
+
+    /// The same, against one app's data container, via house_arrest.
+    ///
+    /// `startHouseArrestAfc` (above) already frees the house_arrest client and
+    /// hands back the AFC handle it vended, so the only cleanup left here is
+    /// that handle — the same pairing the house-arrest list/read helpers use.
+    private func withAfcContainer<T: Sendable>(
+        bundleId: String,
+        _ action: (OpaquePointer) throws -> T
+    ) throws -> T {
+        let client = try startHouseArrestAfc(bundleId: bundleId)
+        defer { afcClientFree(client: client) }
+        return try action(client)
+    }
+
+    // MARK: Primitives (client in hand, root-agnostic)
+
+    private func fsVolumeInfo(client: OpaquePointer) throws -> AfcFsVolumeInfo {
+        var info = AfcDeviceInfo()
+        let err = afc_get_device_info(client, &info)
+        if let err = err {
+            let msg = self.getErrorMessage(from: err)
+            defer { safeFreeError(err) }
+            throw IdeviceGatewayError(.serviceError, reason: "afc_get_device_info failed: \(msg)")
+        }
+        defer { afc_device_info_free(&info) }
+        return AfcFsVolumeInfo(
+            model: info.model.map { String(cString: $0) } ?? "",
+            totalBytes: Int64(clamping: info.total_bytes),
+            freeBytes: Int64(clamping: info.free_bytes),
+            blockSize: Int64(clamping: info.block_size)
+        )
+    }
+
+    private func fsList(client: OpaquePointer, path: String) throws -> [AfcFsEntry] {
+        let names = try afcListDirectory(client: client, path: path)
+        let base = path.hasSuffix("/") ? path : path + "/"
+        return names
+            // afc_list_directory reports "." and ".." like any other entry.
+            .filter { $0 != "." && $0 != ".." }
+            .map { name -> AfcFsEntry in
+                let child = base + name
+                var info = AfcFileInfo()
+                let err = child.withCString { childPtr in
+                    afc_get_file_info(client, childPtr, &info)
+                }
+                if let err = err {
+                    // A file can vanish between the listing and the stat (the
+                    // user deleting it on the device, a background cleanup).
+                    // That is not a reason to fail the whole listing: report
+                    // the row with the size unknown.
+                    safeFreeError(err)
+                    return AfcFsEntry(
+                        path: child,
+                        name: name,
+                        isDirectory: false,
+                        size: 0,
+                        modified: nil,
+                        linkTarget: nil
+                    )
+                }
+                defer { var mutable = info; afc_file_info_free(&mutable) }
+                return afcEntry(client: client, path: child, info: info)
+            }
+            .sorted { lhs, rhs in
+                // Directories first, then case-insensitive by name: the order
+                // every file browser uses, and the one the desktop app's own
+                // dialogs use.
+                if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+    }
+
+    private func fsEntryInfo(client: OpaquePointer, path: String) throws -> AfcFsEntry {
+        var info = AfcFileInfo()
+        let err = path.withCString { pathPtr in
+            afc_get_file_info(client, pathPtr, &info)
+        }
+        if let err = err {
+            let msg = self.getErrorMessage(from: err)
+            defer { safeFreeError(err) }
+            throw IdeviceGatewayError(.serviceError, reason: "afc_get_file_info failed for \(path): \(msg)")
+        }
+        defer { var mutable = info; afc_file_info_free(&mutable) }
+        return afcEntry(client: client, path: path, info: info)
+    }
+
+    private func fsRead(client: OpaquePointer, path: String) throws -> Data {
+        try afcReadFile(client: client, path: path)
+    }
+
+    /// `afcStreamFile`'s body: one connection, one file handle, N chunks.
+    ///
+    /// The FFI's `afc_file_read` allocates its own buffer per call (unlike the C
+    /// API's caller-provided one), so each chunk is copied into `Data` and the
+    /// buffer handed straight back to `afc_file_read_data_free`. A short read
+    /// is normal — the device answers in packets — so the loop only ends when
+    /// `bytesRead` comes back 0, i.e. EOF.
+    private func fsStream(
+        client: OpaquePointer,
+        path: String,
+        chunkSize: Int,
+        onChunk: @escaping @Sendable (Data) throws -> Void
+    ) throws -> Int64 {
+        var fileHandle: OpaquePointer? = nil
+        let openErr = path.withCString { pathPtr in
+            afc_file_open(client, pathPtr, AfcFopenMode(rawValue: 1), &fileHandle) // RdOnly
+        }
+        if let openErr = openErr {
+            let msg = self.getErrorMessage(from: openErr)
+            defer { safeFreeError(openErr) }
+            throw IdeviceGatewayError(.serviceError, reason: "afc_file_open failed for \(path), error: (\(msg))")
+        }
+        guard let fileHandle else {
+            throw IdeviceGatewayError(.serviceError, reason: "afc_file_open returned no handle for \(path)")
+        }
+        defer { _ = afc_file_close(fileHandle) }
+
+        // A caller asking for 0 bytes, or something absurd, gets one AFC packet
+        // or a hard failure respectively. 8 MiB is roughly what a single read
+        // can be asked for before the device starts refusing.
+        let want = UInt(max(4096, min(chunkSize, 8 * 1024 * 1024)))
+        var total: Int64 = 0
+        while true {
+            var bufferPtr: UnsafeMutablePointer<UInt8>? = nil
+            var bytesRead: size_t = 0
+            let readErr = afc_file_read(fileHandle, &bufferPtr, want, &bytesRead)
+            if let readErr = readErr {
+                let msg = self.getErrorMessage(from: readErr)
+                defer { safeFreeError(readErr) }
+                throw IdeviceGatewayError(.serviceError, reason: "afc_file_read failed for \(path) at offset \(total), error: (\(msg))")
+            }
+            guard let bufferPtr, bytesRead > 0 else {
+                if let bufferPtr { afc_file_read_data_free(bufferPtr, bytesRead) }
+                return total
+            }
+            // Copy out, then free: the sink may keep `chunk` for as long as it
+            // likes, and must not be able to reach into freed memory.
+            let chunk = Data(bytes: bufferPtr, count: bytesRead)
+            afc_file_read_data_free(bufferPtr, bytesRead)
+            do {
+                try onChunk(chunk)
+            } catch {
+                // BytesRead of the *next* read are the ones a reader would have
+                // to skip past; nothing to do here beyond closing the handle.
+                throw error
+            }
+            total += Int64(bytesRead)
+        }
+    }
+
+    private func fsWrite(client: OpaquePointer, path: String, data: Data) throws {
+        var fileHandle: OpaquePointer? = nil
+        let openErr = path.withCString { pathPtr in
+            // AfcWr truncates on open, which is what an overwrite has to mean:
+            // writing fewer bytes than the file had must shorten it, not leave
+            // a tail of the old contents behind.
+            afc_file_open(client, pathPtr, AfcFopenMode(rawValue: 4), &fileHandle)
+        }
+        if let openErr = openErr {
+            let msg = self.getErrorMessage(from: openErr)
+            defer { safeFreeError(openErr) }
+            throw IdeviceGatewayError(.serviceError, reason: "afc_file_open (write) failed for \(path): \(msg)")
+        }
+        guard let fileHandle else {
+            throw IdeviceGatewayError(.serviceError, reason: "afc_file_open returned no handle for \(path)")
+        }
+        var closed = false
+        defer {
+            if !closed { _ = afc_file_close(fileHandle) }
+        }
+        guard !data.isEmpty else {
+            // A zero-length write is just the truncate above; sending an empty
+            // buffer to afc_file_write is at best a no-op and on some firmware
+            // an error.
+            _ = afc_file_close(fileHandle)
+            closed = true
+            return
+        }
+        let writeErr = data.withUnsafeBytes { raw -> UnsafeMutablePointer<IdeviceFfiError>? in
+            afc_file_write(fileHandle, raw.bindMemory(to: UInt8.self).baseAddress, data.count)
+        }
+        if let writeErr = writeErr {
+            let msg = self.getErrorMessage(from: writeErr)
+            defer { safeFreeError(writeErr) }
+            throw IdeviceGatewayError(.serviceError, reason: "afc_file_write failed for \(path): \(msg)")
+        }
+        _ = afc_file_close(fileHandle)
+        closed = true
+    }
+
+    private func fsMakeDirectory(client: OpaquePointer, path: String) throws {
+        let err = path.withCString { pathPtr in
+            afc_make_directory(client, pathPtr)
+        }
+        guard let err = err else { return }
+        // "Create New Folder" on an existing name is not a failure the caller
+        // needs to hear about, and AFC's error string is not something to
+        // pattern-match on.  Ask the device instead.
+        var info = AfcFileInfo()
+        let probe = path.withCString { pathPtr -> UnsafeMutablePointer<IdeviceFfiError>? in
+            afc_get_file_info(client, pathPtr, &info)
+        }
+        if probe == nil {
+            let isDirectory = info.st_ifmt.map { String(cString: $0).contains("S_IFDIR") } ?? false
+            var mutable = info
+            afc_file_info_free(&mutable)
+            if isDirectory { return }
+        } else {
+            safeFreeError(probe)
+        }
+        let msg = self.getErrorMessage(from: err)
+        defer { safeFreeError(err) }
+        throw IdeviceGatewayError(.serviceError, reason: "afc_make_directory failed for \(path): \(msg)")
+    }
+
+    private func fsRename(client: OpaquePointer, path: String, to newPath: String) throws {
+        let err = path.withCString { fromPtr in
+            newPath.withCString { toPtr in
+                afc_rename_path(client, fromPtr, toPtr)
+            }
+        }
+        if let err = err {
+            let msg = self.getErrorMessage(from: err)
+            defer { safeFreeError(err) }
+            throw IdeviceGatewayError(.serviceError, reason: "afc_rename_path failed \(path) → \(newPath): \(msg)")
+        }
+    }
+
+    private func fsDelete(client: OpaquePointer, path: String) throws {
+        // `afc_remove_path_and_contents` is the device-side recursive delete:
+        // one round trip, and it is the call that does not need this side to
+        // walk the tree (which is also what would break on a directory deep
+        // enough to stall on a round trip per level).
+        let err = path.withCString { pathPtr in
+            afc_remove_path_and_contents(client, pathPtr)
+        }
+        if let err = err {
+            let msg = self.getErrorMessage(from: err)
+            defer { safeFreeError(err) }
+            throw IdeviceGatewayError(.serviceError, reason: "afc_remove_path_and_contents failed for \(path): \(msg)")
+        }
+    }
+
+    /// Build an `AfcFsEntry` out of one `afc_get_file_info` result.
+    ///
+    /// The date is the awkward part: AFC reports mtime as a plain integer whose
+    /// epoch is Apple-specific (seconds since 2001-01-01), and not every
+    /// firmware slice agrees — some send Unix seconds instead.  Rather than
+    /// print confidently wrong dates, try the Apple epoch, then Unix, and
+    /// report `nil` when neither lands in a range a real file could occupy.
+    private func afcEntry(
+        client: OpaquePointer,
+        path: String,
+        info: AfcFileInfo
+    ) -> AfcFsEntry {
+        let name = (path as NSString).lastPathComponent
+        let isDirectory = info.st_ifmt.map { String(cString: $0).contains("S_IFDIR") } ?? false
+        let linkTarget = info.st_link_target.map { String(cString: $0) }
+        return AfcFsEntry(
+            path: path,
+            name: name.isEmpty ? path : name,
+            isDirectory: isDirectory,
+            size: Int64(clamping: info.size),
+            modified: Self.afcDate(fromRaw: info.modified),
+            linkTarget: linkTarget
+        )
+    }
+
+    private static func afcDate(fromRaw raw: Int64) -> Date? {
+        guard raw > 0 else { return nil }
+        let appleEpoch = Date(timeIntervalSinceReferenceDate: TimeInterval(raw))
+        if (2007...2035).contains(Calendar.current.component(.year, from: appleEpoch)) {
+            return appleEpoch
+        }
+        let unixEpoch = Date(timeIntervalSince1970: TimeInterval(raw))
+        if (2007...2035).contains(Calendar.current.component(.year, from: unixEpoch)) {
+            return unixEpoch
+        }
+        return nil
+    }
+
+    // MARK: Media (com.apple.afc)
+
+    public func afcVolumeInfo() async throws -> AfcFsVolumeInfo {
+        try await withFFIDispatch { try self.withAfcFs { try self.fsVolumeInfo(client: $0) } }
+    }
+
+    public func afcList(path: String) async throws -> [AfcFsEntry] {
+        try await withFFIDispatch { try self.withAfcFs { try self.fsList(client: $0, path: path) } }
+    }
+
+    public func afcEntryInfo(path: String) async throws -> AfcFsEntry {
+        try await withFFIDispatch { try self.withAfcFs { try self.fsEntryInfo(client: $0, path: path) } }
+    }
+
+    public func afcRead(path: String) async throws -> Data {
+        try await withFFIDispatch { try self.withAfcFs { try self.fsRead(client: $0, path: path) } }
+    }
+
+    public func afcStreamFile(
+        path: String,
+        chunkSize: Int,
+        onChunk: @escaping @Sendable (Data) throws -> Void
+    ) async throws -> Int64 {
+        try await withFFIDispatch {
+            try self.withAfcFs {
+                try self.fsStream(client: $0, path: path, chunkSize: chunkSize, onChunk: onChunk)
+            }
+        }
+    }
+
+    public func afcWrite(path: String, data: Data) async throws {
+        try await withFFIDispatch { try self.withAfcFs { try self.fsWrite(client: $0, path: path, data: data) } }
+    }
+
+    public func afcMakeDirectory(path: String) async throws {
+        try await withFFIDispatch { try self.withAfcFs { try self.fsMakeDirectory(client: $0, path: path) } }
+    }
+
+    public func afcRename(path: String, to newPath: String) async throws {
+        try await withFFIDispatch { try self.withAfcFs { try self.fsRename(client: $0, path: path, to: newPath) } }
+    }
+
+    public func afcDelete(path: String) async throws {
+        try await withFFIDispatch { try self.withAfcFs { try self.fsDelete(client: $0, path: path) } }
+    }
+
+    // MARK: App containers (house_arrest)
+
+    public func afcContainerList(bundleId: String, path: String) async throws -> [AfcFsEntry] {
+        try await withFFIDispatch {
+            try self.withAfcContainer(bundleId: bundleId) { try self.fsList(client: $0, path: path) }
+        }
+    }
+
+    public func afcContainerInfo(bundleId: String, path: String) async throws -> AfcFsEntry {
+        try await withFFIDispatch {
+            try self.withAfcContainer(bundleId: bundleId) { try self.fsEntryInfo(client: $0, path: path) }
+        }
+    }
+
+    public func afcContainerRead(bundleId: String, path: String) async throws -> Data {
+        try await withFFIDispatch {
+            try self.withAfcContainer(bundleId: bundleId) { try self.fsRead(client: $0, path: path) }
+        }
+    }
+
+    public func afcContainerWrite(bundleId: String, path: String, data: Data) async throws {
+        try await withFFIDispatch {
+            try self.withAfcContainer(bundleId: bundleId) { try self.fsWrite(client: $0, path: path, data: data) }
+        }
+    }
+
+    public func afcContainerMakeDirectory(bundleId: String, path: String) async throws {
+        try await withFFIDispatch {
+            try self.withAfcContainer(bundleId: bundleId) { try self.fsMakeDirectory(client: $0, path: path) }
+        }
+    }
+
+    public func afcContainerRename(bundleId: String, path: String, to newPath: String) async throws {
+        try await withFFIDispatch {
+            try self.withAfcContainer(bundleId: bundleId) { try self.fsRename(client: $0, path: path, to: newPath) }
+        }
+    }
+
+    public func afcContainerDelete(bundleId: String, path: String) async throws {
+        try await withFFIDispatch {
+            try self.withAfcContainer(bundleId: bundleId) { try self.fsDelete(client: $0, path: path) }
+        }
+    }
+
+    // MARK: Installed apps (instproxy)
+
+    public func installedApps() async throws -> [DeviceAppInfo] {
+        try await withFFIDispatch { try self.syncInstalledApps() }
+    }
+
+    /// Every app the device reports, as `installation_proxy_get_apps` with a
+    /// NULL bundle-id filter returns them.
+    ///
+    /// The existing lookups in this file pass one bundle id and read
+    /// `Container`/`Path` out of the first result; this asks for all of them
+    /// and reads the fields a container browser shows.  `CFBundleDisplayName`
+    /// first, because that is what the device's own UI shows, then
+    /// `CFBundleName`, then the bundle ID — an app that declares neither still
+    /// has to be findable.
+    private func syncInstalledApps() throws -> [DeviceAppInfo] {
+        try performWithEitherService(
+            connectRP: installation_proxy_connect_rsd,
+            connectLockdown: installation_proxy_connect,
+            cleanup: installation_proxy_client_free,
+            serviceName: "instproxy"
+        ) { client in
+            var outResult: UnsafeMutableRawPointer? = nil
+            var outLen: Int = 0
+            let err = installation_proxy_get_apps(client, nil, nil, 0, &outResult, &outLen)
+            if let err = err {
+                let msg = self.getErrorMessage(from: err)
+                defer { safeFreeError(err) }
+                throw IdeviceGatewayError(.serviceError, reason: "Could not list installed apps: \(msg)")
+            }
+            defer { if let outResult { free(outResult) } }
+            guard let resultPtr = outResult, outLen > 0 else { return [] }
+
+            let plistArray = resultPtr.assumingMemoryBound(to: plist_t?.self)
+            var apps: [DeviceAppInfo] = []
+            apps.reserveCapacity(outLen)
+            for index in 0..<outLen {
+                guard let appPlist = plistArray[index] else { continue }
+                func string(_ key: String) -> String? {
+                    guard let item = plist_dict_get_item(appPlist, key) else { return nil }
+                    return getRustPlistString(item)
+                }
+                guard let bundleID = string("CFBundleIdentifier"), !bundleID.isEmpty else { continue }
+                let name = string("CFBundleDisplayName")
+                    ?? string("CFBundleName")
+                    ?? bundleID
+                apps.append(DeviceAppInfo(
+                    bundleID: bundleID,
+                    name: name,
+                    version: string("CFBundleShortVersionString") ?? "",
+                    containerPath: string("Container") ?? ""
+                ))
+            }
+            debugLog("[IdeviceGateway] syncInstalledApps() found \(apps.count) app(s)")
+            return apps
+        }
+    }
     // MARK: - App lookup (instproxy)
 
     private func syncLookupApp(appId: String) throws -> InstalledAppInfo {

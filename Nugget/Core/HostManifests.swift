@@ -71,35 +71,4 @@ enum HostManifests {
         try? FileManager.default.removeItem(at: deviceDir)
         try ensure(deviceDir: deviceDir, udid: udid)
     }
-
-    /// Register an app in `Manifest.plist` and `Info.plist`.
-    ///
-    /// Both carry an `Applications` dict and the restore daemon rejects an
-    /// `AppDomain-<bundleId>` payload whose bundle is not listed there — the same
-    /// MBErrorDomain/205 surface as a dangling manifest row, from a different
-    /// cause.
-    static func registerApp(deviceDir: URL, app: NuggetAppInfo) throws {
-        // `container` is optional on NuggetAppInfo but never nil in practice
-        // (`InstalledAppInfo` builds it from a non-optional).  Defaulting to ""
-        // rather than boxing an Optional keeps the plist writer from seeing a
-        // non-plist type, which would make the whole registration throw.
-        let entry: [String: Any] = [
-            "CFBundleIdentifier": app.bundleID,
-            "CFBundleVersion": app.version,
-            "Path": app.path,
-            "ContainerContentClass": app.container ?? ""
-        ]
-
-        for name in ["Manifest.plist", "Info.plist"] {
-            let url = deviceDir.appendingPathComponent(name)
-            var plist = (try? PropertyListSerialization.propertyList(
-                from: Data(contentsOf: url),
-                options: [], format: nil)) as? [String: Any] ?? [:]
-            var apps = plist["Applications"] as? [String: Any] ?? [:]
-            apps[app.bundleID] = entry
-            plist["Applications"] = apps
-            try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
-                .write(to: url)
-        }
-    }
 }

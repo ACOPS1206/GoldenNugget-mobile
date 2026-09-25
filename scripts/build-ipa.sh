@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Build an unsigned device IPA from the Xcode project.
 # Usage: ./scripts/build-ipa.sh [Debug|Release] [--clean]   (default: Release)
-# Output: build/PoC.ipa (unsigned — sideload via AltStore/SideStore/LiveContainer)
+# Output: build/GoldenNuggetMobile.ipa (unsigned — sideload via AltStore/SideStore/LiveContainer)
 #
 # --clean wipes build/xderived first.  Reach for it after touching anything
 # under Vendor/: an incremental build can refresh a .swiftmodule WITHOUT
@@ -28,7 +28,7 @@ if (( CLEAN )); then
 fi
 
 xcodebuild -project GoldenNuggetMobile.xcodeproj \
-  -scheme PoC \
+  -scheme GoldenNuggetMobile \
   -configuration "$CONFIG" \
   -destination 'generic/platform=iOS' \
   -derivedDataPath "$DERIVED" \
@@ -52,9 +52,29 @@ if [ -n "$stale" ]; then
 fi
 
 mkdir -p build
-rm -rf build/Payload build/GoldenNugget.ipa
+rm -rf build/Payload build/GoldenNuggetMobile.ipa
 mkdir -p build/Payload
 cp -R "$APP_PATH" build/Payload/GoldenNuggetMobile.app
-(cd build && zip -qry GoldenNuggetMobile.ipa Payload && rm -rf Payload)
+
+# Strip symbol tables out of the *copy* we are about to package, not out of
+# DerivedData — the unstripped product stays available for debugging.  This
+# build is unsigned (CODE_SIGNING_ALLOWED=NO above, the sideloader signs
+# afterwards), so nothing is invalidated, and Release already asks Xcode for it
+# via COPY_PHASE_STRIP; the explicit `strip` here makes the IPA lean regardless
+# of which configuration produced it.  Worth ~8.5 MB raw: 47% of the app binary
+# and 33% of EMProxy is symbol table, nearly all Rust names from statically
+# linked vendored libraries.
+for macho in build/Payload/GoldenNuggetMobile.app/GoldenNuggetMobile \
+            build/Payload/GoldenNuggetMobile.app/Frameworks/EMProxy.framework/EMProxy; do
+  if [ -f "$macho" ]; then
+    before="$(stat -f%z "$macho")"
+    strip -S "$macho"
+    echo "stripped $macho: $before -> $(stat -f%z "$macho") bytes"
+  fi
+done
+
+(cd build && zip -qry GoldenNuggetMobile.ipa Payload)
+python3 scripts/repack-ipa.py build/GoldenNuggetMobile.ipa
+rm -rf build/Payload
 
 echo "done: build/GoldenNuggetMobile.ipa (unsigned, ${CONFIG})"

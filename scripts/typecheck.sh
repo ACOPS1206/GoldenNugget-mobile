@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Type-check the PoC sources WITHOUT running xcodebuild.
+# Type-check the GoldenNuggetMobile sources WITHOUT running xcodebuild.
 #
 # Why this exists: `xcodebuild` needs to evaluate SwiftPM manifests, which means
 # it shells out to `sandbox-exec` and writes ~/.swiftpm.  In a sandboxed
@@ -86,7 +86,7 @@ xargs < /tmp/typecheck-sources.txt xcrun swiftc -typecheck \
 # `-disable-sandbox` is load-bearing: without it the driver sandboxes
 # swift-plugin-server, which cannot run nested, so every SwiftUI `@State` macro
 # fails to expand and the run reports ~80 phantom errors cascading out of
-# PoCView.swift ("cannot find '$bundleID' in scope", "cannot assign to property:
+# GoldenNuggetView.swift ("cannot find '$bundleID' in scope", "cannot assign to property:
 # 'logs' is immutable").  Journal only the line count, never `| head` — closing
 # the pipe early SIGPIPEs the compiler and leaves a truncated log that reads as
 # a clean pass.

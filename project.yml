@@ -1,4 +1,4 @@
-# XcodeGen manifest for PoC.xcodeproj.
+# XcodeGen manifest for GoldenNuggetMobile.xcodeproj.
 #
 # XcodeGen is NOT installed here, so this file cannot be run locally and
 # project.pbxproj cannot be regenerated from it.  It is kept as the statement of
@@ -13,7 +13,30 @@
 # which asks SwiftPM what the target resolves and reconciles project.pbxproj to
 # match.  If XcodeGen ever becomes available, regenerating from this file and
 # then running that script must leave project.pbxproj unchanged.
-name: PoC
+#
+# Everything below is chosen to make an Xcode build produce the *same bundle*
+# `xtool dev build` produces, because the two are shipped from the same sources
+# and a difference between them is a bug that only shows up on device:
+#
+#   * EMProxy is a **dynamic** xcframework slice (`@rpath/EMProxy.framework`),
+#     so it has to be copied into `Frameworks/` and re-signed.  xtool does that
+#     by construction; here it is the `embed: true` dependency below, which
+#     XcodeGen turns into the "Embed Frameworks" phase that
+#     project.pbxproj carries by hand.  Without it the app links fine and then
+#     dies at launch with "Library not loaded: @rpath/EMProxy.framework".
+#     The slice is named explicitly because the xcframework ships device-only —
+#     `AvailableLibraries` has exactly one entry, `ios-arm64`.
+#   * Signing is ad-hoc (`CODE_SIGN_IDENTITY = "-"`), no team, no profile.  That
+#     is what xtool's signer produces: the IPA's code signature is an embedded
+#     blob (0xfade0cc0) with entitlements.plist applied and no
+#     application-identifier, and it is what a jailbroken install needs.  The
+#     pbxproj used to carry `iPhone Developer` and two *different*
+#     DEVELOPMENT_TEAMs (one per configuration), which described no bundle this
+#     project has ever shipped.
+#   * There is no asset catalog, so there is no
+#     ASSETCATALOG_COMPILER_APPICON_NAME: the icons are two loose PNGs in Copy
+#     Bundle Resources, which is also all that ends up in the xtool bundle.
+name: GoldenNuggetMobile
 options:
   bundleIdPrefix: com.awesomenull
   createIntermediateGroups: true
@@ -26,32 +49,71 @@ packages:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
     TARGETED_DEVICE_FAMILY: "1,2"
     GENERATE_INFOPLIST_FILE: NO
-    INFOPLIST_FILE: layout/Applications/PoC.app/Info.plist
-    PRODUCT_BUNDLE_IDENTIFIER: com.awesomenull.poc
-    PRODUCT_NAME: PoC
+    INFOPLIST_FILE: layout/Applications/GoldenNuggetMobile.app/Info.plist
+    PRODUCT_BUNDLE_IDENTIFIER: com.awesomenull.goldennugget
+    PRODUCT_NAME: GoldenNuggetMobile
     CODE_SIGN_ENTITLEMENTS: entitlements.plist
-    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    PROVISIONING_PROFILE_SPECIFIER: ""
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
+    # The app icon is an asset catalog, not loose PNGs: the set carries a
+    # luminosity=dark appearance, so the system picks the dark artwork on a
+    # dark home screen and the light one otherwise.  Loose PNGs in the bundle
+    # root cannot express that — iOS only chooses between them by size.
+    #
+    # Both builders end up with the same icon after all, but they get there
+    # differently.  Xcode runs actool on this catalog and puts the result in
+    # Assets.car.  xtool cannot: it execs xtool/.xtool-tmp/actool, which never
+    # gets the executable bit (xtool.yml has the measured details), so
+    # scripts/compile-assets.sh compiles the same catalog on this host with a
+    # locally patched AssetKit and xtool ships the Assets.car it produced.
+    # scripts/generate-appicons.py is the shared step that fills the catalog
+    # from the two 1024 masters, so both paths consume identical artwork.
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  configs:
+    # The one deliberate divergence from the xtool bundle, for size: xtool links
+    # the symbol table in (6.0 MB strtab + 1.3 MB nlist — 47% of a 15.7 MB
+    # binary, and 1.1 MB more in the embedded EMProxy), and it cannot strip
+    # afterwards because it signs the product it just built.  An Xcode build
+    # signs nothing here (scripts/build-ipa.sh passes CODE_SIGNING_ALLOWED=NO
+    # and the sideloader signs later), so Release can strip at the copy phase
+    # and the IPA gets ~8.5 MB smaller for free.  Debug keeps its symbols.
+    Release:
+      COPY_PHASE_STRIP: YES
 
 targets:
-  PoC:
+  GoldenNuggetMobile:
     type: application
     platform: iOS
     sources:
       - path: Nugget
-      # App icons must live at the bundle root (CFBundleIconFiles expects them there)
-      - path: layout/Applications/PoC.app/AppIcon60x60@2x.png
+      # Light + dark app icon.  actool compiles this into Assets.car.
+      - path: layout/Applications/GoldenNuggetMobile.app/Assets.xcassets
         buildPhase: resources
-      - path: layout/Applications/PoC.app/AppIcon76x76@2x~ipad.png
+      # Kept alongside the catalog because xtool.yml's iconPath points at
+      # AppIcon60x60@2x.png, and because a light loose PNG is the fallback for
+      # devices where CoreUI's rendition lookup misses.  Harmless in the Xcode
+      # bundle: the catalog wins, since Info.plist declares
+      # CFBundleIconName = AppIcon.
+      # App icons must live at the bundle root (CFBundleIconFiles expects them there)
+      - path: layout/Applications/GoldenNuggetMobile.app/AppIcon60x60@2x.png
+        buildPhase: resources
+      - path: layout/Applications/GoldenNuggetMobile.app/AppIcon76x76@2x~ipad.png
         buildPhase: resources
     dependencies:
       - package: Minimuxer
         product: Minimuxer
       - sdk: libsqlite3.tbd
+      # Dynamic slice, copied into Frameworks/ and signed on copy — see the note
+      # at the top of this file.
+      - framework: Vendor/EMProxy-dynamic.xcframework/ios-arm64/EMProxy.framework
+        embed: true
+        codeSign: true
     settings:
       base:
         OTHER_LDFLAGS:
@@ -59,9 +121,9 @@ targets:
           - "UIKit"
 
 schemes:
-  PoC:
+  GoldenNuggetMobile:
     build:
       targets:
-        PoC: all
+        GoldenNuggetMobile: all
     run:
       config: Debug

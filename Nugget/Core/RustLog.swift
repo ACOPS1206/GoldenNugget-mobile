@@ -1,7 +1,7 @@
 import Foundation
 
 /// Everything that reads `<Documents>/minimuxer.log` — the Rust `tracing` sink
-/// installed by `PoCEngine.enableRustFileLogging()`.
+/// installed by `GoldenNuggetEngine.enableRustFileLogging()`.
 ///
 /// This file is the only host-side window into the protocol *and* the transport:
 /// the mobilebackup2 DeviceLink conversation and jktcp's UDP retransmit logs land
@@ -22,6 +22,17 @@ enum RustLog {
     static func size() -> UInt64 {
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
         return (attrs?[.size] as? NSNumber)?.uint64Value ?? 0
+    }
+
+    /// Whether the log file exists at all.
+    ///
+    /// `size()` cannot answer that on its own: the Rust side creates the file
+    /// with its first line, so "0 bytes" is a healthy sink that has not been
+    /// written to yet — and reporting it as MISSING (as this used to) turns a
+    /// quiet-but-working log into a false alarm, which is worse than silence
+    /// because it sends the reader looking for a bug in the logger.
+    static var fileExists: Bool {
+        FileManager.default.fileExists(atPath: url.path)
     }
 
     /// Remember the log offset so the next excerpt covers only THIS run.
@@ -49,10 +60,25 @@ enum RustLog {
     }
 
     /// Status of the Rust log sink for the diagnostics block.
+    ///
+    /// Three states, because they mean different things to whoever reads the
+    /// dump: no file at all (the sink is not coming up, and the parent directory
+    /// says whether that is fixable), a 0-byte file (sink armed, the device has
+    /// simply not produced a Rust line yet), and real bytes.
     static func status() -> String {
         let rc = initResult.map { String(describing: $0) } ?? "not called"
         let bytes = size()
-        return "minimuxer.log: init rc=\(rc), size=\(bytes == 0 ? "MISSING" : "\(bytes) B")"
+        let state: String
+        if !fileExists {
+            let parent = url.deletingLastPathComponent()
+            let parentExists = FileManager.default.fileExists(atPath: parent.path)
+            state = "no file at \(url.path) (parent dir exists=\(parentExists))"
+        } else if bytes == 0 {
+            state = "0 B — sink armed, no Rust output yet"
+        } else {
+            state = "\(bytes) B"
+        }
+        return "minimuxer.log: init rc=\(rc), \(state)"
     }
 
     // MARK: - Keyword sets

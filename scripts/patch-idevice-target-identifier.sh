@@ -12,7 +12,7 @@
 #
 # The vendored library cannot: its `Idevice` handle only learns its UDID on the
 # usbmuxd/lockdown connect path (`idevice/src/lib.rs`: `lockdown.get_value
-# ("UniqueDeviceID")` -> `set_udid`).  This PoC connects over RSD, which never
+# ("UniqueDeviceID")` -> `set_udid`).  This app connects over RSD, which never
 # runs that code, so `self.idevice.udid()` is `None`, and `send_request` builds
 # its dictionary with an optional-include macro:
 #
@@ -43,7 +43,7 @@
 # CAVEAT
 # ------
 # `send_request` serves Backup AND Restore, so Restore also emits
-# `TargetIdentifier` where it used to emit `SourceIdentifier`.  In this PoC the
+# `TargetIdentifier` where it used to emit `SourceIdentifier`.  In this app the
 # two are the same device UDID, but a real Restore wants both keys.  This is a
 # hypothesis test, not the final fix -- the real fix is a rebuilt Rust lib with
 # `let target = self.idevice.udid().or(Some(source))` in `backup_from_path`

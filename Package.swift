@@ -4,15 +4,25 @@ import PackageDescription
 let root = Context.packageDirectory
 
 let package = Package(
-    name: "PoC",
+    name: "GoldenNuggetMobile",
     platforms: [
-        .iOS(.v16),
+        // iOS 26, matching xtool.yml's `deploymentTarget` and Info.plist's
+        // MinimumOSVersion.  It used to say .v16 while those two said 26: the
+        // app then shipped a binary whose LC_BUILD_VERSION claimed
+        // minos=16.0/sdk=16.0 next to an Info.plist that refuses to install
+        // below 26, and compiled against the 26.5 SDK anyway.  One number,
+        // stated once per file that has to repeat it.
+        .iOS("26.0"),
     ],
     products: [
         // xtool picks the single automatic (static) library product as the app.
+        // The product name IS the app binary's name, and CFBundleExecutable in
+        // layout/Applications/GoldenNuggetMobile.app/Info.plist has to agree with
+        // it — a mismatch here fails the xtool build at the signing step with
+        // "Can't parse BundleExecute file!".  Keep the two in step.
         .library(
-            name: "PoC",
-            targets: ["PoC"]
+            name: "GoldenNuggetMobile",
+            targets: ["GoldenNuggetMobile"]
         ),
     ],
     dependencies: [
@@ -20,7 +30,7 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "PoC",
+            name: "GoldenNuggetMobile",
             dependencies: [
                 .product(name: "Minimuxer", package: "Vendor"),
             ],
@@ -38,12 +48,27 @@ let package = Package(
             // its own, and it is the same expression project.yml uses
             // (`- path: Nugget`).
             //
-            // PoC.xcodeproj/project.pbxproj still enumerates files (Xcode has no
-            // directory reference for sources), so it is reconciled from this
-            // target's resolved source list by scripts/sync-pbxproj-sources.py.
+            // GoldenNuggetMobile.xcodeproj/project.pbxproj still enumerates files
+            // (Xcode has no directory reference for sources), so it is reconciled
+            // from this target's resolved source list by
+            // scripts/sync-pbxproj-sources.py.
             sources: ["Nugget"],
             swiftSettings: [
                 .swiftLanguageMode(.v5),
+                // -Osize in release: the linked binary is ~90% prebuilt Rust
+                // (idevice + em_proxy), so this is worth ~400 KB out of 15 MB,
+                // and nothing outside release pays for it.  The two levers that
+                // actually move the number are elsewhere: strip the symbol
+                // table in scripts/build-ipa.sh, and recompress the IPA —
+                // xtool writes every zip entry STORED, and the zip container is
+                // not covered by the code signature, so both are safe.
+                //
+                // NOT here: -Xlinker -S.  Measured and dropped — SwiftPM does
+                // not apply a static library target's linkerSettings to the
+                // executable that links it, and xtool links the product from
+                // its own throwaway manifest (xtool/.xtool-tmp/, regenerated on
+                // every run, gitignored), so the flag never reaches the link.
+                .unsafeFlags(["-Osize"], .when(configuration: .release)),
             ],
             linkerSettings: [
                 .linkedFramework("UIKit"),

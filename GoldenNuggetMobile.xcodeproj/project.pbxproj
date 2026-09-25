@@ -10,27 +10,27 @@
 		EB8E79099013C10B8DFFC15C /* Alert++.swift in Sources */ = {isa = PBXBuildFile; fileRef = 784977FF7125F784FA4547E2 /* Alert++.swift */; };
 		DF7BAFE88BAF515B92E11587 /* AppIcon60x60@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = F3EC3C5A82F39973FA4497F2 /* AppIcon60x60@2x.png */; };
 		0086B73CB2C1DDBF85F1F558 /* AppIcon76x76@2x~ipad.png in Resources */ = {isa = PBXBuildFile; fileRef = 0664880759831BBADAD89642 /* AppIcon76x76@2x~ipad.png */; };
-		E85EE7001F40EB7CCC5B65B6 /* AppPackage.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCCE7E52CF01127E1E19890 /* AppPackage.swift */; };
 		484D0347B41ADB35555A017F /* AppPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91396F621D29D7FA9600BD21 /* AppPaths.swift */; };
+		A1C0DE5E7B4F6A3C8D2E1908 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1C0DE5E7B4F6A3C8D2E1907 /* Assets.xcassets */; };
 		B37B8CC1C1B46CD15DAF3381 /* AsyncRacing.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAC71EBF95E1574B88783B6B /* AsyncRacing.swift */; };
 		E6A1A5E439330FF34ACA9B86 /* BackupInjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3B0606577F22DD11B401E93 /* BackupInjector.swift */; };
 		3E0DA5B2355E5D21A0216CFA /* ChannelRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6049D8D015CF48961C744709 /* ChannelRecovery.swift */; };
 		96CCD31F8F6C1B323200AABD /* DeviceIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2F7065D06BCC3DD26401D93 /* DeviceIdentity.swift */; };
 		881B6D5DEB7B29D35D0FCFA2 /* Diagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E11FBF9A047B56F2E66E5FD /* Diagnostics.swift */; };
+		7C1F0A9E5D3B4E6FA8C210D2 /* EMProxy.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 7C1F0A9E5D3B4E6FA8C210D1 /* EMProxy.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		6FAF80E23DED37E68DF5C4EB /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E2884CFA985B6561938C066 /* Extensions.swift */; };
 		483F8C2418C5B065F7B692B2 /* GoldenComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9376FB58D1DA358A075B8DD /* GoldenComponents.swift */; };
+		2E44104D7A9958A98A7860EF /* GoldenNuggetEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 680BEDC6838E13FA5AEE059E /* GoldenNuggetEngine.swift */; };
 		D8CB50EA9A6F61C7683E54A6 /* GoldenNuggetPreset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37369801556192F20D0DF2D8 /* GoldenNuggetPreset.swift */; };
+		11558E54DB612291BA4B5C73 /* GoldenNuggetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4432398FF02541D88F5E11B /* GoldenNuggetView.swift */; };
 		D216DFB074CD321EF4316F9E /* GoldenTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85A3D093FF4C72DC8FA10411 /* GoldenTheme.swift */; };
 		49D6B9D95723713BD06BE44A /* HostManifests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1586D9A781CB24F33910162E /* HostManifests.swift */; };
 		D72E5E9591A66FAB046A24E0 /* InFlightCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5DC362DFE508D1A75B921BC /* InFlightCall.swift */; };
-		1BA8F77F705E3F66B2FB684F /* InstProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5BE188496CD2352DD095A6E /* InstProxy.swift */; };
 		38AC1AA2B797920552A965C5 /* Logging.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DA93A177C8D1537F0522DAD /* Logging.swift */; };
 		3D9A822A8FFEC6765986F255 /* MBFileBlob.swift in Sources */ = {isa = PBXBuildFile; fileRef = F63167F7109495632C638455 /* MBFileBlob.swift */; };
 		0331AFC575C298F5CD5B9046 /* ManifestStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 590719A37991943F005FE604 /* ManifestStore.swift */; };
 		9616622130656E770045CB83 /* Minimuxer in Frameworks */ = {isa = PBXBuildFile; productRef = B6CC7F8101BD13AD344DBB86 /* Minimuxer */; };
 		B131B5D39A218B7F0A12FC3C /* NuggetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB5B064EBCC8C22AB174E0D2 /* NuggetApp.swift */; };
-		2E44104D7A9958A98A7860EF /* PoCEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 680BEDC6838E13FA5AEE059E /* PoCEngine.swift */; };
-		11558E54DB612291BA4B5C73 /* PoCView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4432398FF02541D88F5E11B /* PoCView.swift */; };
 		52F9CFD7A2DB9E90B4FE71D1 /* ProgressPulse.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10F91169C201521D8C0F3B86 /* ProgressPulse.swift */; };
 		8969C92A6ECADAC5DA057A58 /* ProtectiveBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2521FA7674D8EDC6F4DF724 /* ProtectiveBackup.swift */; };
 		6260750CEB090F2A1CD8D4A4 /* RestoreRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = EABB4369B839C2CD9D0D7C98 /* RestoreRunner.swift */; };
@@ -48,31 +48,45 @@
 		E801AE73005EB73126FC4367 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 92FE9028690931EFD26A8AFF /* libsqlite3.tbd */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		7C1F0A9E5D3B4E6FA8C210D3 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				7C1F0A9E5D3B4E6FA8C210D2 /* EMProxy.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		784977FF7125F784FA4547E2 /* Alert++.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Alert++.swift"; sourceTree = "<group>"; };
 		F3EC3C5A82F39973FA4497F2 /* AppIcon60x60@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIcon60x60@2x.png"; sourceTree = "<group>"; };
 		0664880759831BBADAD89642 /* AppIcon76x76@2x~ipad.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIcon76x76@2x~ipad.png"; sourceTree = "<group>"; };
-		CCCCE7E52CF01127E1E19890 /* AppPackage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPackage.swift; sourceTree = "<group>"; };
 		91396F621D29D7FA9600BD21 /* AppPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPaths.swift; sourceTree = "<group>"; };
+		A1C0DE5E7B4F6A3C8D2E1907 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BAC71EBF95E1574B88783B6B /* AsyncRacing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AsyncRacing.swift; sourceTree = "<group>"; };
 		E3B0606577F22DD11B401E93 /* BackupInjector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupInjector.swift; sourceTree = "<group>"; };
 		6049D8D015CF48961C744709 /* ChannelRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelRecovery.swift; sourceTree = "<group>"; };
 		A2F7065D06BCC3DD26401D93 /* DeviceIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceIdentity.swift; sourceTree = "<group>"; };
 		6E11FBF9A047B56F2E66E5FD /* Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diagnostics.swift; sourceTree = "<group>"; };
+		7C1F0A9E5D3B4E6FA8C210D1 /* EMProxy.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = EMProxy.framework; path = "Vendor/EMProxy-dynamic.xcframework/ios-arm64/EMProxy.framework"; sourceTree = SOURCE_ROOT; };
 		4E2884CFA985B6561938C066 /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
 		A9376FB58D1DA358A075B8DD /* GoldenComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoldenComponents.swift; sourceTree = "<group>"; };
+		680BEDC6838E13FA5AEE059E /* GoldenNuggetEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoldenNuggetEngine.swift; sourceTree = "<group>"; };
 		58A0011193A068B87B3F76BA /* GoldenNuggetMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GoldenNuggetMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		37369801556192F20D0DF2D8 /* GoldenNuggetPreset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoldenNuggetPreset.swift; sourceTree = "<group>"; };
+		F4432398FF02541D88F5E11B /* GoldenNuggetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoldenNuggetView.swift; sourceTree = "<group>"; };
 		85A3D093FF4C72DC8FA10411 /* GoldenTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoldenTheme.swift; sourceTree = "<group>"; };
 		1586D9A781CB24F33910162E /* HostManifests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostManifests.swift; sourceTree = "<group>"; };
 		A5DC362DFE508D1A75B921BC /* InFlightCall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InFlightCall.swift; sourceTree = "<group>"; };
-		E5BE188496CD2352DD095A6E /* InstProxy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstProxy.swift; sourceTree = "<group>"; };
 		4DA93A177C8D1537F0522DAD /* Logging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logging.swift; sourceTree = "<group>"; };
 		F63167F7109495632C638455 /* MBFileBlob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MBFileBlob.swift; sourceTree = "<group>"; };
 		590719A37991943F005FE604 /* ManifestStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManifestStore.swift; sourceTree = "<group>"; };
 		CB5B064EBCC8C22AB174E0D2 /* NuggetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NuggetApp.swift; sourceTree = "<group>"; };
-		680BEDC6838E13FA5AEE059E /* PoCEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PoCEngine.swift; sourceTree = "<group>"; };
-		F4432398FF02541D88F5E11B /* PoCView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PoCView.swift; sourceTree = "<group>"; };
 		10F91169C201521D8C0F3B86 /* ProgressPulse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressPulse.swift; sourceTree = "<group>"; };
 		F2521FA7674D8EDC6F4DF724 /* ProtectiveBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtectiveBackup.swift; sourceTree = "<group>"; };
 		EABB4369B839C2CD9D0D7C98 /* RestoreRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestoreRunner.swift; sourceTree = "<group>"; };
@@ -107,7 +121,7 @@
 		02669CF2D6ADE71EA0143B46 /* Applications */ = {
 			isa = PBXGroup;
 			children = (
-				C7D3FB037CA93454D757DB01 /* PoC.app */,
+				C7D3FB037CA93454D757DB01 /* GoldenNuggetMobile.app */,
 			);
 			path = Applications;
 			sourceTree = "<group>";
@@ -121,14 +135,13 @@
 				6049D8D015CF48961C744709 /* ChannelRecovery.swift */,
 				A2F7065D06BCC3DD26401D93 /* DeviceIdentity.swift */,
 				6E11FBF9A047B56F2E66E5FD /* Diagnostics.swift */,
+				680BEDC6838E13FA5AEE059E /* GoldenNuggetEngine.swift */,
 				37369801556192F20D0DF2D8 /* GoldenNuggetPreset.swift */,
 				1586D9A781CB24F33910162E /* HostManifests.swift */,
 				A5DC362DFE508D1A75B921BC /* InFlightCall.swift */,
-				E5BE188496CD2352DD095A6E /* InstProxy.swift */,
 				4DA93A177C8D1537F0522DAD /* Logging.swift */,
 				F63167F7109495632C638455 /* MBFileBlob.swift */,
 				590719A37991943F005FE604 /* ManifestStore.swift */,
-				680BEDC6838E13FA5AEE059E /* PoCEngine.swift */,
 				10F91169C201521D8C0F3B86 /* ProgressPulse.swift */,
 				F2521FA7674D8EDC6F4DF724 /* ProtectiveBackup.swift */,
 				EABB4369B839C2CD9D0D7C98 /* RestoreRunner.swift */,
@@ -162,7 +175,6 @@
 				02718FE4F507CDB13D3AC30F /* Core */,
 				F0FBC047EB63ED56313CBF0A /* Extensions */,
 				B444A43510A1B7A42A8D5A32 /* Views */,
-				CCCCE7E52CF01127E1E19890 /* AppPackage.swift */,
 				CB5B064EBCC8C22AB174E0D2 /* NuggetApp.swift */,
 				9D1BC98037C6BDC8AF58496B /* Tunnel.swift */,
 			);
@@ -180,6 +192,7 @@
 		97E9B8C056917EBC62695D5E /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				7C1F0A9E5D3B4E6FA8C210D1 /* EMProxy.framework */,
 				92FE9028690931EFD26A8AFF /* libsqlite3.tbd */,
 			);
 			name = Frameworks;
@@ -197,8 +210,8 @@
 			isa = PBXGroup;
 			children = (
 				A9376FB58D1DA358A075B8DD /* GoldenComponents.swift */,
+				F4432398FF02541D88F5E11B /* GoldenNuggetView.swift */,
 				85A3D093FF4C72DC8FA10411 /* GoldenTheme.swift */,
-				F4432398FF02541D88F5E11B /* PoCView.swift */,
 				FB4799584FF11C9BF5BE59FF /* TweaksView.swift */,
 			);
 			path = Views;
@@ -212,13 +225,14 @@
 			path = layout;
 			sourceTree = "<group>";
 		};
-		C7D3FB037CA93454D757DB01 /* PoC.app */ = {
+		C7D3FB037CA93454D757DB01 /* GoldenNuggetMobile.app */ = {
 			isa = PBXGroup;
 			children = (
+				A1C0DE5E7B4F6A3C8D2E1907 /* Assets.xcassets */,
 				F3EC3C5A82F39973FA4497F2 /* AppIcon60x60@2x.png */,
 				0664880759831BBADAD89642 /* AppIcon76x76@2x~ipad.png */,
 			);
-			path = PoC.app;
+			path = GoldenNuggetMobile.app;
 			sourceTree = "<group>";
 		};
 		F0FBC047EB63ED56313CBF0A /* Extensions */ = {
@@ -240,6 +254,7 @@
 				50573C24C930F1E1B523AA1D /* Sources */,
 				7BC289958C55848CD5B900BB /* Resources */,
 				286D0E51B82DA2556E7A1D56 /* Frameworks */,
+				7C1F0A9E5D3B4E6FA8C210D3 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -249,7 +264,7 @@
 			packageProductDependencies = (
 				B6CC7F8101BD13AD344DBB86 /* Minimuxer */,
 			);
-			productName = PoC;
+			productName = GoldenNuggetMobile;
 			productReference = 58A0011193A068B87B3F76BA /* GoldenNuggetMobile.app */;
 			productType = "com.apple.product-type.application";
 		};
@@ -263,7 +278,7 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					3814067802951A29B1A55FCB = {
-						ProvisioningStyle = Automatic;
+						ProvisioningStyle = Manual;
 					};
 				};
 			};
@@ -296,6 +311,7 @@
 			files = (
 				DF7BAFE88BAF515B92E11587 /* AppIcon60x60@2x.png in Resources */,
 				0086B73CB2C1DDBF85F1F558 /* AppIcon76x76@2x~ipad.png in Resources */,
+				A1C0DE5E7B4F6A3C8D2E1908 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -307,7 +323,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				EB8E79099013C10B8DFFC15C /* Alert++.swift in Sources */,
-				E85EE7001F40EB7CCC5B65B6 /* AppPackage.swift in Sources */,
 				484D0347B41ADB35555A017F /* AppPaths.swift in Sources */,
 				B37B8CC1C1B46CD15DAF3381 /* AsyncRacing.swift in Sources */,
 				E6A1A5E439330FF34ACA9B86 /* BackupInjector.swift in Sources */,
@@ -316,17 +331,16 @@
 				881B6D5DEB7B29D35D0FCFA2 /* Diagnostics.swift in Sources */,
 				6FAF80E23DED37E68DF5C4EB /* Extensions.swift in Sources */,
 				483F8C2418C5B065F7B692B2 /* GoldenComponents.swift in Sources */,
+				2E44104D7A9958A98A7860EF /* GoldenNuggetEngine.swift in Sources */,
 				D8CB50EA9A6F61C7683E54A6 /* GoldenNuggetPreset.swift in Sources */,
+				11558E54DB612291BA4B5C73 /* GoldenNuggetView.swift in Sources */,
 				D216DFB074CD321EF4316F9E /* GoldenTheme.swift in Sources */,
 				49D6B9D95723713BD06BE44A /* HostManifests.swift in Sources */,
 				D72E5E9591A66FAB046A24E0 /* InFlightCall.swift in Sources */,
-				1BA8F77F705E3F66B2FB684F /* InstProxy.swift in Sources */,
 				38AC1AA2B797920552A965C5 /* Logging.swift in Sources */,
 				3D9A822A8FFEC6765986F255 /* MBFileBlob.swift in Sources */,
 				0331AFC575C298F5CD5B9046 /* ManifestStore.swift in Sources */,
 				B131B5D39A218B7F0A12FC3C /* NuggetApp.swift in Sources */,
-				2E44104D7A9958A98A7860EF /* PoCEngine.swift in Sources */,
-				11558E54DB612291BA4B5C73 /* PoCView.swift in Sources */,
 				52F9CFD7A2DB9E90B4FE71D1 /* ProgressPulse.swift in Sources */,
 				8969C92A6ECADAC5DA057A58 /* ProtectiveBackup.swift in Sources */,
 				6260750CEB090F2A1CD8D4A4 /* RestoreRunner.swift in Sources */,
@@ -351,6 +365,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
@@ -381,7 +396,9 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_ENTITLEMENTS = entitlements.plist;
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
@@ -402,14 +419,14 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = layout/Applications/PoC.app/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				INFOPLIST_FILE = layout/Applications/GoldenNuggetMobile.app/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 0.1.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.awesomenull.poc;
-				PRODUCT_NAME = PoC;
+				PRODUCT_BUNDLE_IDENTIFIER = com.awesomenull.goldennugget;
+				PRODUCT_NAME = GoldenNuggetMobile;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -422,6 +439,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
@@ -452,8 +470,10 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_ENTITLEMENTS = entitlements.plist;
-				CODE_SIGN_STYLE = Automatic;
-				COPY_PHASE_STRIP = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				COPY_PHASE_STRIP = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
@@ -467,13 +487,13 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = layout/Applications/PoC.app/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				INFOPLIST_FILE = layout/Applications/GoldenNuggetMobile.app/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 0.1.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.awesomenull.poc;
-				PRODUCT_NAME = PoC;
+				PRODUCT_BUNDLE_IDENTIFIER = com.awesomenull.goldennugget;
+				PRODUCT_NAME = GoldenNuggetMobile;
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
@@ -485,9 +505,8 @@
 		CCE5F2C756E2586B9DB535AB /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = L7HX85L6GU;
+				CODE_SIGN_IDENTITY = "-";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -496,7 +515,7 @@
 					"-framework",
 					UIKit,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.awesomenull.poc;
+				PRODUCT_BUNDLE_IDENTIFIER = com.awesomenull.goldennugget;
 				PRODUCT_NAME = GoldenNuggetMobile;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -506,9 +525,8 @@
 		E1937099520660820C8CA06B /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = LLKXS6MDAR;
+				CODE_SIGN_IDENTITY = "-";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -517,7 +535,7 @@
 					"-framework",
 					UIKit,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.jason.poc;
+				PRODUCT_BUNDLE_IDENTIFIER = com.awesomenull.goldennugget;
 				PRODUCT_NAME = GoldenNuggetMobile;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";

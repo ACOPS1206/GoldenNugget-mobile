@@ -2,7 +2,7 @@ import SwiftUI
 import Minimuxer
 
 @main
-struct PoCApp: App {
+struct GoldenNuggetApp: App {
     init() {
         // LocalDevVPN compatibility: only start our own WireGuard server
         // (em_proxy at 127.0.0.1:51820) when no LocalDevVPN-style tunnel
@@ -10,7 +10,7 @@ struct PoCApp: App {
         let tunnelUp = Tunnel.isInterfaceUp()
         // Goes through the app log rather than print(): on device the console is
         // not reachable, and the tunnel verdict is the first thing a failed run
-        // needs to show in poc.log.
+        // needs to show in goldennugget.log.
         AppLog.write("Tunnel status: \(Tunnel.describe()) — em_proxy \(tunnelUp ? "skipped (LocalDevVPN active)" : "starting")")
         if !tunnelUp {
             let emproxy = Minimuxer.shared().emproxy

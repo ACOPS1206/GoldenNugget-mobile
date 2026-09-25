@@ -23,8 +23,17 @@ struct TweaksView: View {
 
     @State private var identity: DeviceIdentity = .unknown
     @State private var showImporter = false
+    /// The pending debounced autosave, cancelled and replaced on every change.
+    @State private var autosaveTask: Task<Void, Never>?
+    /// Whether an autosave is on disk right now, for the note under the rows.
+    @State private var autosaveSaved = false
     @State private var importReport: TweakImportReport?
     @State private var importError: String?
+    /// Bumped by an import so every row is rebuilt from the imported values.
+    /// A row's numeric editor seeds its draft when it is created, so without this
+    /// the fields kept showing the registry defaults while the selection — the
+    /// thing Apply compiles and writes — held something else entirely.
+    @State private var formEpoch = 0
     @State private var running = false
     @State private var outcome: String?
     /// The reference colours its status line by outcome (`process_status_green`
@@ -54,7 +63,13 @@ struct TweaksView: View {
         .toolbarBackground(GoldenTheme.backgroundSecondary, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .task { identity = await DeviceIdentity.read() }
+        .task {
+            identity = await DeviceIdentity.read()
+            // The reference loads AutoSave at startup (`_load_last_preset`) and
+            // rewrites it right after, so a stale entry cannot survive a launch.
+            restoreAutosave()
+        }
+        .onChange(of: selection) { _, _ in scheduleAutosave() }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [.json]) { result in
             switch result {
@@ -95,11 +110,13 @@ struct TweaksView: View {
                         selection.removeAll()
                         importReport = nil
                         importError = nil
+                        // Delete it rather than leaving it to be re-read: an
+                        // all-off autosave and no autosave are the same state,
+                        // and the latter cannot resurrect a cleared tweak.
+                        GoldenNuggetAutosave.clear()
                     }
                     .disabled(running || selection.enabledCount == 0)
-                    GoldenMutedNote(text: "Reads GoldenNugget's preset document (the AutoSave preset it writes "
-                        + "on every change). Tweaks it names are switched on with their saved values; entries "
-                        + "this port does not carry are listed below rather than guessed at.")
+                    GoldenMutedNote(text: autosaveNote)
                 }
             )
         )
@@ -117,6 +134,7 @@ struct TweaksView: View {
                         VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
                             ForEach(specs, id: \.id) { spec in
                                 TweakRow(spec: spec, selection: $selection)
+                                    .id("\(spec.id)#\(formEpoch)")
                             }
                         }
                     )
@@ -140,7 +158,7 @@ struct TweaksView: View {
                         GoldenStatusText(text: outcome, tone: outcomeTone)
                     }
                     GoldenMutedNote(text: "Runs the same protective backup → prune → inject → restore the "
-                        + "app-container PoC uses, carrying the compiled plists instead. Reboot the device "
+                        + "app-container flow uses, carrying the compiled plists instead. Reboot the device "
                         + "afterwards.")
                 }
             )
@@ -188,6 +206,48 @@ struct TweaksView: View {
         }
     }
 
+    // MARK: - Autosave
+
+    /// Write the selection 500 ms after the last change — the reference's
+    /// `_on_tweak_changed` debounce (`QTimer.singleShot(500, …)`).
+    ///
+    /// A pending save is replaced, not queued, so dragging a number field
+    /// writes once at the end rather than once per keystroke.
+    private func scheduleAutosave() {
+        autosaveTask?.cancel()
+        let snapshot = selection
+        let device = identity
+        autosaveTask = Task {
+            try? await Task.sleep(for: GoldenNuggetAutosave.debounce)
+            guard !Task.isCancelled else { return }
+            autosaveSaved = GoldenNuggetAutosave.save(snapshot, identity: device)
+        }
+    }
+
+    /// Startup load of the AutoSave preset, followed by the reference's
+    /// immediate rewrite so stale entries cannot survive a launch.
+    private func restoreAutosave() {
+        autosaveSaved = GoldenNuggetAutosave.exists
+        guard let report = GoldenNuggetAutosave.restore(into: &selection, identity: identity)
+        else { return }
+        // Logged rather than shown: this runs on every launch, so a report card
+        // would greet the user on a perfectly normal run.  The reference logs
+        // the same way, and the run log is the durable half of the report.
+        for line in report.logLines { GoldenNuggetEngine.shared.log(line) }
+        formEpoch &+= 1
+    }
+
+    /// The autosave line: where the file lives and that the import row is the
+    /// manual path for a preset that came from somewhere else.
+    private var autosaveNote: String {
+        let path = "Documents/GoldenNugget/Presets/\(GoldenNuggetAutosave.presetName).json"
+        let state = autosaveSaved ? "saved" : "nothing saved yet"
+        return "Your selection is saved to \(path) on every change and restored on "
+            + "launch, exactly as the desktop app's AutoSave preset does (\(state)). "
+            + "Import is for a preset from elsewhere; entries this port does not carry "
+            + "are listed below rather than guessed at."
+    }
+
     private func importAutosave(from url: URL) {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
@@ -199,7 +259,8 @@ struct TweaksView: View {
                                                         isIPhone: identity.isIPhone)
             // The log is the durable half of the report: the sheet can be
             // dismissed, the run log cannot.
-            for line in report.logLines { PoCEngine.shared.log(line) }
+            for line in report.logLines { GoldenNuggetEngine.shared.log(line) }
+            formEpoch &+= 1
             importReport = report
             importError = nil
         } catch {
@@ -217,7 +278,7 @@ struct TweaksView: View {
             var result: String
             var tone: GoldenTone
             do {
-                try await PoCEngine.shared.applyTweaks(selection: snapshot,
+                try await GoldenNuggetEngine.shared.applyTweaks(selection: snapshot,
                                                        deviceVersion: device.version,
                                                        isIPhone: device.isIPhone)
                 result = "Applied. Reboot the device so the injected preferences take effect."
@@ -229,7 +290,7 @@ struct TweaksView: View {
                 result = "❌ \(error.localizedDescription)"
                 tone = .error
             }
-            let lines = Array(PoCEngine.shared.pendingLog.suffix(30))
+            let lines = Array(GoldenNuggetEngine.shared.pendingLog.suffix(30))
             await MainActor.run {
                 outcome = result
                 outcomeTone = tone
@@ -308,7 +369,28 @@ private struct TweakRow: View {
 private struct TweakNumberField: View {
     let spec: TweakSpec
     @Binding var selection: TweakSelection
-    @State private var draft: String = ""
+    @State private var draft: String
+
+    /// The draft is seeded here, once, and never re-seeded.
+    ///
+    /// It used to be seeded in `onAppear` — and that assignment is a *change*
+    /// like any other, so `onChange(of: draft)` read it as "the user typed this"
+    /// and `setValue`, which switches the tweak on the way the reference's
+    /// `toggle_enabled=True` does, switched on every number tweak whose row
+    /// scrolled into view.  The page then reported 42 tweaks enabled after two
+    /// switches were flipped, 38 of them Liquid Glass: 39 of the 41 value-shaped
+    /// Liquid Glass specs are numbers, and the row that had not been scrolled to
+    /// yet was the difference.  The count grew as the user scrolled, which is
+    /// why it was the number on the way *out* that looked wrong.
+    ///
+    /// A flag set in the same `onAppear` cannot guard this, because `onChange`
+    /// runs in the update *after* it, when the flag is already set.  The only
+    /// way to keep the seed out of `onChange` is to not make it a change at all.
+    init(spec: TweakSpec, selection: Binding<TweakSelection>) {
+        self.spec = spec
+        self._selection = selection
+        self._draft = State(initialValue: selection.wrappedValue.value(for: spec).display)
+    }
 
     var body: some View {
         TextField("value", text: $draft)
@@ -316,7 +398,6 @@ private struct TweakNumberField: View {
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .goldenField()
-            .onAppear { draft = selection.value(for: spec).display }
             .onChange(of: draft) { newValue in
                 if let value = spec.numberValue(from: newValue) {
                     selection.setValue(value, for: spec)
