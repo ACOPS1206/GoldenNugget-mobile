@@ -186,7 +186,8 @@ enum BackupInjector {
         backupRoot: URL,
         udid: String,
         tweakPayloads: [TweakPayload],
-        prune: Bool = true
+        prune: Bool = true,
+        ios27: Bool = true
     ) async throws {
         let deviceDir = AppPaths.deviceDir(backupRoot: backupRoot, udid: udid)
         let store = ManifestStore(deviceDir: deviceDir)
@@ -195,8 +196,30 @@ enum BackupInjector {
         // (Info.plist / Status.plist / Manifest.plist), write minimal valid ones
         // — restore refuses a backup without them.
         let manifestStage = StageTimer("ensure host-side manifests")
-        try HostManifests.ensure(deviceDir: deviceDir, udid: udid)
+        try HostManifests.ensure(deviceDir: deviceDir, udid: udid, ios27: ios27)
         manifestStage.done()
+
+        if !ios27 {
+            // iOS 26: the legacy MBDB manifest, payloads flat in the root.
+            // Nothing to prune -- this backup is what the run built -- and no
+            // sqlite Manifest.db at all: the device reads Manifest.mbdb and
+            // asks for each payload by its fileID.
+            let mbdbStage = StageTimer("write Manifest.mbdb")
+            let rows = MBDBManifest.rows(for: tweakPayloads)
+            try MBDBManifest.encode(rows).write(to: deviceDir.appendingPathComponent("Manifest.mbdb"),
+                                                options: .atomic)
+            for payload in tweakPayloads {
+                let name = MBDBManifest.fileID(domain: payload.domain,
+                                               relativePath: payload.relativePath)
+                try payload.contents.write(to: deviceDir.appendingPathComponent(name),
+                                           options: .atomic)
+            }
+            mbdbStage.done()
+            try? FileManager.default.removeItem(at: deviceDir.appendingPathComponent("Manifest.db"))
+            AppLog.write("Partial Restore: \(rows.count) MBDB row(s), "
+                         + "\(tweakPayloads.count) payload(s) flat")
+            return
+        }
 
         if prune {
             AppLog.write("Pruning Manifest.db…")

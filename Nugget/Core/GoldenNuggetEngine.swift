@@ -206,13 +206,24 @@ class GoldenNuggetEngine {
         let udid = try await prepareRun()
         let backupRoot = try await partialRestore(udid: udid)
 
+        // The manifest format follows the reference's one-line split
+        // (`backup.py:113`): iOS 26 speaks legacy MBDB, iOS 27+ the modern
+        // sqlite Manifest.db. Comparing "26.0" against "27.0" lexically would
+        // put 26.9 on the wrong side, so compare the major component.
+        let major = Int(deviceVersion.split(separator: ".").first ?? "0") ?? 0
+        let ios27 = major >= 27
+        log(ios27
+            ? "Manifest format: sqlite (iOS 27+ path)"
+            : "Manifest format: legacy MBDB (iOS 26 path)")
+
         try await BackupInjector.pruneAndInject(
             backupRoot: backupRoot,
             udid: udid,
             tweakPayloads: compiled.payloads,
             // Nothing was pulled, so there is no device state to reconcile
             // against -- the backup is what this run built.
-            prune: false
+            prune: false,
+            ios27: ios27
         )
 
         try await runRestore(backupRoot: backupRoot, udid: udid, label: "tweak restore") {

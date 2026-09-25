@@ -13,17 +13,26 @@ enum HostManifests {
     /// The device uploads `Manifest.db` in the stream, but never these three —
     /// they are a host responsibility.  Contents are filled in as far as the
     /// host can know them; the injector adds the target app afterwards.
-    static func ensure(deviceDir: URL, udid: String) throws {
+    static func ensure(deviceDir: URL, udid: String, ios27: Bool = true) throws {
         let fm = FileManager.default
         try fm.createDirectory(at: deviceDir, withIntermediateDirectories: true)
 
+        // The version split is the reference's: `Backup.manifest_ios27`
+        // (`backup.py:113`), set from the product version at
+        // `restore.py:1065-1074`. iOS 26 speaks the legacy MBDB format and
+        // declares Status 2.4 / Manifest 9.1+20.0; iOS 27+ uses the sqlite
+        // Manifest.db and 3.3 / 10.0+24.0.
+        //
+        // `IsFullBackup` is the sparse marker and matters most here: this backup
+        // is built from nothing, so declaring it full would tell the device to
+        // reconcile against content that was never sent.
         let statusURL = deviceDir.appendingPathComponent("Status.plist")
         if !fm.fileExists(atPath: statusURL.path) {
             let status: [String: Any] = [
                 "BackupState": "new",
                 "Date": Date(),
-                "IsFullBackup": true,
-                "Version": "3.3",
+                "IsFullBackup": false,
+                "Version": ios27 ? "3.3" : "2.4",
                 "SnapshotState": "finished",
                 "UUID": UUID().uuidString.uppercased(),
             ]
@@ -38,8 +47,8 @@ enum HostManifests {
         if !fm.fileExists(atPath: manifestURL.path) {
             try? PropertyListSerialization.data(fromPropertyList: ["DataProtection": true,
                                                                    "Lockdown": [:],
-                                                                   "SystemDomainsVersion": "24.0",
-                                                                   "Version": "10.0",
+                                                                   "SystemDomainsVersion": ios27 ? "24.0" : "20.0",
+                                                                   "Version": ios27 ? "10.0" : "9.1",
                                                                    "Applications": [:]],
                                                 format: .xml, options: 0)
                 .write(to: manifestURL)
