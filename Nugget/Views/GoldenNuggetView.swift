@@ -163,8 +163,19 @@ struct GoldenNuggetView: View {
         return ("Supported!", .success)
     }
 
+    /// The trailing badge on the Media card: what the local store is holding,
+    /// read from the manifest rather than from a directory walk, so it costs
+    /// nothing on every body pass.
+    private var mediaDetail: String {
+        let m = try? AfcMediaBackup.read()
+        let n = m?.entries.count ?? 0
+        if n == 0 { return "Empty" }
+        let bytes = m?.entries.reduce(Int64(0)) { $0 + $1.size } ?? 0
+        return "\(n) file(s), \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))"
+    }
+
     private var tweakCards: some View {
-        GoldenCardGrid(itemCount: 3) { index in
+        GoldenCardGrid(itemCount: 4) { index in
             switch index {
             case 0:
                 NavigationLink {
@@ -187,7 +198,7 @@ struct GoldenNuggetView: View {
                         detail: "\(enabledDaemonCount) of \(DaemonGroups.all.count) groups")
                 }
                 .buttonStyle(.plain)
-            default:
+            case 2:
                 NavigationLink {
                     SupervisionView(selection: $tweakSelection)
                 } label: {
@@ -195,6 +206,16 @@ struct GoldenNuggetView: View {
                         title: "Supervision",
                         subtitle: "Device supervision",
                         detail: supervisionDetail)
+                }
+                .buttonStyle(.plain)
+            default:
+                NavigationLink {
+                    MediaView()
+                } label: {
+                    GoldenFeatureCardLabel(
+                        title: "Media",
+                        subtitle: "Photos and videos",
+                        detail: mediaDetail)
                 }
                 .buttonStyle(.plain)
             }

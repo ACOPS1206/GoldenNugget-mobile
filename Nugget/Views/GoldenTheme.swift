@@ -133,6 +133,10 @@ enum GoldenFont {
     static let safetyNote = font(12).italic()
     /// The smallest size the reference uses (posterboard card labels).
     static let caption = font(11)
+    /// Log lines, which are paths and byte counts: monospaced so columns of
+    /// numbers line up and a path is readable character by character. Not a
+    /// reference style -- the reference shows these in a QTextEdit.
+    static let monoCaption = Font.system(size: 11, design: .monospaced)
     /// Not in the reference: the log view is this app's own surface, and the
     /// macOS/iOS convention for log text is monospaced.
     static let log = Font.system(size: 12, design: .monospaced)
