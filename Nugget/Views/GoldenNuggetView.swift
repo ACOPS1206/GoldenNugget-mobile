@@ -606,6 +606,11 @@ struct GoldenNuggetView: View {
         } else {
             GoldenNuggetEngine.shared.log("device identity: \(read.describe)")
         }
+        // Load the selection here rather than when the Tweaks tab is built, so
+        // the cards above count the restored selection instead of zero.
+        if let report = AutoSaveBootstrap.apply(into: &tweakSelection, identity: read) {
+            for line in report.logLines { GoldenNuggetEngine.shared.log(line) }
+        }
     }
 
     private func applyTweaks() {

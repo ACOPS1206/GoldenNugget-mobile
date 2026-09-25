@@ -229,7 +229,10 @@ struct TweaksView: View {
     /// immediate rewrite so stale entries cannot survive a launch.
     private func restoreAutosave() {
         autosaveSaved = GoldenNuggetAutosave.exists
-        guard let report = GoldenNuggetAutosave.restore(into: &selection, identity: identity)
+        // Through the bootstrap, so this is a no-op when Home already applied it
+        // at launch. Applying twice would be harmless but would re-log the import
+        // report on every visit to the page.
+        guard let report = AutoSaveBootstrap.apply(into: &selection, identity: identity)
         else { return }
         // Logged rather than shown: this runs on every launch, so a report card
         // would greet the user on a perfectly normal run.  The reference logs

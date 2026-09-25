@@ -156,7 +156,12 @@ enum GoldenNuggetAutosave {
                          deviceModel: String,
                          iosVersion: String) -> [String: Any] {
         var tweaks: [String: Any] = [:]
-        for spec in TweakCatalog.all where spec.id != "PosterBoard" {
+        // allWithDaemons, not all: the daemons live in a separate catalog
+        // collection, so iterating `all` wrote a preset that silently omitted
+        // every daemon group. The restore path goes through the shared import
+        // (which does know about daemons), so the omission was invisible from
+        // the read side and only showed up as daemons that never came back.
+        for spec in TweakCatalog.allWithDaemons where spec.id != "PosterBoard" {
             var entry: [String: Any] = [
                 // `type(tweak).__name__`.  A spec that writes a whole dict is
                 // the reference's `AdvancedPlistTweak`, everything else is a

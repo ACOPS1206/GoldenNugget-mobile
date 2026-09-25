@@ -230,6 +230,16 @@ class GoldenNuggetEngine {
             log("Manifest format: sqlite (iOS 27+ path), protective backup pulled")
             backupRoot = try await protectiveBackup(udid: udid)
             prune = true
+            // Media over AFC, after the backup and before the prune: the backup
+            // filter rejects the media domains, so this is the only thing that
+            // collects them, and doing it here means an apply is the one action
+            // that leaves media preserved rather than only tweaks applied.
+            //
+            // Deletion stays off. A run is not the place to remove the user's
+            // photos: it is started to apply tweaks, and the media page is where
+            // that choice is made with a count and a free-space figure in front
+            // of the user.
+            await mediaBackup(deletingOriginals: false)
         } else {
             log("Manifest format: legacy MBDB (iOS 26 path), built from nothing")
             backupRoot = try await partialRestore(udid: udid)
@@ -247,6 +257,31 @@ class GoldenNuggetEngine {
         try await runRestore(backupRoot: backupRoot, udid: udid, label: "tweak restore") {
             log("Tweak apply succeeded: the device confirmed it finished.")
             log("Reboot the device so the injected preferences take effect.")
+        }
+    }
+
+    /// The AFC media stage, as a stage rather than a separate button so the run
+    /// log tells the whole story in one place.
+    private func mediaBackup(deletingOriginals: Bool) async {
+        do {
+            let survey = try await AfcMediaBackup.survey()
+            guard !survey.files.isEmpty else {
+                log("AFC media: nothing in \(AfcMediaBackup.trees.joined(separator: "/")) "
+                    + "— skipped")
+                return
+            }
+            log("AFC media: pulling \(survey.files.count) file(s), \(survey.bytes) byte(s)")
+            let manifest = try await AfcMediaBackup.pull(deletingOriginals: deletingOriginals) {
+                self.log($0)
+            }
+            let removed = manifest.entries.filter(\.deleted).count
+            log("AFC media: stored \(manifest.entries.count) file(s), \(removed) removed "
+                + "from the device")
+        } catch {
+            // Not fatal to the tweak apply. The store is a copy, not a
+            // precondition for writing preferences, and a media failure must not
+            // cost the user the tweak run they started.
+            log("AFC media: FAILED — \(error.localizedDescription)")
         }
     }
 
