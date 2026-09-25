@@ -114,6 +114,21 @@ jobs:
           echo "--- rendition summary ---"
           grep -cE "Rendition|appearance" "$RUNNER_TEMP/car-info.txt" || true
 
+      - name: Check the appearance split
+        # actool accepts a catalog whose dark half it silently dropped, so
+        # "the compile succeeded" is not evidence that a dark icon exists.
+        # This gate is the only place that claim gets checked.
+        #
+        # Not fatal yet: the `.appiconset` route is known to compile light-only
+        # (actool drops `luminosity=dark` there), and the run that finds the
+        # Icon Composer path needs to stay red rather than block the artifact
+        # upload below. Flip this to `continue-on-error: false` once the dark
+        # half is actually reproducible.
+        continue-on-error: true
+        run: |
+          python3 scripts/check-car-appearances.py \
+            "$RUNNER_TEMP/car-out/Assets.car" --require-dark --name AppIcon
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
