@@ -52,7 +52,7 @@ enum BitmapKeys {
             // Local patch: this was a hardcoded 9 and tracked the rendition
             // key width. It has to follow `v1KeyFormat` — dumping an
             // actool-produced app-icon catalog shows the same number here as
-            // in KEYFORMAT (11).
+            // in KEYFORMAT.
             w.writeLE(UInt32(v1KeyFormat.count))
             w.writeLE(UInt32(0xFFFFFFFF))
             w.writeLE(UInt32(1))

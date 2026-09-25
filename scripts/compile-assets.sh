@@ -42,6 +42,20 @@ ASSETKIT_SHIM_LOG=/dev/null "$SHIM" \
     --output-partial-info-plist "$OUT/AppIcon-partial.plist" \
     "$CATALOG"
 
+# Prefer a car compiled by Apple's own actool, when one has been fetched from
+# the Assets.car workflow (.github/workflows/assets-car.yml writes it next to
+# the catalog).  The shim is a clean-room writer: it matches actool's rendition
+# key layout, but its BITMAPKEYS descriptor is a guess, and a catalog with a
+# wrong descriptor is rejected by CoreUI -- the app then has no icon at all.
+# actool's output is authoritative, so it always wins; the shim is only the
+# offline fallback, and it stays on for the loose PNGs, which the shim is the
+# only thing here that emits.
+ACTOOL_CAR="$ROOT/layout/Applications/GoldenNuggetMobile.app/Assets.car"
+if [[ -s "$ACTOOL_CAR" ]]; then
+    echo "compile-assets: using actool car ($(stat -c%s "$ACTOOL_CAR") bytes)"
+    cp "$ACTOOL_CAR" "$OUT/Assets.car"
+fi
+
 # Report what the catalog actually produced, so a dropped appearance is visible
 # in the build log instead of only in the IPA.
 ASSETKIT_SHIM_LOG=/dev/null "$SHIM" \

@@ -14,9 +14,8 @@ enum AttributeID: UInt32 {
     case dimension1 = 10
     case scale = 12
     case localizationLegacy = 13
-    case attribute14 = 14
-    case subtype = 15
-    case subtypeLegacy = 16
+    case idiom = 15
+    case subtype = 16
     case identifier = 17
     case attribute18 = 18
     case attribute19 = 19
@@ -28,31 +27,31 @@ enum AttributeID: UInt32 {
 /// rendition key positionally, using this list to name each slot, and
 /// binary-searches the packed keys by raw byte comparison.
 ///
-/// Local patch: the list below was 9 attributes in the order
-/// (appearance, localization, scale, idiom, subtype, dimension2, identifier,
-/// element, part). Dumping `KEYFORMAT` out of actool-produced catalogs shows
-/// the real order starts with the *identity* triple — element, part,
-/// identifier — and is 11 entries long for an app-icon catalog:
+/// Local patch: actool was observed emitting **ten** slots for an app-icon
+/// catalog, not the nine this writer produced. Dumping `KEYFORMAT` out of an
+/// actool-compiled `Assets.car` for this very catalog gives:
 ///
-///     count = 11, attrs = [7, 1, 2, 17, 9, 10, 14, 12, 24, 19, 18]
+///     count = 10, attrs = [7, 13, 12, 15, 16, 9, 8, 17, 1, 2]
 ///
-/// The old order shifted every field, so no rendition in the catalog was
-/// resolvable. The list is per-catalog rather than universal — other actool
-/// catalogs in the same SDK carry 12 attributes (adding a localization slot at
-/// 8) or 13 (dropping appearance) — so this mirrors the app-icon shape, which
-/// is the one this writer has to produce.
+/// which is the original nine in the original order, plus a localization slot
+/// (attribute 8) inserted just before `identifier`. The order was briefly
+/// "corrected" to a completely different one — element/part/identifier first,
+/// eleven slots — on the strength of catalogs shipped inside Xcode's own
+/// frameworks. Those turn out to be a different kind of catalog (CoreUI
+/// DesignLibrary and framework resources); an application icon catalog keeps
+/// AssetKit's order. The original order was right; the only real defect was
+/// the missing tenth slot.
 let v1KeyFormat: [AttributeID] = [
     .appearance,
+    .localizationLegacy,
+    .scale,
+    .idiom,
+    .subtype,
+    .dimension2,
+    .localization,
+    .identifier,
     .element,
     .part,
-    .identifier,
-    .dimension2,
-    .dimension1,
-    .attribute14,
-    .scale,
-    .attribute24,
-    .attribute19,
-    .attribute18,
 ]
 
 /// `kfmt` block payload.
