@@ -98,7 +98,9 @@ jobs:
             --output-format human-readable-text \
             --output-partial-info-plist "$OUT/AppIcon-partial.plist" \
             --notices --warnings \
-            "$CATALOG"
+            --standalone-icon-behavior none \
+            "$CATALOG" \
+            "$CATALOG/AppIcon.iconcomposer.icon"
 
           test -s "$OUT/Assets.car"
           ls -l "$OUT"
