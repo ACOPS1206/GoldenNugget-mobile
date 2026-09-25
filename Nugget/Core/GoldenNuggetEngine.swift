@@ -204,25 +204,43 @@ class GoldenNuggetEngine {
         for item in compiled.skipped { log("  ⚠️ skipped \(item.label): \(item.reason)") }
 
         let udid = try await prepareRun()
-        let backupRoot = try await partialRestore(udid: udid)
 
-        // The manifest format follows the reference's one-line split
-        // (`backup.py:113`): iOS 26 speaks legacy MBDB, iOS 27+ the modern
-        // sqlite Manifest.db. Comparing "26.0" against "27.0" lexically would
-        // put 26.9 on the wrong side, so compare the major component.
+        // The two versions take opposite paths, and the split is the
+        // reference's one-line fork (`backup.py:113`) widened to the whole run:
+        // iOS 26 speaks legacy MBDB and can have a backup built for it from
+        // nothing, iOS 27+ speaks the modern sqlite Manifest.db and must keep
+        // the device's own state. Comparing "26.0" against "27.0" lexically
+        // would put 26.9 on the wrong side, so compare the major component.
         let major = Int(deviceVersion.split(separator: ".").first ?? "0") ?? 0
         let ios27 = major >= 27
-        log(ios27
-            ? "Manifest format: sqlite (iOS 27+ path)"
-            : "Manifest format: legacy MBDB (iOS 26 path)")
+
+        // iOS 26: a Partial Restore, built rather than pulled -- an empty device
+        // directory, the host-side manifests, then this run's rows. Nothing was
+        // pulled, so there is no device state to reconcile against and the
+        // prune would only discard what this run just wrote.
+        //
+        // iOS 27: the protective backup, pulled from the device, then pruned to
+        // what is on disk before injection. A synthesized manifest is not enough
+        // here: `restored` rejects a domain it cannot resolve ("Failed to
+        // prepare INSERT for ManagedPreferencesDomain") because the real one
+        // carries the device's own domain registration.
+        let backupRoot: URL
+        let prune: Bool
+        if ios27 {
+            log("Manifest format: sqlite (iOS 27+ path), protective backup pulled")
+            backupRoot = try await protectiveBackup(udid: udid)
+            prune = true
+        } else {
+            log("Manifest format: legacy MBDB (iOS 26 path), built from nothing")
+            backupRoot = try await partialRestore(udid: udid)
+            prune = false
+        }
 
         try await BackupInjector.pruneAndInject(
             backupRoot: backupRoot,
             udid: udid,
             tweakPayloads: compiled.payloads,
-            // Nothing was pulled, so there is no device state to reconcile
-            // against -- the backup is what this run built.
-            prune: false,
+            prune: prune,
             ios27: ios27
         )
 
