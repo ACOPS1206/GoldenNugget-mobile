@@ -18,19 +18,30 @@ struct DaemonsView: View {
     /// selection on purpose: it gates every group rather than being one, and
     /// turning it off is the same observable state as having no group on.
     @State private var masterEnabled = true
+    @State private var identity = DeviceIdentity.unknown
+
+    /// Same disclosure behaviour as the Tweaks page: a section the user has not
+    /// touched is open when something in it is on. Forty groups of switches is a
+    /// page you cannot scan, but a section that is folded hides the one group you
+    /// came to change, so the fold follows the state rather than a blanket
+    /// default.
+    @State private var collapsedSections: Set<DaemonSection> = []
+    @State private var foldedByHand: Set<DaemonSection> = []
 
     var body: some View {
         GoldenPage(spacing: GoldenTheme.rowSpacing) {
             headerCard
+            coverageCard
             ForEach(DaemonSection.allCases) { section in
                 let groups = visibleGroups(in: section)
                 if !groups.isEmpty {
-                    GoldenSection(
-                        title: section.rawValue,
+                    GoldenCollapsibleSection(
+                        title: "\(section.rawValue) (\(onCount(in: groups))/\(groups.count))",
+                        isCollapsed: collapsedBinding(for: section, groups: groups),
                         content: AnyView(
                             VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
                                 ForEach(groups, id: \.name) { group in
-                                    daemonRow(group)
+                                    groupRow(group)
                                 }
                             }
                         )
@@ -50,10 +61,43 @@ struct DaemonsView: View {
             // no separate flag here, so the page reports the state that actually
             // reaches the device: master is on exactly when a group is on.
             masterEnabled = DaemonGroups.all.contains { isOn($0) }
+            identity = await DeviceIdentity.read()
         }
     }
 
     // MARK: - Sections
+
+    /// The device line and the count, in the Tweaks page's shape. The counts
+    /// differ deliberately: this page has no "applicable" filter, so a group that
+    /// is missing is missing for good, not because the device cannot run it.
+    private var coverageCard: some View {
+        GoldenCard {
+            Text(identity.describe)
+                .font(GoldenFont.cardTitle)
+                .foregroundColor(GoldenTheme.textPrimary)
+            GoldenMutedNote(text: "\(onCount(in: DaemonGroups.all.filter { $0.showsSwitch })) "
+                + "of \(DaemonGroups.all.filter { $0.showsSwitch }.count) daemon group(s) on. "
+                + "The groups upstream marks interface-visible but gives no switch are in the "
+                + "Recommended set only.")
+        }
+    }
+
+    private func onCount(in groups: [DaemonGroup]) -> Int {
+        groups.filter(isOn).count
+    }
+
+    private func collapsedBinding(for section: DaemonSection,
+                                  groups: [DaemonGroup]) -> Binding<Bool> {
+        Binding(
+            get: {
+                if foldedByHand.contains(section) { return collapsedSections.contains(section) }
+                return onCount(in: groups) == 0
+            },
+            set: { collapsed in
+                foldedByHand.insert(section)
+                if collapsed { collapsedSections.insert(section) } else { collapsedSections.remove(section) }
+            })
+    }
 
     private var headerCard: some View {
         GoldenCard {
@@ -97,11 +141,8 @@ struct DaemonsView: View {
             content: AnyView(
                 VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
                     let spec = TweakCatalog.screenTimeSpec
-                    GoldenActionRow(title: spec.title,
-                                    systemImage: "clock.badge.xmark",
-                                    tone: isOn(spec) ? .error : .secondary) {
-                        setOn(!isOn(spec), for: spec)
-                    }
+                    TweakRow(spec: spec, isOn: { isOn(spec) },
+                             setOn: { setOn($0, for: spec) })
                     GoldenMutedNote(text: "Writes a 0-byte file over "
                         + "\(DaemonGroups.screenTime.path). Upstream models this as "
                         + "a NullifyFileTweak: it removes a plist rather than "
@@ -113,14 +154,20 @@ struct DaemonsView: View {
 
     // MARK: - Rows
 
-    private func daemonRow(_ group: DaemonGroup) -> some View {
-        let spec = TweakCatalog.byID["Daemon.\(group.name)"]
-        let on = spec.map(isOn) ?? false
-        return GoldenActionRow(title: group.title,
-                               systemImage: on ? "checkmark.circle.fill" : "circle",
-                               tone: on ? .error : .primary) {
-            guard let spec else { return }
-            setOn(!on, for: spec)
+    /// The Tweaks page's row, given the daemon meaning of "on": a group is on
+    /// when every launchd label in it is written as disabled, which needs the
+    /// value dict written alongside the flag, not just the flag.
+    @ViewBuilder
+    private func groupRow(_ group: DaemonGroup) -> some View {
+        if let spec = spec(group) {
+            TweakRow(spec: spec, isOn: { isOn(spec) },
+                     setOn: { setOn($0, for: spec) })
+        } else {
+            // A group with no spec would be a switch that does nothing. Say so
+            // rather than rendering a row that cannot be tapped.
+            Text(group.title)
+                .font(GoldenFont.rowTitle)
+                .foregroundColor(GoldenTheme.textDisabled)
         }
     }
 

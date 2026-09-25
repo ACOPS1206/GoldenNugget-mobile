@@ -60,6 +60,8 @@ struct GoldenNuggetView: View {
     @State private var errorText: String?
     @State private var runStarted: Date?
     @State private var tweakSelection = TweakSelection()
+    /// The pending debounced autosave, cancelled and replaced on every change.
+    @State private var autosaveTask: Task<Void, Never>?
     @State private var identity = DeviceIdentity.unknown
     @State private var readingDevice = false
     /// `home.py: process_status_lbl` — the coloured line under the buttons, which
@@ -91,6 +93,13 @@ struct GoldenNuggetView: View {
         // the Tweaks page's bar, and with it the interactive swipe-back gesture,
         // exactly as the reference's `IOSNavBar` has them.
         .toolbar(.hidden, for: .navigationBar)
+        // Owned here, next to the selection itself, rather than inside one of the
+        // pages that can change it. It was on TweaksView, which made persistence
+        // depend on navigation: a daemon switched on the Daemons page changed the
+        // selection while the only observer sat in a view that was not in the
+        // hierarchy, so nothing was written. It looked intermittent, because
+        // touching any tweak afterwards swept the daemon along with it.
+        .onChange(of: tweakSelection) { _, _ in scheduleAutosave() }
         .task {
             spawnLogPrinter()
             // The Rust progress callbacks fire on their own queues; the handler
@@ -595,6 +604,26 @@ struct GoldenNuggetView: View {
     /// Re-read the device line.  Called on entry and by the header's refresh
     /// button, so a page that was opened before the tunnel came up does not sit
     /// on "unknown device" until it is navigated away from.
+    /// Write the selection 500 ms after the last change -- the reference's
+    /// `_on_tweak_changed` debounce (`QTimer.singleShot(500, ...)`).
+    ///
+    /// A pending save is replaced, not queued, so dragging a number field writes
+    /// once at the end rather than once per keystroke. The document is 130+ specs
+    /// of JSON written into Documents, so it goes off the main actor; the snapshot
+    /// and the identity are value types, and only the resulting flag comes back.
+    private func scheduleAutosave() {
+        autosaveTask?.cancel()
+        let snapshot = tweakSelection
+        let device = identity
+        autosaveTask = Task {
+            try? await Task.sleep(for: GoldenNuggetAutosave.debounce)
+            guard !Task.isCancelled else { return }
+            await Task.detached(priority: .utility) {
+                GoldenNuggetAutosave.save(snapshot, identity: device)
+            }.value
+        }
+    }
+
     private func readDevice() async {
         guard paired else { return }
         readingDevice = true

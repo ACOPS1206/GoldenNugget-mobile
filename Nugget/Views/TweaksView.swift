@@ -23,8 +23,6 @@ struct TweaksView: View {
 
     @State private var identity: DeviceIdentity = .unknown
     @State private var showImporter = false
-    /// The pending debounced autosave, cancelled and replaced on every change.
-    @State private var autosaveTask: Task<Void, Never>?
     /// Whether an autosave is on disk right now, for the note under the rows.
     @State private var autosaveSaved = false
     @State private var importReport: TweakImportReport?
@@ -76,7 +74,6 @@ struct TweaksView: View {
             // rewrites it right after, so a stale entry cannot survive a launch.
             restoreAutosave()
         }
-        .onChange(of: selection) { _, _ in scheduleAutosave() }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [.json]) { result in
             switch result {
@@ -219,31 +216,6 @@ struct TweaksView: View {
 
     // MARK: - Autosave
 
-    /// Write the selection 500 ms after the last change — the reference's
-    /// `_on_tweak_changed` debounce (`QTimer.singleShot(500, …)`).
-    ///
-    /// A pending save is replaced, not queued, so dragging a number field
-    /// writes once at the end rather than once per keystroke.
-    private func scheduleAutosave() {
-        autosaveTask?.cancel()
-        let snapshot = selection
-        let device = identity
-        autosaveTask = Task {
-            try? await Task.sleep(for: GoldenNuggetAutosave.debounce)
-            guard !Task.isCancelled else { return }
-            // The document is 130+ specs of JSON written into Documents, and it
-            // was being written on the main actor -- in the same runloop as the
-            // tap that triggered it and as the scroll in progress. That is what
-            // made the switches feel dead and the list stutter. The snapshot and
-            // the identity are value types, so the write can go off-actor; only
-            // the resulting flag comes back.
-            let saved = await Task.detached(priority: .utility) {
-                GoldenNuggetAutosave.save(snapshot, identity: device)
-            }.value
-            autosaveSaved = saved
-        }
-    }
-
     /// Startup load of the AutoSave preset, followed by the reference's
     /// immediate rewrite so stale entries cannot survive a launch.
     private func restoreAutosave() {
@@ -300,59 +272,6 @@ struct TweaksView: View {
 /// The copy comes from the registry (`TweakSpec.detail`, GoldenNugget's
 /// `description=`), not from a second hand-written table — one source of truth
 /// for "what does this switch do".
-private struct TweakRow: View {
-    let spec: TweakSpec
-    @Binding var selection: TweakSelection
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            switch spec.kind {
-            case .toggle:
-                HStack(spacing: 12) {
-                    Text(spec.title)
-                        .font(GoldenFont.rowTitle)
-                        .foregroundColor(GoldenTheme.textPrimary)
-                    Spacer(minLength: 12)
-                    GoldenSwitch(isOn: toggleBinding)
-                }
-            case .text:
-                Text(spec.title)
-                    .font(GoldenFont.rowTitle)
-                    .foregroundColor(GoldenTheme.textPrimary)
-                TextField("(empty = clear)", text: textBinding)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .goldenField()
-            case .number:
-                Text(spec.title)
-                    .font(GoldenFont.rowTitle)
-                    .foregroundColor(GoldenTheme.textPrimary)
-                TweakNumberField(spec: spec, selection: $selection)
-                GoldenMutedNote(text: spec.numberHint)
-            }
-            Text(spec.id)
-                .font(GoldenFont.caption)
-                .foregroundColor(GoldenTheme.textDisabled)
-            if let detail = spec.detail {
-                GoldenMutedNote(text: detail)
-            }
-        }
-        .goldenRowSurface()
-    }
-
-    private var toggleBinding: Binding<Bool> {
-        Binding(get: { selection.isOn(spec) },
-                set: { selection.setOn($0, for: spec) })
-    }
-
-    private var textBinding: Binding<String> {
-        Binding(get: {
-            if case .string(let value) = selection.value(for: spec) { return value }
-            return selection.value(for: spec).display
-        }, set: { selection.setValue(.string($0), for: spec) })
-    }
-}
-
 /// A numeric editor that keeps its own draft text.
 ///
 /// Binding the field straight to the selection would fight the user: the value
