@@ -82,21 +82,12 @@ struct SupervisionView: View {
 
     private var supervisionNote: String {
         var lines = [
-            "Upstream builds a Setup cloud configuration with IsSupervised, "
-                + "OrganizationName, a fresh OrganizationMagic and "
-                + "SupervisorHostCertificates holding the public half of a "
-                + "generated keybag certificate.",
-            "This page records the intent. The delivery path — writing that cloud "
-                + "configuration, or the sparse restore that carries it on iOS 26 — "
-                + "is not implemented here, so nothing on the device has changed yet.",
-            "Lithium's own README warns: do not turn Skip Setup off after "
-                + "installing its profiles, or they strand on the device with no "
-                + "way to remove them.",
+            "Records the intent only. The cloud configuration upstream delivers "
+                + "is not written here, so the device is unchanged until it is.",
         ]
         if settings.isSupervised && !settings.hasOrganization {
-            lines.append("Supervised with no organization name: upstream strips the "
-                         + "keybag fields in that case, so a name is needed before "
-                         + "the certificate means anything.")
+            lines.append("Supervised with no organization name: upstream drops the "
+                         + "keybag fields in that case, so a name is needed first.")
         }
         if !identity.version.isEmpty {
             lines.append("Connected device: iOS \(identity.version).")
@@ -138,12 +129,9 @@ struct SupervisionView: View {
     }
 
     private var lithiumNote: String {
-        "Lithium installs these as MDM configuration profiles, which iOS only "
-            + "accepts on a supervised device — that is the switch above. The "
-            + "port writes preference files directly and has no profile "
-            + "installer, so these four are listed rather than offered: none of "
-            + "them is applied, and pretending otherwise would suggest a "
-            + "supervised device where there is not one."
+        "Listed, not applied: these are MDM configuration profiles and iOS only "
+            + "accepts them on a supervised device. This port has no profile "
+            + "installer."
     }
 
     // MARK: - Footnotes
@@ -165,12 +153,9 @@ struct SupervisionView: View {
                             selection.setOn(!selection.isOn(spec), for: spec)
                         }
                     }
-                    GoldenMutedNote(text: "The one Lithium feature this port does "
-                        + "carry, because it is a plain preference write: "
-                        + "\\(TweakFileLocation.footnote.rawValue). Lithium's own "
-                        + "description of it — \"looks and functions exactly like "
-                        + "the footnote feature inside of Nugget\" — is why the "
-                        + "switch is on the registry page already.")
+                    GoldenMutedNote(text: "The one Lithium feature this port "
+                        + "carries, because it is a plain preference write: "
+                        + "\(TweakFileLocation.footnote.rawValue).")
                 }
             )
         )

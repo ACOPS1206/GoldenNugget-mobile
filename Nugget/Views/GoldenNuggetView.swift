@@ -183,7 +183,7 @@ struct GoldenNuggetView: View {
                 } label: {
                     GoldenFeatureCardLabel(
                         title: "Daemons",
-                        subtitle: "Disable launchd services",
+                        subtitle: "Launchd services",
                         detail: "\(enabledDaemonCount) of \(DaemonGroups.all.count) groups")
                 }
                 .buttonStyle(.plain)
@@ -193,7 +193,7 @@ struct GoldenNuggetView: View {
                 } label: {
                     GoldenFeatureCardLabel(
                         title: "Supervision",
-                        subtitle: "Lithium profiles and device supervision",
+                        subtitle: "Device supervision",
                         detail: supervisionDetail)
                 }
                 .buttonStyle(.plain)

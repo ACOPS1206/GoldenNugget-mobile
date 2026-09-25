@@ -60,12 +60,11 @@ struct DaemonsView: View {
             VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
                 masterRow
                 recommendedRow
-                GoldenMutedNote(text: "Writes /var/db/com.apple.xpc.launchd/disabled.plist. "
-                    + "Disabling a daemon stops its service; upstream ships no "
-                    + "deny-list because entries are removed from the reference "
-                    + "rather than blocked at runtime, and only the "
-                    + "\(DaemonGroups.allowedKeys.count) interface-visible labels "
-                    + "can ever reach the file.")
+                GoldenMutedNote(text: "Writes "
+                    + "/var/db/com.apple.xpc.launchd/disabled.plist. Disabling a "
+                    + "daemon stops its service. Only the "
+                    + "\(DaemonGroups.allowedKeys.count) labels shown here can "
+                    + "ever reach the file.")
             }
         }
     }
@@ -105,7 +104,8 @@ struct DaemonsView: View {
                     }
                     GoldenMutedNote(text: "Writes a 0-byte file over "
                         + "\(DaemonGroups.screenTime.path). Upstream models this as "
-                        + "a NullifyFileTweak — it does not write a plist, it removes one.")
+                        + "a NullifyFileTweak: it removes a plist rather than "
+                        + "writing one.")
                 }
             )
         )
