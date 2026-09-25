@@ -100,7 +100,7 @@ jobs:
             --notices --warnings \
             --standalone-icon-behavior none \
             "$CATALOG" \
-            "$CATALOG/AppIcon.iconcomposer.icon"
+            "$CATALOG/AppIcon.icon"
 
           test -s "$OUT/Assets.car"
           ls -l "$OUT"
