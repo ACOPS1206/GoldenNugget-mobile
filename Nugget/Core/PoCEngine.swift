@@ -141,8 +141,7 @@ class PoCEngine {
     func runPoC(
         bundleID: String,
         fileName: String = "poc.txt",
-        contents: String = "PoC: iOS 27 app container restore OK",
-        footnote: String? = nil
+        contents: String = "PoC: iOS 27 app container restore OK"
     ) async throws {
         AppLog.shared.memory.reset()
         warnIfPreviousCallStillRunning()
@@ -152,7 +151,7 @@ class PoCEngine {
 
         let (udid, data) = try await prepareRun(bundleID: bundleID, contents: contents)
         try await runProtectiveStages(udid: udid, data: data, bundleID: bundleID,
-                                      fileName: fileName, footnote: footnote)
+                                      fileName: fileName, footnote: nil)
     }
 
     // MARK: - Run: apply the ported GoldenNugget tweaks
@@ -195,7 +194,6 @@ class PoCEngine {
             bundleID: nil,
             fileName: "",
             contents: Data(),
-            footnote: nil,
             tweakPayloads: compiled.payloads
         )
 
@@ -240,8 +238,7 @@ class PoCEngine {
             udid: udid,
             bundleID: bundleID,
             fileName: fileName,
-            contents: data,
-            footnote: footnote
+            contents: data
         )
 
         // Stage 4: restore.  The device can drop the channel here too.

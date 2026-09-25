@@ -8,9 +8,27 @@ struct RootView: View {
         NavigationStack {
             PoCView()
         }
+        // The reference ships a single palette (`theme.colors.DARK`) and builds
+        // its whole iOS GUI on it, so this app is dark-only by design.  Saying so
+        // once here keeps every platform control it cannot restyle — text fields,
+        // alerts, the share sheet, the document picker — on the same surface as
+        // the cards instead of rendering light-on-dark.
+        .preferredColorScheme(.dark)
+        .tint(GoldenTheme.accent)
     }
 }
 
+/// The home page in the GoldenNugget Mobile layout:
+/// logo header → feature-card grid → one section per concern → primary action.
+///
+/// Where the reference puts its six feature cards this app has one destination,
+/// so the grid renders one card; the reflow rule behind it is the reference's
+/// (`MIN_CARD_WIDTH = 200`, 12 pt gutters), which is what makes the page behave
+/// the same on a phone and on the iPad this PoC actually runs on.
+///
+/// Every control below is the same control it was before — same bindings, same
+/// actions, same text.  Only the chrome, spacing and type now come from
+/// `GoldenTheme` / `GoldenComponents`.
 struct PoCView: View {
     @AppStorage("PairingFile") var pairingFileRaw: String?
     @State var pairingFileURL: String?
@@ -24,175 +42,25 @@ struct PoCView: View {
     @State var logs: [String] = []
     @State var errorText: String?
     @State var runStarted: Date?
-    @State var footnote: String = ""
     @State var tweakSelection = TweakSelection()
 
     var body: some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("PoC: iOS 27 app-container restore")
-                        .font(.subheadline.bold())
-                    Text("Writes a txt file into a target app's Documents and restores via mobilebackup2. If the device ignores it without wiping, app-only restores are safe on iOS 27.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Section("Tweaks") {
-                NavigationLink {
-                    TweaksView(selection: $tweakSelection)
-                } label: {
-                    HStack {
-                        Label("GoldenNugget tweaks", systemImage: "slider.horizontal.3")
-                        Spacer()
-                        Text("\(tweakSelection.enabledCount)")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            Section("Connection") {
-                if pairingFileURL != nil {
-                    Button("Reset pairing file") { resetPairing() }
-                } else {
-                    Button("Select Pairing File") { showPairingImporter.toggle() }
-                        .fileImporter(isPresented: $showPairingImporter, allowedContentTypes: Self.pairingFileTypes) { result in
-                            switch result {
-                            case .success(let url):
-                                do {
-                                    try loadPairingFile(from: url)
-                                } catch {
-                                    errorText = error.localizedDescription
-                                }
-                            case .failure(let error):
-                                errorText = error.localizedDescription
-                            }
-                        }
-                }
-            }
-
-            Section("Target") {
-                TextField("Bundle ID", text: $bundleID)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                Button {
-                    showTargetImporter.toggle()
-                } label: {
-                    Label("Select target app (.app / .ipa)", systemImage: "folder")
-                }
-                .fileImporter(isPresented: $showTargetImporter, allowedContentTypes: {
-                    var types: [UTType] = [.folder]
-                    if let app = UTType(filenameExtension: "app", conformingTo: .folder) { types.append(app) }
-                    if let ipa = UTType(filenameExtension: "ipa", conformingTo: .zip) { types.append(ipa) }
-                    return types
-                }()) { result in
-                    switch result {
-                    case .success(let url):
-                        do {
-                            bundleID = try AppPackage.bundleID(from: url)
-                            PoCEngine.shared.log("Target set from package: \(bundleID) (\(url.lastPathComponent))")
-                        } catch {
-                            errorText = error.localizedDescription
-                        }
-                    case .failure(let error):
-                        errorText = error.localizedDescription
-                    }
-                }
-                TextField("File name", text: $fileName)
-                    .autocorrectionDisabled()
-                TextField("Contents", text: $contents, axis: .vertical)
-                    .lineLimit(1...4)
-                // Injected as a row into the pulled backup; see
-                // `BackupInjector.injectSystemPlist`.
-                TextField("Lock Screen footnote (empty = skip)", text: $footnote)
-                    .autocorrectionDisabled()
-                Text("Footnote goes to \(LockScreenFootnoteTweak.domain)/\(LockScreenFootnoteTweak.relativePath). A long text is cut off by the Lock Screen — keep it short.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                Button {
-                    run()
-                } label: {
-                    if running {
-                        // Elapsed time, not just a spinner: this run has stages
-                        // that legitimately take minutes, and a spinner alone
-                        // cannot tell "working" from "hung".
-                        HStack {
-                            ProgressView()
-                            TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                                let secs = Int(ctx.date.timeIntervalSince(runStarted ?? ctx.date))
-                                Text("Running… \(secs / 60)m \(secs % 60)s")
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                    } else {
-                        Text("Run Backup → Inject → Restore")
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-                .disabled(running || pairingFileURL == nil)
-
-                if running {
-                    // A stall guard that waits minutes for a device that may be
-                    // wedged is only safe if it can be stopped by hand. A blocked
-                    // Rust read cannot be interrupted, so this abandons the call
-                    // and unwinds: the guard notices the flag at its next poll.
-                    Button(role: .destructive) {
-                        PoCEngine.shared.requestCancel()
-                    } label: {
-                        Label("Stop run", systemImage: "stop.circle")
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-            }
-
-            Section("Diagnostics") {
-                Button("Dump Diagnostics Into Log") {
-                    Task {
-                        let block = await PoCEngine.shared.diagnostics()
-                        await MainActor.run { logs.append(block) }
-                    }
-                }
-                .disabled(running)
-                // Share sheets beat hand-selecting text: the diagnostics block and
-                // the full Rust log are files in Documents.  AirDrop / Save to
-                // Files gets them off the device intact.
-                ShareLink(item: PoCEngine.diagnosticsURL) {
-                    Label("Share diagnostics.txt", systemImage: "square.and.arrow.up")
-                }
-                .disabled(!FileManager.default.fileExists(atPath: PoCEngine.diagnosticsURL.path))
-                ShareLink(item: PoCEngine.rustLogURL) {
-                    Label("Share minimuxer.log (\(PoCEngine.rustLogSize() / 1024) KB)", systemImage: "doc.text.magnifyingglass")
-                }
-                .disabled(PoCEngine.rustLogSize() == 0)
-                // The app-side log is a separate file because it is a separate
-                // half of the evidence: the Rust log shows what the protocol did,
-                // this one shows what the host decided (filter keeps, commit
-                // accounting, staging leftovers).
-                ShareLink(item: PoCEngine.appLogURL) {
-                    Label("Share poc.log (\(PoCEngine.appLogSize() / 1024) KB)", systemImage: "doc.plaintext")
-                }
-                .disabled(PoCEngine.appLogSize() == 0)
-                Text("The dump carries a keyword slice of the Rust log (mobilebackup2 protocol + jktcp flow verdict) scoped to this run, plus the app log tail (host-side decisions).")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            if !logs.isEmpty {
-                Section("Log") {
-                    ForEach(Array(logs.enumerated()), id: \.offset) { _, line in
-                        Text(line)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                }
-            }
+        GoldenPage(spacing: GoldenTheme.sectionSpacing) {
+            header
+            tweakCards
+            connectionSection
+            targetSection
+            runSection
+            diagnosticsSection
+            if !logs.isEmpty { logSection }
         }
-        .navigationTitle("PoC")
+        .navigationTitle("GoldenNugget")
+        .navigationBarTitleDisplayMode(.inline)
+        // The home page carries its own 80 pt logo header, so the platform bar
+        // would be a second, empty one.  Hiding it *here* — not on the pushed
+        // page — keeps the Tweaks page's bar, and with it the interactive
+        // swipe-back gesture, exactly as the reference's `IOSNavBar` has them.
+        .toolbar(.hidden, for: .navigationBar)
         .onAppear {
             spawnLogPrinter()
             // Claim the process-wide Rust logger before anything can call
@@ -227,6 +95,202 @@ struct PoCView: View {
             Text("Reboot the target device so the injected file takes effect.")
         }
     }
+
+    // MARK: - Sections
+
+    /// `home.py`'s header row, with its device/status line folded into the
+    /// subtitle — the two states the page already distinguished.
+    private var header: some View {
+        GoldenHeader(title: "GoldenNugget Mobile",
+                     subtitle: paired ? "Pairing file loaded" : "Not connected",
+                     subtitleTone: paired ? .accent : .secondary)
+    }
+
+    private var tweakCards: some View {
+        GoldenCardGrid(itemCount: 1) { _ in
+            NavigationLink {
+                TweaksView(selection: $tweakSelection)
+            } label: {
+                GoldenFeatureCardLabel(
+                    title: "Tweaks",
+                    subtitle: "Customize system settings",
+                    // The count that used to be this row's trailing badge.
+                    detail: "\(tweakSelection.enabledCount) enabled")
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var connectionSection: some View {
+        GoldenSection(
+            title: "Connection",
+            content: paired
+                ? AnyView(GoldenActionRow(title: "Reset pairing file",
+                                          systemImage: "arrow.counterclockwise") { resetPairing() })
+                : AnyView(GoldenActionRow(title: "Select Pairing File",
+                                          systemImage: "doc.badge.plus") {
+                    showPairingImporter.toggle()
+                })
+        )
+        .fileImporter(isPresented: $showPairingImporter,
+                      allowedContentTypes: Self.pairingFileTypes) { result in
+            switch result {
+            case .success(let url):
+                do {
+                    try loadPairingFile(from: url)
+                } catch {
+                    errorText = error.localizedDescription
+                }
+            case .failure(let error):
+                errorText = error.localizedDescription
+            }
+        }
+    }
+
+    private var targetSection: some View {
+        GoldenSection(
+            title: "Target",
+            content: AnyView(
+                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
+                    GoldenLabeledField(label: "Bundle ID") {
+                        TextField("com.apple.PosterBoard", text: $bundleID)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                    }
+                    GoldenActionRow(title: "Select target app (.app / .ipa)",
+                                    systemImage: "folder") {
+                        showTargetImporter.toggle()
+                    }
+                    .fileImporter(isPresented: $showTargetImporter, allowedContentTypes: {
+                        var types: [UTType] = [.folder]
+                        if let app = UTType(filenameExtension: "app", conformingTo: .folder) { types.append(app) }
+                        if let ipa = UTType(filenameExtension: "ipa", conformingTo: .zip) { types.append(ipa) }
+                        return types
+                    }()) { result in
+                        switch result {
+                        case .success(let url):
+                            do {
+                                bundleID = try AppPackage.bundleID(from: url)
+                                PoCEngine.shared.log("Target set from package: \(bundleID) (\(url.lastPathComponent))")
+                            } catch {
+                                errorText = error.localizedDescription
+                            }
+                        case .failure(let error):
+                            errorText = error.localizedDescription
+                        }
+                    }
+                    GoldenLabeledField(label: "File name") {
+                        TextField("poc.txt", text: $fileName)
+                            .autocorrectionDisabled()
+                    }
+                    GoldenLabeledField(label: "Contents") {
+                        TextField("", text: $contents, axis: .vertical)
+                            .lineLimit(1...4)
+                    }
+                    // Injected as a row into the pulled backup; see
+                    // `BackupInjector.injectSystemPlist`.
+                }
+            )
+        )
+    }
+
+    private var runSection: some View {
+        GoldenSection(
+            title: "Run",
+            content: AnyView(
+                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
+                    GoldenPrimaryButton(title: running ? "Running…" : "Run Backup → Inject → Restore",
+                                        running: running,
+                                        disabled: pairingFileURL == nil) {
+                        run()
+                    }
+                    // Elapsed time, not just a spinner: this run has stages that
+                    // legitimately take minutes, and a spinner alone cannot tell
+                    // "working" from "hung".
+                    if running {
+                        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                            let secs = Int(ctx.date.timeIntervalSince(runStarted ?? ctx.date))
+                            GoldenStatusText(text: "Elapsed \(secs / 60)m \(secs % 60)s",
+                                             tone: .secondary)
+                        }
+                        // A stall guard that waits minutes for a device that may be
+                        // wedged is only safe if it can be stopped by hand. A blocked
+                        // Rust read cannot be interrupted, so this abandons the call
+                        // and unwinds: the guard notices the flag at its next poll.
+                        GoldenDangerButton(title: "Stop run") {
+                            PoCEngine.shared.requestCancel()
+                        }
+                    }
+                }
+            )
+        )
+    }
+
+    private var diagnosticsSection: some View {
+        GoldenSection(
+            title: "Diagnostics",
+            content: AnyView(
+                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
+                    GoldenActionRow(title: "Dump Diagnostics Into Log",
+                                    systemImage: "doc.text.magnifyingglass",
+                                    tone: running ? .disabled : .primary) {
+                        Task {
+                            let block = await PoCEngine.shared.diagnostics()
+                            await MainActor.run { logs.append(block) }
+                        }
+                    }
+                    .disabled(running)
+                    // Share sheets beat hand-selecting text: the diagnostics block and
+                    // the full Rust log are files in Documents.  AirDrop / Save to
+                    // Files gets them off the device intact.
+                    shareRow(title: "Share diagnostics.txt",
+                             systemImage: "square.and.arrow.up",
+                             url: PoCEngine.diagnosticsURL,
+                             available: hasDiagnostics)
+                    shareRow(title: "Share minimuxer.log (\(PoCEngine.rustLogSize() / 1024) KB)",
+                             systemImage: "doc.text.magnifyingglass",
+                             url: PoCEngine.rustLogURL,
+                             available: PoCEngine.rustLogSize() > 0)
+                    // The app-side log is a separate file because it is a separate
+                    // half of the evidence: the Rust log shows what the protocol did,
+                    // this one shows what the host decided (filter keeps, commit
+                    // accounting, staging leftovers).
+                    shareRow(title: "Share poc.log (\(PoCEngine.appLogSize() / 1024) KB)",
+                             systemImage: "doc.plaintext",
+                             url: PoCEngine.appLogURL,
+                             available: PoCEngine.appLogSize() > 0)
+                    GoldenMutedNote(text: "The dump carries a keyword slice of the Rust log "
+                        + "(mobilebackup2 protocol + jktcp flow verdict) scoped to this run, plus "
+                        + "the app log tail (host-side decisions).")
+                }
+            )
+        )
+    }
+
+    private var logSection: some View {
+        GoldenSection(title: "Log", content: AnyView(GoldenLogView(lines: logs)))
+    }
+
+    /// One share action as a row.  Kept in one place so the three cannot drift
+    /// apart — including the disabled look, which the reference expresses as
+    /// `text_disabled` rather than by hiding the control.
+    private func shareRow(title: String, systemImage: String, url: URL, available: Bool) -> some View {
+        ShareLink(item: url) {
+            GoldenRowLabel(title: title, systemImage: systemImage,
+                           tone: available ? .primary : .disabled)
+        }
+        .buttonStyle(.plain)
+        .goldenRowSurface()
+        .disabled(!available)
+    }
+
+    private var paired: Bool { pairingFileURL != nil }
+
+    private var hasDiagnostics: Bool {
+        FileManager.default.fileExists(atPath: PoCEngine.diagnosticsURL.path)
+    }
+
+    // MARK: - Behaviour
 
     func resetPairing() {
         pairingFileRaw = nil
@@ -297,7 +361,7 @@ struct PoCView: View {
                     // Diagnostic: minimuxer's start() requires a top-level "UDID"
                     // string key in the pairing-file plist. Show the real keys so
                     // a wrong pairing file is obvious instead of a bare error.
-                    if let keys = Self.pairingFileTopLevelKeys(pairingFileRaw) {
+                    if let keys = await Self.pairingFileTopLevelKeys(pairingFileRaw) {
                         let hasUDID = keys.contains("UDID")
                         PoCEngine.shared.log("pairing file top-level keys: \(keys.isEmpty ? "(empty)" : keys.sorted().joined(separator: ", ")) \(hasUDID ? "[UDID OK]" : "[NO UDID — start() will fail]")")
                     } else {
@@ -359,7 +423,7 @@ struct PoCView: View {
         PoCEngine.shared.onLog = { line in
             logs.append(line)
             // A long run appends a lot (RSD chatter, retries, diagnostics).
-            // Keeping the array bounded keeps the List responsive while
+            // Keeping the array bounded keeps the list responsive while
             // scrolling through a run.
             if logs.count > 600 {
                 logs.removeFirst(logs.count - 600)
@@ -377,8 +441,7 @@ struct PoCView: View {
                 try await PoCEngine.shared.runPoC(
                     bundleID: bundleID,
                     fileName: fileName,
-                    contents: contents,
-                    footnote: footnote.isEmpty ? nil : footnote
+                    contents: contents
                 )
                 succeeded = true
             } catch let failure as TransportFailure where failure.isCancellation {

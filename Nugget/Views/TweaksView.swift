@@ -10,6 +10,14 @@ import UniformTypeIdentifiers
 /// (`Tweak.set_value(..., toggle_enabled: True)`).  All three behaviours are
 /// reproduced here; what is *not* reproduced is the five un-ported features —
 /// see `docs/tweak-port.md`.
+///
+/// The layout is the reference's `IOSTweaksPage`: a 56 pt nav bar over a scroll
+/// body with 16 pt margins, an uppercase section header per registry section,
+/// and **one card per tweak** — the switch rows as `IOSCard` + `IOSSwitch`, the
+/// value rows as `IOSSettingsRow` with the current value echoed beside the
+/// title.  The two extra lines this app renders (the tweak id and the registry's
+/// description) ride inside the same card instead of moving to a tooltip, so the
+/// page still shows everything it showed before.
 struct TweaksView: View {
     @Binding var selection: TweakSelection
 
@@ -19,11 +27,15 @@ struct TweaksView: View {
     @State private var importError: String?
     @State private var running = false
     @State private var outcome: String?
+    /// The reference colours its status line by outcome (`process_status_green`
+    /// / `_red` / `_blue`), so the outcome carries its tone rather than being
+    /// pattern-matched back out of the string.
+    @State private var outcomeTone: GoldenTone = .primary
     @State private var tail: [String] = []
 
     var body: some View {
-        List {
-            headerSection
+        GoldenPage(spacing: GoldenTheme.rowSpacing) {
+            identityCard
             importSection
             tweakSections
             applySection
@@ -32,6 +44,16 @@ struct TweaksView: View {
             if !tail.isEmpty { logSection }
         }
         .navigationTitle("Tweaks")
+        .navigationBarTitleDisplayMode(.inline)
+        // The reference's `IOSNavBar` is `bg_secondary` with a bottom divider;
+        // on iOS that is the platform bar with its background pinned visible.
+        // `.visible` is stated rather than inherited: the home page hides its
+        // bar (it has its own logo header), and visibility is only reliably
+        // per-page when both ends say what they want.
+        .toolbar(.visible, for: .navigationBar)
+        .toolbarBackground(GoldenTheme.backgroundSecondary, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .task { identity = await DeviceIdentity.read() }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [.json]) { result in
@@ -44,40 +66,43 @@ struct TweaksView: View {
 
     // MARK: - Sections
 
-    private var headerSection: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(identity.describe).font(.subheadline.bold())
-                Text("\(selection.enabledCount) of \(visibleSpecs.count) applicable tweak(s) enabled. "
-                    + "Incompatible and un-ported tweaks are hidden, the same way the reference hides them.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
+    /// The device line + coverage count, as one card (`home_card_title` +
+    /// `home_card_subtitle` sizes).
+    private var identityCard: some View {
+        GoldenCard {
+            Text(identity.describe)
+                .font(GoldenFont.cardTitle)
+                .foregroundColor(GoldenTheme.textPrimary)
+            GoldenMutedNote(text: "\(selection.enabledCount) of \(visibleSpecs.count) applicable tweak(s) enabled. "
+                + "Incompatible and un-ported tweaks are hidden, the same way the reference hides them.")
         }
     }
 
     private var importSection: some View {
-        Section("Saved state") {
-            Button {
-                showImporter = true
-            } label: {
-                Label("Import autosave.json", systemImage: "square.and.arrow.down")
-            }
-            .disabled(running)
-            Button(role: .destructive) {
-                selection.removeAll()
-                importReport = nil
-                importError = nil
-            } label: {
-                Label("Clear all tweaks", systemImage: "xmark.circle")
-            }
-            .disabled(running || selection.enabledCount == 0)
-            Text("Reads GoldenNugget's preset document (the AutoSave preset it writes on every change). "
-                + "Tweaks it names are switched on with their saved values; entries this port does not "
-                + "carry are listed below rather than guessed at.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
+        GoldenSection(
+            title: "Saved state",
+            content: AnyView(
+                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
+                    GoldenActionRow(title: "Import autosave.json",
+                                    systemImage: "square.and.arrow.down",
+                                    tone: running ? .disabled : .primary) {
+                        showImporter = true
+                    }
+                    .disabled(running)
+                    GoldenActionRow(title: "Clear all tweaks",
+                                    systemImage: "xmark.circle",
+                                    tone: .error) {
+                        selection.removeAll()
+                        importReport = nil
+                        importError = nil
+                    }
+                    .disabled(running || selection.enabledCount == 0)
+                    GoldenMutedNote(text: "Reads GoldenNugget's preset document (the AutoSave preset it writes "
+                        + "on every change). Tweaks it names are switched on with their saved values; entries "
+                        + "this port does not carry are listed below rather than guessed at.")
+                }
+            )
+        )
     }
 
     @ViewBuilder
@@ -86,63 +111,68 @@ struct TweaksView: View {
             let specs = visibleSpecs.filter { $0.section == section }
             if !specs.isEmpty {
                 let on = specs.filter { selection.isOn($0) }.count
-                Section("\(section.rawValue) (\(on)/\(specs.count))") {
-                    ForEach(specs, id: \.id) { spec in
-                        TweakRow(spec: spec, selection: $selection)
-                    }
-                }
+                GoldenSection(
+                    title: "\(section.rawValue) (\(on)/\(specs.count))",
+                    content: AnyView(
+                        VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
+                            ForEach(specs, id: \.id) { spec in
+                                TweakRow(spec: spec, selection: $selection)
+                            }
+                        }
+                    )
+                )
             }
         }
     }
 
     private var applySection: some View {
-        Section {
-            Button {
-                apply()
-            } label: {
-                if running {
-                    HStack { ProgressView(); Text("Applying…") }.frame(maxWidth: .infinity)
-                } else {
-                    Text("Apply \(selection.enabledCount) tweak(s)")
-                        .frame(maxWidth: .infinity)
+        GoldenSection(
+            title: "Apply",
+            content: AnyView(
+                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
+                    GoldenPrimaryButton(title: running ? "Applying…"
+                                                       : "Apply \(selection.enabledCount) tweak(s)",
+                                        running: running,
+                                        disabled: selection.enabledCount == 0) {
+                        apply()
+                    }
+                    if let outcome {
+                        GoldenStatusText(text: outcome, tone: outcomeTone)
+                    }
+                    GoldenMutedNote(text: "Runs the same protective backup → prune → inject → restore the "
+                        + "app-container PoC uses, carrying the compiled plists instead. Reboot the device "
+                        + "afterwards.")
                 }
-            }
-            .disabled(running || selection.enabledCount == 0)
-            if let outcome {
-                Text(outcome).font(.footnote).foregroundStyle(.secondary)
-            }
-            Text("Runs the same protective backup → prune → inject → restore the app-container PoC uses, "
-                + "carrying the compiled plists instead. Reboot the device afterwards.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
+            )
+        )
     }
 
     private func reportSection(_ report: TweakImportReport) -> some View {
-        Section("Import result") {
-            ForEach(Array(report.logLines.enumerated()), id: \.offset) { _, line in
-                Text(line)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-            }
-        }
+        GoldenSection(
+            title: "Import result",
+            content: AnyView(
+                GoldenCard {
+                    ForEach(Array(report.logLines.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(GoldenFont.log)
+                            .foregroundColor(GoldenTheme.textSecondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            )
+        )
     }
 
     private func errorSection(_ message: String) -> some View {
-        Section("Import failed") {
-            Text(message).font(.footnote).foregroundStyle(.secondary)
-        }
+        GoldenSection(title: "Import failed",
+                      content: AnyView(GoldenMutedNote(text: message)))
     }
 
     private var logSection: some View {
-        Section("Run log (last 30 lines)") {
-            ForEach(Array(tail.enumerated()), id: \.offset) { _, line in
-                Text(line)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-        }
+        GoldenSection(title: "Run log (last 30 lines)",
+                      content: AnyView(GoldenLogView(lines: tail, height: 260)))
     }
 
     // MARK: - Behaviour
@@ -185,19 +215,24 @@ struct TweaksView: View {
         let device = identity
         Task {
             var result: String
+            var tone: GoldenTone
             do {
                 try await PoCEngine.shared.applyTweaks(selection: snapshot,
                                                        deviceVersion: device.version,
                                                        isIPhone: device.isIPhone)
                 result = "Applied. Reboot the device so the injected preferences take effect."
+                tone = .success
             } catch let failure as TransportFailure where failure.isCancellation {
                 result = "⏹ stopped by the user (\(failure.label))"
+                tone = .warning
             } catch {
                 result = "❌ \(error.localizedDescription)"
+                tone = .error
             }
             let lines = Array(PoCEngine.shared.pendingLog.suffix(30))
             await MainActor.run {
                 outcome = result
+                outcomeTone = tone
                 tail = lines
                 running = false
             }
@@ -205,7 +240,8 @@ struct TweaksView: View {
     }
 }
 
-/// One tweak row: the editor the registry asks for, plus its description.
+/// One tweak as one card: the control band on top, then the id and the
+/// registry's description — see `TweaksView`'s note on why those two stay.
 ///
 /// The copy comes from the registry (`TweakSpec.detail`, GoldenNugget's
 /// `description=`), not from a second hand-written table — one source of truth
@@ -215,26 +251,39 @@ private struct TweakRow: View {
     @Binding var selection: TweakSelection
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 10) {
             switch spec.kind {
             case .toggle:
-                Toggle(isOn: toggleBinding) { Text(spec.title).font(.subheadline) }
+                HStack(spacing: 12) {
+                    Text(spec.title)
+                        .font(GoldenFont.rowTitle)
+                        .foregroundColor(GoldenTheme.textPrimary)
+                    Spacer(minLength: 12)
+                    GoldenSwitch(isOn: toggleBinding)
+                }
             case .text:
-                Text(spec.title).font(.subheadline)
+                Text(spec.title)
+                    .font(GoldenFont.rowTitle)
+                    .foregroundColor(GoldenTheme.textPrimary)
                 TextField("(empty = clear)", text: textBinding)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
+                    .goldenField()
             case .number:
-                Text(spec.title).font(.subheadline)
+                Text(spec.title)
+                    .font(GoldenFont.rowTitle)
+                    .foregroundColor(GoldenTheme.textPrimary)
                 TweakNumberField(spec: spec, selection: $selection)
-                Text(spec.numberHint).font(.caption2).foregroundStyle(.secondary)
+                GoldenMutedNote(text: spec.numberHint)
             }
-            Text(spec.id).font(.caption2).foregroundStyle(.tertiary)
+            Text(spec.id)
+                .font(GoldenFont.caption)
+                .foregroundColor(GoldenTheme.textDisabled)
             if let detail = spec.detail {
-                Text(detail).font(.footnote).foregroundStyle(.secondary)
+                GoldenMutedNote(text: detail)
             }
         }
-        .padding(.vertical, 2)
+        .goldenRowSurface()
     }
 
     private var toggleBinding: Binding<Bool> {
@@ -264,6 +313,9 @@ private struct TweakNumberField: View {
     var body: some View {
         TextField("value", text: $draft)
             .keyboardType(.decimalPad)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .goldenField()
             .onAppear { draft = selection.value(for: spec).display }
             .onChange(of: draft) { newValue in
                 if let value = spec.numberValue(from: newValue) {

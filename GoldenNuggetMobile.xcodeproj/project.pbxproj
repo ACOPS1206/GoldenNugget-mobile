@@ -18,13 +18,16 @@
 		96CCD31F8F6C1B323200AABD /* DeviceIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2F7065D06BCC3DD26401D93 /* DeviceIdentity.swift */; };
 		881B6D5DEB7B29D35D0FCFA2 /* Diagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E11FBF9A047B56F2E66E5FD /* Diagnostics.swift */; };
 		6FAF80E23DED37E68DF5C4EB /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E2884CFA985B6561938C066 /* Extensions.swift */; };
+		483F8C2418C5B065F7B692B2 /* GoldenComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9376FB58D1DA358A075B8DD /* GoldenComponents.swift */; };
 		D8CB50EA9A6F61C7683E54A6 /* GoldenNuggetPreset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37369801556192F20D0DF2D8 /* GoldenNuggetPreset.swift */; };
+		D216DFB074CD321EF4316F9E /* GoldenTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85A3D093FF4C72DC8FA10411 /* GoldenTheme.swift */; };
 		49D6B9D95723713BD06BE44A /* HostManifests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1586D9A781CB24F33910162E /* HostManifests.swift */; };
 		D72E5E9591A66FAB046A24E0 /* InFlightCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5DC362DFE508D1A75B921BC /* InFlightCall.swift */; };
 		1BA8F77F705E3F66B2FB684F /* InstProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5BE188496CD2352DD095A6E /* InstProxy.swift */; };
 		38AC1AA2B797920552A965C5 /* Logging.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DA93A177C8D1537F0522DAD /* Logging.swift */; };
 		3D9A822A8FFEC6765986F255 /* MBFileBlob.swift in Sources */ = {isa = PBXBuildFile; fileRef = F63167F7109495632C638455 /* MBFileBlob.swift */; };
 		0331AFC575C298F5CD5B9046 /* ManifestStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 590719A37991943F005FE604 /* ManifestStore.swift */; };
+		9616622130656E770045CB83 /* Minimuxer in Frameworks */ = {isa = PBXBuildFile; productRef = B6CC7F8101BD13AD344DBB86 /* Minimuxer */; };
 		B131B5D39A218B7F0A12FC3C /* NuggetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB5B064EBCC8C22AB174E0D2 /* NuggetApp.swift */; };
 		2E44104D7A9958A98A7860EF /* PoCEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 680BEDC6838E13FA5AEE059E /* PoCEngine.swift */; };
 		11558E54DB612291BA4B5C73 /* PoCView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4432398FF02541D88F5E11B /* PoCView.swift */; };
@@ -57,7 +60,10 @@
 		A2F7065D06BCC3DD26401D93 /* DeviceIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceIdentity.swift; sourceTree = "<group>"; };
 		6E11FBF9A047B56F2E66E5FD /* Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diagnostics.swift; sourceTree = "<group>"; };
 		4E2884CFA985B6561938C066 /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
+		A9376FB58D1DA358A075B8DD /* GoldenComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoldenComponents.swift; sourceTree = "<group>"; };
+		58A0011193A068B87B3F76BA /* GoldenNuggetMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GoldenNuggetMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		37369801556192F20D0DF2D8 /* GoldenNuggetPreset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoldenNuggetPreset.swift; sourceTree = "<group>"; };
+		85A3D093FF4C72DC8FA10411 /* GoldenTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoldenTheme.swift; sourceTree = "<group>"; };
 		1586D9A781CB24F33910162E /* HostManifests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostManifests.swift; sourceTree = "<group>"; };
 		A5DC362DFE508D1A75B921BC /* InFlightCall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InFlightCall.swift; sourceTree = "<group>"; };
 		E5BE188496CD2352DD095A6E /* InstProxy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstProxy.swift; sourceTree = "<group>"; };
@@ -65,7 +71,6 @@
 		F63167F7109495632C638455 /* MBFileBlob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MBFileBlob.swift; sourceTree = "<group>"; };
 		590719A37991943F005FE604 /* ManifestStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManifestStore.swift; sourceTree = "<group>"; };
 		CB5B064EBCC8C22AB174E0D2 /* NuggetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NuggetApp.swift; sourceTree = "<group>"; };
-		58A0011193A068B87B3F76BA /* PoC.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PoC.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		680BEDC6838E13FA5AEE059E /* PoCEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PoCEngine.swift; sourceTree = "<group>"; };
 		F4432398FF02541D88F5E11B /* PoCView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PoCView.swift; sourceTree = "<group>"; };
 		10F91169C201521D8C0F3B86 /* ProgressPulse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressPulse.swift; sourceTree = "<group>"; };
@@ -91,7 +96,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				4CF3BBA020709B9AACE4F49C /* Minimuxer in Frameworks */,
+				9616622130656E770045CB83 /* Minimuxer in Frameworks */,
 				E801AE73005EB73126FC4367 /* libsqlite3.tbd in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -183,7 +188,7 @@
 		AA0EDB9294503E2A4D9A6E46 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				58A0011193A068B87B3F76BA /* PoC.app */,
+				58A0011193A068B87B3F76BA /* GoldenNuggetMobile.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -191,6 +196,8 @@
 		B444A43510A1B7A42A8D5A32 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				A9376FB58D1DA358A075B8DD /* GoldenComponents.swift */,
+				85A3D093FF4C72DC8FA10411 /* GoldenTheme.swift */,
 				F4432398FF02541D88F5E11B /* PoCView.swift */,
 				FB4799584FF11C9BF5BE59FF /* TweaksView.swift */,
 			);
@@ -226,9 +233,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		3814067802951A29B1A55FCB /* PoC */ = {
+		3814067802951A29B1A55FCB /* GoldenNuggetMobile */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 533CE9A0FB4E99D6B963BE28 /* Build configuration list for PBXNativeTarget "PoC" */;
+			buildConfigurationList = 533CE9A0FB4E99D6B963BE28 /* Build configuration list for PBXNativeTarget "GoldenNuggetMobile" */;
 			buildPhases = (
 				50573C24C930F1E1B523AA1D /* Sources */,
 				7BC289958C55848CD5B900BB /* Resources */,
@@ -238,12 +245,12 @@
 			);
 			dependencies = (
 			);
-			name = PoC;
+			name = GoldenNuggetMobile;
 			packageProductDependencies = (
 				B6CC7F8101BD13AD344DBB86 /* Minimuxer */,
 			);
 			productName = PoC;
-			productReference = 58A0011193A068B87B3F76BA /* PoC.app */;
+			productReference = 58A0011193A068B87B3F76BA /* GoldenNuggetMobile.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -260,7 +267,7 @@
 					};
 				};
 			};
-			buildConfigurationList = FC0EFF92A308D7BDF12E8753 /* Build configuration list for PBXProject "PoC" */;
+			buildConfigurationList = FC0EFF92A308D7BDF12E8753 /* Build configuration list for PBXProject "GoldenNuggetMobile" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -277,7 +284,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				3814067802951A29B1A55FCB /* PoC */,
+				3814067802951A29B1A55FCB /* GoldenNuggetMobile */,
 			);
 		};
 /* End PBXProject section */
@@ -308,7 +315,9 @@
 				96CCD31F8F6C1B323200AABD /* DeviceIdentity.swift in Sources */,
 				881B6D5DEB7B29D35D0FCFA2 /* Diagnostics.swift in Sources */,
 				6FAF80E23DED37E68DF5C4EB /* Extensions.swift in Sources */,
+				483F8C2418C5B065F7B692B2 /* GoldenComponents.swift in Sources */,
 				D8CB50EA9A6F61C7683E54A6 /* GoldenNuggetPreset.swift in Sources */,
+				D216DFB074CD321EF4316F9E /* GoldenTheme.swift in Sources */,
 				49D6B9D95723713BD06BE44A /* HostManifests.swift in Sources */,
 				D72E5E9591A66FAB046A24E0 /* InFlightCall.swift in Sources */,
 				1BA8F77F705E3F66B2FB684F /* InstProxy.swift in Sources */,
@@ -478,7 +487,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = LLKXS6MDAR;
+				DEVELOPMENT_TEAM = L7HX85L6GU;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -487,7 +496,8 @@
 					"-framework",
 					UIKit,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.jason.poc;
+				PRODUCT_BUNDLE_IDENTIFIER = com.awesomenull.poc;
+				PRODUCT_NAME = GoldenNuggetMobile;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -508,6 +518,7 @@
 					UIKit,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.jason.poc;
+				PRODUCT_NAME = GoldenNuggetMobile;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -516,7 +527,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		533CE9A0FB4E99D6B963BE28 /* Build configuration list for PBXNativeTarget "PoC" */ = {
+		533CE9A0FB4E99D6B963BE28 /* Build configuration list for PBXNativeTarget "GoldenNuggetMobile" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				CCE5F2C756E2586B9DB535AB /* Debug */,
@@ -525,7 +536,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
-		FC0EFF92A308D7BDF12E8753 /* Build configuration list for PBXProject "PoC" */ = {
+		FC0EFF92A308D7BDF12E8753 /* Build configuration list for PBXProject "GoldenNuggetMobile" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				03E8A224ABB82997E1934CD5 /* Debug */,

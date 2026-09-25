@@ -282,7 +282,6 @@ enum BackupInjector {
         bundleID: String?,
         fileName: String,
         contents: Data,
-        footnote: String? = nil,
         tweakPayloads: [TweakPayload] = []
     ) async throws {
         let deviceDir = AppPaths.deviceDir(backupRoot: backupRoot, udid: udid)
@@ -316,18 +315,7 @@ enum BackupInjector {
                        appInfo: appInfo)
             injectStage.done()
         }
-
-        // No app registration: see `injectSystemPlist`.
-        if let footnote, !footnote.isEmpty {
-            AppLog.write("Injecting footnote "
-                + "\(LockScreenFootnoteTweak.domain)/\(LockScreenFootnoteTweak.relativePath)…")
-            let footnoteStage = StageTimer("inject footnote")
-            try injectSystemPlist(into: deviceDir, domain: LockScreenFootnoteTweak.domain,
-                                  relativePath: LockScreenFootnoteTweak.relativePath,
-                                  contents: try LockScreenFootnoteTweak.contents(text: footnote))
-            footnoteStage.done()
-        }
-
+        
         if !tweakPayloads.isEmpty {
             let tweakStage = StageTimer("inject tweaks")
             AppLog.write("Injecting \(tweakPayloads.count) tweak file(s)…")

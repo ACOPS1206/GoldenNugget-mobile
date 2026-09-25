@@ -29,6 +29,32 @@ struct TweakRowProfile {
     let rootOwner: Int
     let rootGroup: Int
     let rootProtectionClass: Int
+    /// Whether this domain's **file** rows carry a `Digest` (SHA-1 of the
+    /// payload).  Not a style choice: the device writes one on every file row of
+    /// some domains and on none of others, and a file record it cannot match to
+    /// the payload it received is answered with `MBErrorDomain/205 — "Manifest
+    /// references files not in backup"`.
+    ///
+    /// Measured over the device's own backup, the split is clean — 110 domains
+    /// with file rows, none mixing the two shapes:
+    ///
+    ///   * **carries one** (11): `ManagedPreferencesDomain`, `HomeDomain`,
+    ///     `SystemPreferencesDomain`, `DatabaseDomain`, `RootDomain`,
+    ///     `MobileDeviceDomain`, `WirelessDomain`, `NetworkDomain`,
+    ///     `KeychainDomain`, `ProtectedDomain`, `InstallDomain`
+    ///     (`ManagedPreferencesDomain` 4/4, `HomeDomain` 708/708,
+    ///     `SystemPreferencesDomain` 9/9, `DatabaseDomain` 3/3);
+    ///   * **never carries one** (99): the `AppDomain*` family,
+    ///     `SysSharedContainerDomain-*`, `SysContainerDomain-*`, `CameraRollDomain`.
+    ///
+    /// Directory rows and symlink rows never carry one, so this only ever applies
+    /// to the file row.
+    ///
+    /// The two `false` values are the two classes this app had shipped a restore
+    /// with — AppDomain (the app-container PoC) and SysSharedContainer (the Lock
+    /// Screen footnote) — which is exactly why an injector that never wrote a
+    /// digest passed for both and could not pass for the four below.
+    let carriesDigest: Bool
     let verified: Bool
     /// Where the numbers came from, for the warning line.
     let note: String
@@ -57,6 +83,7 @@ extension TweakRowProfile {
         fileExceptionPublisher: "com.apple.containermanagerd_system",
         dirOwner: 501, dirGroup: 501, dirProtectionClass: PROTECTION_CLASS_DIR,
         rootOwner: 501, rootGroup: 501, rootProtectionClass: PROTECTION_CLASS_DIR,
+        carriesDigest: false,
         verified: true,
         note: "AppDomain-* rows, as delivered by BackupInjector.inject")
 
@@ -67,6 +94,7 @@ extension TweakRowProfile {
         fileExceptionPublisher: "com.apple.containermanagerd_system",
         dirOwner: -2, dirGroup: -2, dirProtectionClass: PROTECTION_CLASS_SYSTEM_FILE,
         rootOwner: 0, rootGroup: 0, rootProtectionClass: PROTECTION_CLASS_DIR,
+        carriesDigest: false,
         verified: true,
         note: "SysSharedContainerDomain rows, as delivered by BackupInjector.injectSystemPlist")
 
@@ -79,6 +107,7 @@ extension TweakRowProfile {
         fileExceptionPublisher: "com.apple.BackupAgent2",
         dirOwner: 501, dirGroup: 501, dirProtectionClass: PROTECTION_CLASS_SYSTEM_FILE,
         rootOwner: 0, rootGroup: 0, rootProtectionClass: PROTECTION_CLASS_SYSTEM_FILE,
+        carriesDigest: true,
         verified: false,
         note: "ManagedPreferencesDomain rows")
 
@@ -94,6 +123,7 @@ extension TweakRowProfile {
         fileExceptionPublisher: "com.apple.BackupAgent2",
         dirOwner: 501, dirGroup: 501, dirProtectionClass: PROTECTION_CLASS_DIR,
         rootOwner: 501, rootGroup: 501, rootProtectionClass: PROTECTION_CLASS_DIR,
+        carriesDigest: true,
         verified: false,
         note: "HomeDomain rows")
 
@@ -105,6 +135,7 @@ extension TweakRowProfile {
         fileExceptionPublisher: nil,
         dirOwner: 0, dirGroup: 0, dirProtectionClass: PROTECTION_CLASS_SYSTEM_FILE,
         rootOwner: 0, rootGroup: 0, rootProtectionClass: PROTECTION_CLASS_SYSTEM_FILE,
+        carriesDigest: true,
         verified: false,
         note: "SystemPreferencesDomain rows")
 
@@ -115,6 +146,7 @@ extension TweakRowProfile {
         fileExceptionPublisher: "com.apple.BackupAgent2",
         dirOwner: 0, dirGroup: 0, dirProtectionClass: PROTECTION_CLASS_SYSTEM_FILE,
         rootOwner: 0, rootGroup: 0, rootProtectionClass: PROTECTION_CLASS_SYSTEM_FILE,
+        carriesDigest: true,
         verified: false,
         note: "DatabaseDomain rows")
 
@@ -126,6 +158,11 @@ extension TweakRowProfile {
         fileExceptionPublisher: "com.apple.BackupAgent2",
         dirOwner: 501, dirGroup: 501, dirProtectionClass: PROTECTION_CLASS_SYSTEM_FILE,
         rootOwner: 0, rootGroup: 0, rootProtectionClass: PROTECTION_CLASS_SYSTEM_FILE,
+        // Follows the four measured domains above rather than the two `false`
+        // ones: every domain this fallback can be reached for (`RootDomain`,
+        // `MobileDeviceDomain`) is a system domain, and every system domain the
+        // backup shows stamps a digest (RootDomain 36/36).
+        carriesDigest: true,
         verified: false,
         note: "no measurement for this domain — using the common system-preference shape")
 }
@@ -205,6 +242,11 @@ enum TweakInjector {
                         : (isRoot ? profile.rootProtectionClass : profile.dirProtectionClass),
                     inodeNumber: nextInode,
                     timestamp: now,
+                    // File rows of these domains are the class that carries one,
+                    // and it is the SHA-1 of the bytes written just above — see
+                    // `MBFileArchiver.digest` / `TweakRowProfile.carriesDigest`.
+                    // Directory rows never carry a digest on the device.
+                    digest: isFile && profile.carriesDigest ? payloadDigest(payload.contents) : nil,
                     // Only file rows carry the exception, per the measurements
                     // behind `TweakRowProfile` (and the same rule the injector
                     // for the shipping classes already follows).

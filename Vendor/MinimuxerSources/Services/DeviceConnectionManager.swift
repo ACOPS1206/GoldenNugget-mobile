@@ -84,7 +84,7 @@ actor DeviceConnectionManager {
             case .localVPN:
                 // cache last state in locals
                 let lastInterfacesCache = interfacesCache
-                let lastVpnIface = vpnIface
+                let _ = vpnIface
                 let lastReportedPeer = reportedPeerIp
                 let lastDerivedPeer = derivedPeerIp
                 let lastDerivedPeerMask = derivedPeerSubnetMask

@@ -27,15 +27,15 @@ if (( CLEAN )); then
   rm -rf "$DERIVED"
 fi
 
-xcodebuild -project PoC.xcodeproj \
+xcodebuild -project GoldenNuggetMobile.xcodeproj \
   -scheme PoC \
   -configuration "$CONFIG" \
   -destination 'generic/platform=iOS' \
   -derivedDataPath "$DERIVED" \
   CODE_SIGNING_ALLOWED=NO build
 
-APP_PATH="$DERIVED/Build/Products/${CONFIG}-iphoneos/PoC.app"
-BINARY="$APP_PATH/PoC"
+APP_PATH="$DERIVED/Build/Products/${CONFIG}-iphoneos/GoldenNuggetMobile.app"
+BINARY="$APP_PATH/GoldenNuggetMobile"
 if [ ! -f "$BINARY" ]; then
   echo "error: expected app binary not found at $BINARY" >&2
   exit 1
@@ -52,9 +52,9 @@ if [ -n "$stale" ]; then
 fi
 
 mkdir -p build
-rm -rf build/Payload build/PoC.ipa
+rm -rf build/Payload build/GoldenNugget.ipa
 mkdir -p build/Payload
-cp -R "$APP_PATH" build/Payload/PoC.app
-(cd build && zip -qry PoC.ipa Payload && rm -rf Payload)
+cp -R "$APP_PATH" build/Payload/GoldenNuggetMobile.app
+(cd build && zip -qry GoldenNuggetMobile.ipa Payload && rm -rf Payload)
 
-echo "done: build/PoC.ipa (unsigned, ${CONFIG})"
+echo "done: build/GoldenNuggetMobile.ipa (unsigned, ${CONFIG})"

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 // The bytes of a backup 3.3 file record.
@@ -86,6 +87,37 @@ let PROTECTION_CLASS_SYSTEM_FILE: Int = 4
     var lastStatusChange: Int = 0
     var flags: Int = 0
     var inodeNumber: Int = 0
+    /// The SHA-1 of the payload — on the row classes the device stamps one on.
+    ///
+    /// Its presence is **per domain class and absolute**, measured over the
+    /// device's own backup, and it splits the 110 domains that have file rows
+    /// cleanly in two — no domain mixes the two shapes
+    /// (`scripts/blob-shape-check.swift` §4 re-checks exactly that):
+    ///
+    ///   * **carries one** (11 domains): `HomeDomain`, `SystemPreferencesDomain`,
+    ///     `ManagedPreferencesDomain`, `DatabaseDomain`, `RootDomain`,
+    ///     `MobileDeviceDomain`, `WirelessDomain`, `NetworkDomain`,
+    ///     `KeychainDomain`, `ProtectedDomain`, `InstallDomain`
+    ///     (per-domain counts are solid too: HomeDomain 708/708,
+    ///     SystemPreferencesDomain 9/9, ManagedPreferencesDomain 4/4,
+    ///     DatabaseDomain 3/3, RootDomain 36/36);
+    ///   * **never carries one** (99 domains): the whole `AppDomain*` family
+    ///     (`AppDomain-`, `AppDomainGroup-`, `AppDomainPlugin-`),
+    ///     `SysSharedContainerDomain-*`, `SysContainerDomain-*`, `CameraRollDomain`
+    ///     (`AppDomain-*` 0/2760, `SysSharedContainerDomain-*` 0/10).
+    ///
+    /// Directory rows (0/4387 across those domains) and symlink rows never carry
+    /// one whatever the domain, and where it is present it equals
+    /// `sha1(payload)` byte for byte (verified on one row of each of `HomeDomain`,
+    /// `SystemPreferencesDomain`, `ManagedPreferencesDomain`, `DatabaseDomain`).
+    ///
+    /// This is the one field the AppDomain-only injector could omit for free:
+    /// `AppDomain-*` is exactly the class that has none.  A row built for the
+    /// tweak domains without it is therefore a divergence the app-container path
+    /// can never reveal, and the device answers a file record it cannot match to
+    /// the payload it received with `MBErrorDomain/205 — "Manifest references
+    /// files not in backup"`.  See `TweakRowProfile.carriesDigest`.
+    var digest: Data?
     var extendedAttributes: Data?
 
     override init() { super.init() }
@@ -105,6 +137,9 @@ let PROTECTION_CLASS_SYSTEM_FILE: Int = 4
         coder.encode(relativePath, forKey: "RelativePath")
         // Unconditional, directories included: the device never omits it.
         coder.encode(inodeNumber, forKey: "InodeNumber")
+        // A `Data`, so — like `RelativePath` — a real object, i.e. referenced
+        // rather than inlined.  The device writes it the same way.
+        if let digest { coder.encode(digest, forKey: "Digest") }
         if let ea = extendedAttributes { coder.encode(ea, forKey: "ExtendedAttributes") }
     }
 }
@@ -118,10 +153,15 @@ let PROTECTION_CLASS_SYSTEM_FILE: Int = 4
 /// `timestamp` seeds all three time fields.  The device never writes 0 for any
 /// of them (`Birth` 0/34918, `LastModified` 0/34918, `LastStatusChange` 0/34918,
 /// earliest 1321453406), so neither does this.
+///
+/// `digest` is nil for the row classes the device writes no digest on — see
+/// `MBFileArchiver.digest` for the measured split.  Callers that write into a
+/// domain which carries one must pass `payloadDigest(contents)`.
 func buildMBFileBlob(relativePath: String, mode: Int, size: Int,
                      userID: Int = 501, groupID: Int = 501, protectionClass: Int = 0,
                      inodeNumber: Int = 0,
                      timestamp: Int = Int(Date().timeIntervalSince1970),
+                     digest: Data? = nil,
                      extendedAttributes: Data? = nil) -> Data {
     let obj = MBFileArchiver()
     obj.relativePath = relativePath
@@ -134,12 +174,27 @@ func buildMBFileBlob(relativePath: String, mode: Int, size: Int,
     obj.lastModified = timestamp
     obj.lastStatusChange = timestamp
     obj.inodeNumber = inodeNumber
+    obj.digest = digest
     obj.extendedAttributes = extendedAttributes
     NSKeyedArchiver.setClassName("MBFile", for: MBFileArchiver.self)
     // Force-try is safe here: the class name is registered on the line above and
     // the graph is a single flat object with no nested containers, so archiving
     // cannot fail for this input.
     return try! NSKeyedArchiver.archivedData(withRootObject: obj, requiringSecureCoding: false)
+}
+
+/// The `Digest` a file row declares: SHA-1 of the payload bytes.
+///
+/// Defined here, next to the blob it goes into, because it is part of the same
+/// contract: on every device row that carries a `Digest` it equals
+/// `sha1(<payload>)` exactly (checked on `HomeDomain` /
+/// `SystemPreferencesDomain` / `ManagedPreferencesDomain` / `DatabaseDomain`
+/// rows of the reference backup).  GoldenNugget writes the same value
+/// (`hashlib.sha1(contents).digest()` in `_build_mbfile_blob` /
+/// `_patch_donor_blob`), so this is the reference's behaviour too, not an
+/// inference of ours.
+func payloadDigest(_ contents: Data) -> Data {
+    Data(Insecure.SHA1.hash(data: contents))
 }
 
 /// The `com.apple.dataprotection.policy.exception-applied-by` attribute.

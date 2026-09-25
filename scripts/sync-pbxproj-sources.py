@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reconcile PoC.xcodeproj/project.pbxproj with Package.swift.
+"""Reconcile the Xcode project's project.pbxproj with Package.swift.
 
 Package.swift is the single source of truth for which files the PoC target
 compiles.  It did not use to be: the manifest carried a hand-maintained list of
@@ -39,11 +39,33 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PBXPROJ = ROOT / "PoC.xcodeproj" / "project.pbxproj"
 NUGGET = "Nugget"
 SWIFT_TYPE = "sourcecode.swift"
 
 HEX24 = re.compile(r"^[0-9A-F]{24}$")
+
+
+def find_pbxproj() -> Path:
+    """The project file, found rather than named.
+
+    This used to be the literal ``PoC.xcodeproj/project.pbxproj``, and the
+    project was then renamed to ``GoldenNuggetMobile.xcodeproj`` — which turned
+    every hardcoded spelling of the old name into a `FileNotFoundError`, this
+    script included.  There is exactly one ``*.xcodeproj`` in the repo root, so
+    it is discovered; a future rename then costs nothing.
+    """
+    candidates = sorted(p / "project.pbxproj" for p in ROOT.glob("*.xcodeproj")
+                        if (p / "project.pbxproj").is_file())
+    # `sys.exit` rather than `die`: this runs at import time, before `die` exists.
+    if not candidates:
+        sys.exit(f"sync-pbxproj-sources: no *.xcodeproj/project.pbxproj under {ROOT}")
+    if len(candidates) > 1:
+        sys.exit("sync-pbxproj-sources: more than one project file: "
+                 + ", ".join(str(p.relative_to(ROOT)) for p in candidates))
+    return candidates[0]
+
+
+PBXPROJ = find_pbxproj()
 
 
 def die(message: str):
@@ -399,7 +421,7 @@ def main() -> int:
 
     if args.check:
         if text != original:
-            print("drift in PoC.xcodeproj/project.pbxproj", file=sys.stderr)
+            print(f"drift in {PBXPROJ.relative_to(ROOT)}", file=sys.stderr)
             return 1
         print("project.pbxproj matches Package.swift")
         return 0
