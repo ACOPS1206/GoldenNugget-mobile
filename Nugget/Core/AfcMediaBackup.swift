@@ -91,8 +91,17 @@ enum AfcMediaBackup {
         var symlinks = 0
 
         for tree in trees {
-            guard let root = try? await gateway.afcEntryInfo(path: "/" + tree) else { continue }
-            guard !root.isDirectory else { continue }
+            guard let root = try? await gateway.afcEntryInfo(path: "/" + tree) else {
+                AppLog.write("AFC media: /\(tree) is not listed — skipped")
+                continue
+            }
+            // Was `guard !root.isDirectory else { continue }`, which skipped every
+            // tree exactly when it was a directory -- i.e. always. The survey
+            // came back empty for every device, which is why AFC "saw no photos".
+            guard root.isDirectory else {
+                AppLog.write("AFC media: /\(tree) is not a directory — skipped")
+                continue
+            }
             for entry in try await walk(gateway, path: "/" + tree) {
                 if entry.linkTarget != nil { symlinks += 1; continue }
                 files.append(entry)
