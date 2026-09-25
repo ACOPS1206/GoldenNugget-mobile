@@ -52,16 +52,23 @@ enum ProtectiveBackup {
                 // FULL re-upload of the whole protective set — the single most
                 // expensive thing this app does.  A retry on top of the partial
                 // baseline is incremental instead.
+                // Full backup + a real Manifest.db, on every attempt including
+                // the first. Both are what makes the device upload anything at
+                // all here: sparse would ask it to send only what a manifest
+                // lists, and a manifest it cannot read aborts the transfer
+                // before the first payload.
                 beforeAttempt: { attempt in
                     if attempt == 1 {
                         try HostManifests.reset(backupRoot: backupRoot, udid: udid)
                     } else {
                         AppLog.write("keeping the partial baseline from attempt \(attempt - 1) "
                             + "(wiping it would force a full re-upload)")
-                        try HostManifests.ensure(
-                            deviceDir: AppPaths.deviceDir(backupRoot: backupRoot, udid: udid),
-                            udid: udid)
                     }
+                    let dir = AppPaths.deviceDir(backupRoot: backupRoot, udid: udid)
+                    try HostManifests.ensure(deviceDir: dir, udid: udid, isFullBackup: true)
+                    try HostManifests.writeSQLiteManifest(deviceDir: dir, ios27: true)
+                    AppLog.write("host manifests ready: full backup, Manifest.db written "
+                        + "(\((dir.appendingPathComponent("Manifest.db")).path))")
                 }
             ) {
                 // 120 s of *nothing* — no host callback AND no DeviceLink message
