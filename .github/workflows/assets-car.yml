@@ -99,7 +99,8 @@ jobs:
             --output-partial-info-plist "$OUT/AppIcon-partial.plist" \
             --notices --warnings \
             "$CATALOG" \
-            "$CATALOG/AppIcon.icon"
+            "$CATALOG/AppIcon.icon" \
+            "$CATALOG/ScrappedIcon.icon"
 
           test -s "$OUT/Assets.car"
           ls -l "$OUT"
@@ -112,7 +113,7 @@ jobs:
           set -euo pipefail
           OUT="$RUNNER_TEMP/car-out"
           xcrun --sdk iphoneos assetutil --info "$OUT/Assets.car" > "$RUNNER_TEMP/car-info.txt" || true
-          grep -E "AppIcon|Appearance|appearance" "$RUNNER_TEMP/car-info.txt" | head -80 || true
+          grep -E "AppIcon|ScrappedIcon|Appearance|appearance" "$RUNNER_TEMP/car-info.txt" | head -80 || true
           echo "--- rendition summary ---"
           grep -cE "Rendition|appearance" "$RUNNER_TEMP/car-info.txt" || true
 
@@ -130,6 +131,17 @@ jobs:
         run: |
           python3 scripts/check-car-appearances.py \
             "$RUNNER_TEMP/car-out/Assets.car" --require-dark --name AppIcon
+
+      - name: Check the alternate icon made it into the car
+        # The "Scrapped" alternate is reached through
+        # `CFBundleAlternateIcons.ScrappedIcon.CFBundleIconName`, and that name
+        # only resolves if actool emitted a rendition for it. A car without it
+        # compiles clean and then renders a placeholder on the home screen, so
+        # the check is "are there renditions at all", deliberately not
+        # --require-dark: this icon ships a single appearance on purpose.
+        run: |
+          python3 scripts/check-car-appearances.py \
+            "$RUNNER_TEMP/car-out/Assets.car" --name ScrappedIcon
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
