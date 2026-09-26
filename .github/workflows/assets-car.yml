@@ -91,11 +91,9 @@ jobs:
           # it fails with "None of the input asset catalogs contained a
           # matching app icon set". So the primary is named by path.
           #
-          # `ScrappedIcon.appiconset` needs no such help -- actool compiles every
-          # appiconset it finds, which is how Ketamine's eight alternates get
-          # into its car with no ALTERNATE_APPICON_NAMES build setting. It is
-          # passed explicitly anyway so the run fails loudly if that ever stops
-          # holding, rather than shipping a car with no alternate in it.
+          # `ScrappedIcon.icon` is passed explicitly for the same reason: it is
+          # not the primary, and a car without a rendition for it compiles clean
+          # and then renders a placeholder.
           xcrun --sdk iphoneos actool \
             --compile "$OUT" \
             --platform iphoneos \
@@ -110,7 +108,7 @@ jobs:
             --notices --warnings \
             "$CATALOG" \
             "$CATALOG/AppIcon.icon" \
-            "$CATALOG/ScrappedIcon.appiconset"
+            "$CATALOG/ScrappedIcon.icon"
 
           test -s "$OUT/Assets.car"
           ls -l "$OUT"
