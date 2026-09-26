@@ -98,9 +98,7 @@ jobs:
             --output-format human-readable-text \
             --output-partial-info-plist "$OUT/AppIcon-partial.plist" \
             --notices --warnings \
-            "$CATALOG" \
-            "$CATALOG/AppIcon.icon" \
-            "$CATALOG/ScrappedIcon.icon"
+            "$CATALOG"
 
           test -s "$OUT/Assets.car"
           ls -l "$OUT"
@@ -134,11 +132,17 @@ jobs:
 
       - name: Check the alternate icon made it into the car
         # The "Scrapped" alternate is reached through
-        # `CFBundleAlternateIcons.ScrappedIcon.CFBundleIconName`, and that name
+        # `CFBundleAlternateIcons.ScrappedIcon.CFBundleIconFiles`, and that name
         # only resolves if actool emitted a rendition for it. A car without it
         # compiles clean and then renders a placeholder on the home screen, so
         # the check is "are there renditions at all", deliberately not
         # --require-dark: this icon ships a single appearance on purpose.
+        #
+        # It is a plain `.appiconset` with one universal 1024 image, not an
+        # Icon Composer `.icon` bundle: only the former renders in the alternate
+        # slot. actool picks up every appiconset in the catalog with no
+        # `ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES` equivalent, which is
+        # why nothing above passes a name for it.
         run: |
           python3 scripts/check-car-appearances.py \
             "$RUNNER_TEMP/car-out/Assets.car" --name ScrappedIcon
