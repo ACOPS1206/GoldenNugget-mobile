@@ -86,6 +86,16 @@ jobs:
           # Keep in sync with project.yml / pbxproj / xtool.yml / the shim in
           # scripts/compile-assets.sh: all four carry 26.0 and a mismatch
           # shows up as a different rendition set rather than an error.
+          # `AppIcon` is an Icon Composer `.icon` bundle, and actool does not
+          # discover those by name from the catalog alone: with only "$CATALOG"
+          # it fails with "None of the input asset catalogs contained a
+          # matching app icon set". So the primary is named by path.
+          #
+          # `ScrappedIcon.appiconset` needs no such help -- actool compiles every
+          # appiconset it finds, which is how Ketamine's eight alternates get
+          # into its car with no ALTERNATE_APPICON_NAMES build setting. It is
+          # passed explicitly anyway so the run fails loudly if that ever stops
+          # holding, rather than shipping a car with no alternate in it.
           xcrun --sdk iphoneos actool \
             --compile "$OUT" \
             --platform iphoneos \
@@ -98,7 +108,9 @@ jobs:
             --output-format human-readable-text \
             --output-partial-info-plist "$OUT/AppIcon-partial.plist" \
             --notices --warnings \
-            "$CATALOG"
+            "$CATALOG" \
+            "$CATALOG/AppIcon.icon" \
+            "$CATALOG/ScrappedIcon.appiconset"
 
           test -s "$OUT/Assets.car"
           ls -l "$OUT"
