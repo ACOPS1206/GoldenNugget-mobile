@@ -20,7 +20,13 @@ struct GoldenPage<Content: View>: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: spacing) {
+            // Lazy, not eager: this is the scaffold behind every page, and two of
+            // them are long lists — the tweaks page builds a card per enabled
+            // section (98 in Liquid Glass alone) and Files builds three rows per
+            // entry.  An eager `VStack` created *all* of them up front and kept
+            // them alive, so the first paint of a section and every subsequent
+            // diff paid for rows that were never on screen.
+            LazyVStack(alignment: .leading, spacing: spacing) {
                 content
             }
             .padding(GoldenTheme.pageMargin)
@@ -67,36 +73,38 @@ struct GoldenSection: View {
     }
 }
 
-/// A section whose rows fold away. The tweaks page has three registry
-/// sections and a long SpringBoard list, so the header doubles as the toggle.
+/// A section header that folds its rows away.
 ///
-/// Kept separate from `GoldenSection` rather than added as an option, because
-/// the Daemons and Supervision pages want their sections pinned open: only the
-/// tweak categories are meant to collapse.
-struct GoldenCollapsibleSection: View {
+/// **The rows are not drawn by this view.**  The caller emits them as siblings —
+/// `GoldenCollapsibleHeader(…)` followed by `if !collapsed { ForEach(rows) { … } }`
+/// — so they become individual children of `GoldenPage`'s `LazyVStack` and are
+/// built only as they scroll into view.
+///
+/// The original shape was a header *containing* its rows in a `VStack`, which
+/// made a whole section one child of the lazy stack: every row of every open
+/// section was built on the first pass.  With a restored preset (172 tweaks here)
+/// all three sections open by default, so opening the Tweaks page built 133 cards
+/// — each with a title, a control, an id and a description — before it could
+/// draw its first frame.  Splitting the header out is what makes the list lazy
+/// for real; `GoldenSection` (no rows to fold) is unaffected.
+struct GoldenCollapsibleHeader: View {
     let title: String
     @Binding var isCollapsed: Bool
-    let content: AnyView
 
     var body: some View {
-        VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) { isCollapsed.toggle() }
-            } label: {
-                HStack(spacing: 6) {
-                    GoldenSectionHeader(text: title)
-                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(GoldenTheme.textSecondary)
-                    Spacer(minLength: 0)
-                }
-                .contentShape(Rectangle())
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) { isCollapsed.toggle() }
+        } label: {
+            HStack(spacing: 6) {
+                GoldenSectionHeader(text: title)
+                Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(GoldenTheme.textSecondary)
+                Spacer(minLength: 0)
             }
-            .buttonStyle(.plain)
-            if !isCollapsed {
-                content
-            }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -242,12 +250,24 @@ struct GoldenRowLabel: View {
                     .foregroundColor(tone == .primary ? GoldenTheme.textSecondary : tone.color)
                     .frame(width: 20)
             }
+            // `layoutPriority(1)` so the title is the last thing to be squeezed:
+            // a row is 288 pt wide in Slide Over, and after the icon (20), the
+            // chevron (13), the gutters and the 32 pt row padding there is ~170
+            // pt for title + value.  Without the priority the two split it, and
+            // a value like "12.3 GB free of 64 GB" wrapped to three lines while
+            // the title was cut to a fragment.
+            //
+            // The value keeps one line and shrinks instead: it is a measurement
+            // or a version, and a wrapped number reads as two facts.
             Text(title)
                 .font(GoldenFont.rowTitle)
                 .foregroundColor(tone.color)
+                .layoutPriority(1)
             Spacer(minLength: 8)
             if let value {
                 GoldenValueLabel(text: value)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
             if let trailingGlyph {
                 Image(systemName: trailingGlyph)
@@ -309,6 +329,36 @@ struct GoldenFieldStyle: ViewModifier {
 
 extension View {
     func goldenField() -> some View { modifier(GoldenFieldStyle()) }
+
+    /// Put a "Done" above the keyboard — required for `.numberPad` /
+    /// `.decimalPad` fields, which have no Return key of their own.
+    func goldenKeyboardDone() -> some View { modifier(GoldenKeyboardDone()) }
+}
+
+/// A "Done" button in a toolbar above the keyboard.
+///
+/// Needed on a phone for every field whose keyboard has **no Return key** —
+/// `.numberPad` and `.decimalPad` — because without one there is no way to put
+/// the keyboard away: it covers half the screen and the field below it stays
+/// unreachable.  `.numbersAndPunctuation` and the default keyboards have a
+/// Return key, so fields using those do not need this.
+///
+/// It resigns first responder through UIKit instead of tracking a `@FocusState`
+/// per field, so one modifier serves every field in the app.
+struct GoldenKeyboardDone: ViewModifier {
+    func body(content: Content) -> some View {
+        content.toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { Self.resignFirstResponder() }
+            }
+        }
+    }
+
+    private static func resignFirstResponder() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                        to: nil, from: nil, for: nil)
+    }
 }
 
 /// A labelled field row (label 13 pt secondary above the field, as the home
@@ -410,12 +460,24 @@ struct GoldenHeader<Trailing: View>: View {
         HStack(alignment: .center, spacing: 16) {
             GoldenLogo()
             VStack(alignment: .leading, spacing: 4) {
+                // Shrink rather than wrap in a narrow window.  The arithmetic
+                // behind 0.6: the narrowest window this app can be given is
+                // Slide Over at 320 pt — 2×16 pt page margins leaves 288, minus
+                // the logo (80), the 16 pt gutter and the trailing button (36)
+                // leaves **156 pt** for the title.  "GoldenNugget" at 32 pt bold
+                // is ~210 pt, so it needs 0.74 to fit; 0.6 leaves headroom for a
+                // longer subtitle row and still renders at 19 pt, which reads.
+                // Wrapping instead would turn the header into a three-line tower
+                // and push the whole page down.
                 Text(title)
                     .font(GoldenFont.homeTitle)
                     .foregroundColor(GoldenTheme.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
                 Text(subtitle)
                     .font(GoldenFont.homeSubtitle)
                     .foregroundColor(subtitleTone.color)
+                    .lineLimit(2)
             }
             Spacer(minLength: 0)
             trailing
@@ -596,7 +658,18 @@ struct GoldenCardGrid<Content: View>: View {
 /// not push the controls out of reach.
 struct GoldenLogView: View {
     let lines: [String]
+    /// The identity of `lines[0]`, for callers whose window slides (`RunLog`).
+    /// Static content leaves it at 0 — the ids only have to be unique and stable
+    /// within one view, not globally.
+    var firstId: Int = 0
     var height: CGFloat = 300
+
+    /// Rows keyed by a stable id rather than by array offset: offset identities
+    /// all shift by one when a sliding window drops its first line, and SwiftUI
+    /// then rebuilds every row instead of moving the window.
+    private var rows: [(id: Int, text: String)] {
+        lines.enumerated().map { (firstId + $0.offset, $0.element) }
+    }
 
     var body: some View {
         ScrollView {
@@ -604,8 +677,8 @@ struct GoldenLogView: View {
             // every chunk logged would otherwise build 600 selectable `Text`s
             // before the first frame.
             LazyVStack(alignment: .leading, spacing: 2) {
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                    Text(line)
+                ForEach(rows, id: \.id) { row in
+                    Text(row.text)
                         .font(GoldenFont.log)
                         .foregroundColor(GoldenTheme.textSecondary)
                         .textSelection(.enabled)

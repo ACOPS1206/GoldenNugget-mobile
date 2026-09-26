@@ -22,13 +22,28 @@ final class SupervisionSettings: ObservableObject {
     @AppStorage("SupervisionEnabled") private var enabled: Bool = false
     @AppStorage("SupervisionOrganization") private var organization: String = ""
 
+    /// Upstream's `pref_manager.skip_setup`: when it is on, **every** apply adds
+    /// the two skip-setup files ahead of the tweaks (`device_manager.add_skip_setup`
+    /// → `SkipSetup.build`).
+    ///
+    /// **Upstream defaults this to `True`** (`preference_manager.py:19`, and its
+    /// GUI reads `settings.value("skip_setup", True)`).  This port defaults it to
+    /// `False` on purpose: `SkipSetup` has not been through a device run yet, and
+    /// defaulting it on would silently add two files to every apply — including
+    /// the first run that has to prove the rest of the pipeline.  Once a run has
+    /// confirmed it, flipping this one literal restores the reference's file set
+    /// exactly.
+    @AppStorage("SkipSetupEnabled") private var skipSetup: Bool = false
+
     private init() {}
 
     var isSupervised: Bool { enabled }
     var organizationName: String { organization }
+    var skipSetupEnabled: Bool { skipSetup }
 
     func setSupervised(_ on: Bool) { enabled = on }
     func setOrganizationName(_ name: String) { organization = name }
+    func setSkipSetup(_ on: Bool) { skipSetup = on }
 
     /// Whether the organization half is complete enough to be meaningful.
     /// Upstream only writes the keybag fields when a name is present, and

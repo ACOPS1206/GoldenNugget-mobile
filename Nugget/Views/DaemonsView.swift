@@ -35,17 +35,18 @@ struct DaemonsView: View {
             ForEach(DaemonSection.allCases) { section in
                 let groups = visibleGroups(in: section)
                 if !groups.isEmpty {
-                    GoldenCollapsibleSection(
+                    // Same sibling shape as the tweaks page — see
+                    // `GoldenCollapsibleHeader`.
+                    let collapsed = collapsedBinding(for: section, groups: groups)
+                    GoldenCollapsibleHeader(
                         title: "\(section.rawValue) (\(onCount(in: groups))/\(groups.count))",
-                        isCollapsed: collapsedBinding(for: section, groups: groups),
-                        content: AnyView(
-                            VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-                                ForEach(groups, id: \.name) { group in
-                                    groupRow(group)
-                                }
-                            }
-                        )
+                        isCollapsed: collapsed
                     )
+                    if !collapsed.wrappedValue {
+                        ForEach(groups, id: \.name) { group in
+                            groupRow(group)
+                        }
+                    }
                 }
             }
             screenTimeCard

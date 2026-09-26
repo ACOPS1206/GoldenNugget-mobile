@@ -196,12 +196,30 @@ class GoldenNuggetEngine {
         let compiled = TweakCompiler.compile(selection: selection,
                                              deviceVersion: deviceVersion,
                                              isIPhone: isIPhone)
-        guard !compiled.payloads.isEmpty else {
-            throw GoldenNuggetError("No tweaks are enabled (or every enabled tweak was skipped) — nothing to apply.")
+
+        // Upstream's skip-setup block rides the same apply, **ahead of** the
+        // tweaks (`device_manager.add_skip_setup`), and it is what makes the
+        // switch on the Supervision page a delivery rather than an intent.  Its
+        // warnings are logged below: the parts this port cannot reproduce must
+        // not read like parity.
+        let supervision = SupervisionSettings.shared
+        let skipSetup = supervision.skipSetupEnabled
+            ? SkipSetup.build(supervised: supervision.isSupervised,
+                              organizationName: supervision.organizationName)
+            : SkipSetup.Build(payloads: [], warnings: [])
+
+        guard !compiled.payloads.isEmpty || !skipSetup.payloads.isEmpty else {
+            throw GoldenNuggetError("No tweaks are enabled (or every enabled tweak was skipped) "
+                + "and skip setup is off — nothing to apply.")
         }
         log("Tweaks: \(compiled.payloads.count) file(s) from \(compiled.locations.count) plist(s)")
         for location in compiled.locations { log("  → \(location.rawValue)") }
         for item in compiled.skipped { log("  ⚠️ skipped \(item.label): \(item.reason)") }
+        if !skipSetup.payloads.isEmpty {
+            log("Skip setup: \(skipSetup.payloads.count) file(s) ahead of the tweaks")
+            for payload in skipSetup.payloads { log("  → \(payload.label)") }
+            for warning in skipSetup.warnings { log("⚠️ \(warning)") }
+        }
 
         let udid = try await prepareRun()
 
@@ -211,8 +229,21 @@ class GoldenNuggetEngine {
         // nothing, iOS 27+ speaks the modern sqlite Manifest.db and must keep
         // the device's own state. Comparing "26.0" against "27.0" lexically
         // would put 26.9 on the wrong side, so compare the major component.
-        let major = Int(deviceVersion.split(separator: ".").first ?? "0") ?? 0
+        //
+        // The version is read HERE rather than taken on trust from the caller.
+        // The pages read it once, when they appear, and `DeviceIdentity.unknown`
+        // is the empty string — which parses to major 0, i.e. "not iOS 27". That
+        // is how a 27.0 device ended up on the iOS 26 branch, synthesising a
+        // legacy MBDB backup and dying with `205 — No keybag in manifest`
+        // (2026-09-26) while the branch it should have taken works. `prepareRun()`
+        // has just proved the gateway is ready, so a read here is the first one
+        // that can succeed.
+        let version = try await resolvedDeviceVersion(deviceVersion)
+        let major = Int(version.split(separator: ".").first ?? "0") ?? 0
         let ios27 = major >= 27
+        // Reported before the fork, because this number *is* the fork: the
+        // branch lines below say where the run went, this says why.
+        log("device version for the manifest-format fork: \(version) (major \(major))")
 
         // iOS 26: a Partial Restore, built rather than pulled -- an empty device
         // directory, the host-side manifests, then this run's rows. Nothing was
@@ -249,7 +280,11 @@ class GoldenNuggetEngine {
         try await BackupInjector.pruneAndInject(
             backupRoot: backupRoot,
             udid: udid,
-            tweakPayloads: compiled.payloads,
+            // Skip setup first, then the compiled tweaks: one array, one pass
+            // through the injector, which derives the directory rows from each
+            // payload's path and therefore writes the two skip-setup files in the
+            // order `add_skip_setup` appends them.
+            tweakPayloads: skipSetup.payloads + compiled.payloads,
             prune: prune,
             ios27: ios27
         )
@@ -365,6 +400,35 @@ class GoldenNuggetEngine {
         markRustLog()
 
         return udid
+    }
+
+    /// The version the manifest-format fork branches on — never a guess.
+    ///
+    /// An empty `fallback` means "the page never managed to read it" (it reads
+    /// once, when it appears, and lockdown may not have been answering yet), and
+    /// **not** "iOS 26". Parsing it as 0 used to send a 27.0 device down the
+    /// legacy branch, which cannot work there: that branch synthesises a backup
+    /// from nothing, and what the device answers is
+    /// `MBErrorDomain/205 — No keybag in manifest` (2026-09-26).
+    ///
+    /// So re-read lockdown — `prepareRun()` has just shown it is ready — and
+    /// refuse to continue if even that fails. Refusing beats defaulting: the two
+    /// branches want different manifest formats, and a wrong pick costs the
+    /// operator a whole run plus a puzzle like this one.
+    private func resolvedDeviceVersion(_ fallback: String) async throws -> String {
+        if !fallback.isEmpty { return fallback }
+        log("device version: the caller had none (it read the identity before lockdown answered) "
+            + "— re-reading before the format fork")
+        let identity = await DeviceIdentity.read()
+        guard !identity.version.isEmpty else {
+            throw GoldenNuggetError(
+                "Could not read the device's iOS version (lockdown ProductVersion), which this run "
+                + "needs to choose a manifest format: iOS 27+ gets a protective backup pulled from the "
+                + "device with a sqlite Manifest.db, iOS 26 a legacy MBDB backup synthesised on the "
+                + "host. Unlock the device, confirm the tunnel is up, then run again.")
+        }
+        log("device version: lockdown answered \(identity.version)")
+        return identity.version
     }
 
     /// Start from an empty backup root.  Both flows need this: the manifest is

@@ -26,12 +26,22 @@ struct MediaView: View {
     /// which is exactly when you come back to push or clear.
     private func loadManifest() {
         manifest = try? AfcMediaBackup.read()
+        hasStoredFiles = storeHasFiles()
     }
 
-    /// Whether the store holds anything, from the filesystem rather than from
-    /// the last run's manifest: a pull that was interrupted, or files left by an
-    /// earlier build, are real data that "Empty" must still be able to remove.
-    private var hasStoredFiles: Bool {
+    /// Whether the store holds anything — computed **once per load or action**,
+    /// not on every body pass.
+    ///
+    /// `storeHasFiles` walks the store tree for leftovers, and the old computed
+    /// property sat in two `.disabled(...)` modifiers: every re-render of this
+    /// page walked the directory twice, on the main thread.  The answer only
+    /// changes when an action runs, and every action ends here.
+    @State private var hasStoredFiles = false
+
+    /// From the filesystem rather than from the last run's manifest: a pull that
+    /// was interrupted, or files left by an earlier build, are real data that
+    /// "Empty" must still be able to remove.
+    private func storeHasFiles() -> Bool {
         if let m = manifest, !m.entries.isEmpty { return true }
         let fm = FileManager.default
         guard let walker = fm.enumerator(atPath: AfcMediaBackup.storeRoot.path) else { return false }
@@ -164,6 +174,9 @@ struct MediaView: View {
                 Task { @MainActor in lines.append(line) }
             }
             manifest = m
+            // The store just changed, so the gate on Push/Empty has to be
+            // recomputed here — `loadManifest()` is not called on this path.
+            hasStoredFiles = storeHasFiles()
             let removed = m.entries.filter(\.deleted).count
             lines.append("Pulled \(m.entries.count) file(s); \(removed) original(s) removed.")
         }

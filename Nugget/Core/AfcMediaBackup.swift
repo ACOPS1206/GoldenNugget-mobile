@@ -336,8 +336,51 @@ enum AfcMediaBackup {
         try data.write(to: manifestURL, options: .atomic)
     }
 
+    /// The decoded store manifest, memoised on the file's own identity.
+    ///
+    /// This used to read and JSON-decode the whole document on every call, and one
+    /// of its callers runs inside a SwiftUI `body`: `GoldenNuggetView`'s Media card
+    /// badge calls it on **every** body pass — i.e. once per log line during a run
+    /// (see `RunLog`), on the main thread.  The store can hold thousands of entries,
+    /// so that decode is milliseconds where a `stat` is microseconds.
+    ///
+    /// The cache key is the file's size + modification date, which is enough
+    /// because `write` replaces the file atomically: any save changes at least one
+    /// of the two, and the next read decodes again.  A missing file is cached as
+    /// `Manifest()` under a key no real file can produce.
+    private static let cacheLock = NSLock()
+    private static var cachedKey = ""
+    private static var cachedManifest: Manifest?
+
     static func read() throws -> Manifest {
-        guard let data = try? Data(contentsOf: manifestURL) else { return Manifest() }
-        return (try? JSONDecoder().decode(Manifest.self, from: data)) ?? Manifest()
+        let key = manifestCacheKey()
+        cacheLock.lock()
+        if let cachedManifest, cachedKey == key {
+            cacheLock.unlock()
+            return cachedManifest
+        }
+        cacheLock.unlock()
+
+        let manifest: Manifest
+        if let data = try? Data(contentsOf: manifestURL) {
+            manifest = (try? JSONDecoder().decode(Manifest.self, from: data)) ?? Manifest()
+        } else {
+            manifest = Manifest()
+        }
+        cacheLock.lock()
+        cachedKey = key
+        cachedManifest = manifest
+        cacheLock.unlock()
+        return manifest
+    }
+
+    /// `"<size>:<mtime>"`, or `"<absent>"` when there is no manifest yet.
+    private static func manifestCacheKey() -> String {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: manifestURL.path),
+              let size = attrs[.size] as? Int,
+              let modified = attrs[.modificationDate] as? Date else {
+            return "<absent>"
+        }
+        return "\(size):\(modified.timeIntervalSince1970)"
     }
 }

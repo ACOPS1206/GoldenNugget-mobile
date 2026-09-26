@@ -82,24 +82,36 @@ struct FilesView: View {
 
     private var breadcrumbCard: some View {
         GoldenCard {
-            HStack(spacing: 8) {
-                ForEach(Array(path.enumerated()), id: \.offset) { index, component in
-                    if index > 0 {
-                        Text("/").foregroundColor(GoldenTheme.textDisabled)
+            // Horizontal instead of wrapping.  A device path is deeper than any
+            // window this app can be given — `/var/mobile/Containers/Data/
+            // Application/<UUID>/…` alone is over 300 pt — and letting it wrap
+            // made the card grow a line per component while each "/" drifted
+            // away from the name it separates.  One line each at natural width,
+            // scrolled: a short path looks exactly as before, a long one is
+            // reachable without the card changing height.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Array(path.enumerated()), id: \.offset) { index, component in
+                        if index > 0 {
+                            Text("/").foregroundColor(GoldenTheme.textDisabled)
+                        }
+                        Button {
+                            path = Array(path.prefix(index + 1))
+                            Task { await load() }
+                        } label: {
+                            Text(component)
+                                .font(GoldenFont.rowTitle)
+                                .foregroundColor(index == path.count - 1
+                                                 ? GoldenTheme.textPrimary
+                                                 : GoldenTheme.accent)
+                                // Natural width, never compressed: the scroll
+                                // view is what absorbs the overflow.
+                                .fixedSize()
+                        }
+                        .buttonStyle(.plain)
                     }
-                    Button {
-                        path = Array(path.prefix(index + 1))
-                        Task { await load() }
-                    } label: {
-                        Text(component)
-                            .font(GoldenFont.rowTitle)
-                            .foregroundColor(index == path.count - 1
-                                             ? GoldenTheme.textPrimary
-                                             : GoldenTheme.accent)
-                    }
-                    .buttonStyle(.plain)
+                    if loading { ProgressView().goldenField() }
                 }
-                if loading { ProgressView().goldenField() }
             }
             if let error {
                 GoldenMutedNote(text: error)
@@ -132,26 +144,27 @@ struct FilesView: View {
         }
     }
 
+    /// The header and the rows are **siblings** on purpose: a `GoldenSection`
+    /// wraps its content in a `VStack`, which the page's lazy stack treats as one
+    /// child — so every entry in the listing (three rows each) was built on the
+    /// first pass, however long the directory is.  Emitting the header and a bare
+    /// `ForEach` instead lets a row be built when it scrolls into view.  Same
+    /// reason the tweaks page's sections were split (see `GoldenCollapsibleHeader`).
+    @ViewBuilder
     private var listingCard: some View {
-        GoldenSection(
-            title: "Contents (\(entries.count))",
-            content: AnyView(
-                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-                    if entries.isEmpty, !loading {
-                        GoldenMutedNote(text: "Nothing here.")
-                    }
-                    ForEach(entries) { entry in
-                        row(entry)
-                    }
-                    if let pullProgress {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ProgressView(value: pullProgress)
-                            GoldenMutedNote(text: "Pulling \(Int(pullProgress * 100))%")
-                        }
-                    }
-                }
-            )
-        )
+        GoldenSectionHeader(text: "Contents (\(entries.count))")
+        if entries.isEmpty, !loading {
+            GoldenMutedNote(text: "Nothing here.")
+        }
+        ForEach(entries) { entry in
+            row(entry)
+        }
+        if let pullProgress {
+            VStack(alignment: .leading, spacing: 4) {
+                ProgressView(value: pullProgress)
+                GoldenMutedNote(text: "Pulling \(Int(pullProgress * 100))%")
+            }
+        }
     }
 
     private func row(_ entry: AfcFsEntry) -> some View {
@@ -203,9 +216,16 @@ struct FilesView: View {
                 Image(systemName: entry.isDirectory
                       ? "folder.fill"
                       : (entry.linkTarget != nil ? "link" : "doc"))
+                // One line, truncated in the middle.  A device filename is
+                // routinely 40+ characters, which in a 288 pt window wrapped to
+                // two or three lines and made every long entry a block — the
+                // list stopped scanning as a list.  Middle truncation keeps the
+                // extension, which is the part a browser is usually read for.
                 Text(entry.name)
                     .font(GoldenFont.rowTitle)
                     .foregroundColor(tint)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
             Text(entry.isDirectory
                  ? "folder"

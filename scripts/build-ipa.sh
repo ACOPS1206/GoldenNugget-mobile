@@ -56,6 +56,22 @@ rm -rf build/Payload build/GoldenNuggetMobile.ipa
 mkdir -p build/Payload
 cp -R "$APP_PATH" build/Payload/GoldenNuggetMobile.app
 
+# Drop the loose icon PNGs actool leaves at the bundle root.
+#
+# The icon is an Icon Composer stack inside Assets.xcassets, and actool compiles
+# it into Assets.car — but it *also* writes the primary icon out as loose PNGs
+# (AppIcon60x60@2x.png, AppIcon76x76@2x~ipad.png).  Those files carry the LIGHT
+# artwork only (measured: mean rgb ~(226,160,58) against the stack's light layer
+# (214,143,36) and dark layer (109,67,30)), and a loose icon at the bundle root
+# wins over the catalog's rendition — so shipping them puts the light icon on a
+# dark home screen and the dark half never shows.  Same decision as the xtool
+# bundle in xtool.yml, which ships the car and no loose icons.
+#
+# `ASSETCATALOG_COMPILER_STANDALONE_ICON_BEHAVIOR = none` does NOT suppress them:
+# measured with --standalone-icon-behavior default/all/none, an icon stack emits
+# the same two files every time (the setting governs .appiconset icons).
+rm -f build/Payload/GoldenNuggetMobile.app/AppIcon*.png
+
 # Strip symbol tables out of the *copy* we are about to package, not out of
 # DerivedData — the unstripped product stays available for debugging.  This
 # build is unsigned (CODE_SIGNING_ALLOWED=NO above, the sideloader signs

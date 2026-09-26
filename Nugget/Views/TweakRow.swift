@@ -20,23 +20,30 @@ struct TweakRow: View {
     private let writeOn: (Bool) -> Void
 
     init(spec: TweakSpec, selection: Binding<TweakSelection>) {
-        self.init(spec: spec, selection: selection,
-                  isOn: nil, setOn: nil)
+        self.init(spec: spec, selection: selection, readOn: nil, writeOn: nil)
     }
 
     /// The daemon shape: same row, but the page decides what the switch means.
     init(spec: TweakSpec, selection: Binding<TweakSelection>,
          isOn: @escaping () -> Bool, setOn: @escaping (Bool) -> Void) {
-        self.init(spec: spec, selection: selection,
-                  isOn: isOn, setOn: setOn)
+        self.init(spec: spec, selection: selection, readOn: isOn, writeOn: setOn)
     }
 
+    /// The one that actually assigns.
+    ///
+    /// Its labels are `readOn`/`writeOn` — the stored properties' names — and not
+    /// `isOn`/`setOn` with optional types.  It used to be the latter, which made
+    /// the three-argument initializer above resolve *to itself* (the compiler
+    /// said so: "function call causes an infinite recursion") instead of to this
+    /// one, so every daemon row recursed until the stack ran out.  Distinct
+    /// labels make the choice unambiguous rather than a question of which
+    /// overload wins.
     private init(spec: TweakSpec, selection: Binding<TweakSelection>,
-                 isOn: (() -> Bool)?, setOn: ((Bool) -> Void)?) {
+                 readOn: (() -> Bool)?, writeOn: ((Bool) -> Void)?) {
         self.spec = spec
         self._selection = selection
-        self.readOn = isOn ?? { selection.wrappedValue.isOn(spec) }
-        self.writeOn = setOn ?? { selection.wrappedValue.setOn($0, for: spec) }
+        self.readOn = readOn ?? { selection.wrappedValue.isOn(spec) }
+        self.writeOn = writeOn ?? { selection.wrappedValue.setOn($0, for: spec) }
     }
 
     var body: some View {
@@ -121,7 +128,10 @@ struct TweakNumberField: View {
 
     var body: some View {
         TextField("value", text: $draft)
+            // `.decimalPad` has no Return key: on a phone the keyboard would
+            // be impossible to dismiss.
             .keyboardType(.decimalPad)
+            .goldenKeyboardDone()
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .goldenField()

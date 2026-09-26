@@ -151,18 +151,20 @@ struct TweaksView: View {
             let specs = visibleSpecs.filter { $0.section == section }
             if !specs.isEmpty {
                 let on = specs.filter { selection.isOn($0) }.count
-                GoldenCollapsibleSection(
+                let collapsed = collapsedBinding(for: section, specs: specs)
+                // Header and rows are **siblings**, not a header containing its
+                // rows: that is what lets `GoldenPage`'s lazy stack build a row
+                // only when it scrolls into view.  See `GoldenCollapsibleHeader`.
+                GoldenCollapsibleHeader(
                     title: "\(section.rawValue) (\(on)/\(specs.count))",
-                    isCollapsed: collapsedBinding(for: section, specs: specs),
-                    content: AnyView(
-                        VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-                            ForEach(specs, id: \.id) { spec in
-                                TweakRow(spec: spec, selection: $selection)
-                                    .id("\(spec.id)#\(formEpoch)")
-                            }
-                        }
-                    )
+                    isCollapsed: collapsed
                 )
+                if !collapsed.wrappedValue {
+                    ForEach(specs, id: \.id) { spec in
+                        TweakRow(spec: spec, selection: $selection)
+                            .id("\(spec.id)#\(formEpoch)")
+                    }
+                }
             }
         }
     }

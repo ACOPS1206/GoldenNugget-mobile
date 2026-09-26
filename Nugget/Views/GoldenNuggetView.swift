@@ -3,21 +3,6 @@ import UniformTypeIdentifiers
 import Minimuxer
 import Foundation
 
-struct RootView: View {
-    var body: some View {
-        NavigationStack {
-            GoldenNuggetView()
-        }
-        // The reference ships a single palette (`theme.colors.DARK`) and builds
-        // its whole iOS GUI on it, so this app is dark-only by design.  Saying so
-        // once here keeps every platform control it cannot restyle — text fields,
-        // alerts, the share sheet, the document picker — on the same surface as
-        // the cards instead of rendering light-on-dark.
-        .preferredColorScheme(.dark)
-        .tint(GoldenTheme.accent)
-    }
-}
-
 /// The home page, laid out the way the reference's iOS home page lays it out
 /// (`src/gui/ios/home.py`): logo header carrying the device line and a refresh
 /// button → the connection status line → the feature-card grid → Apply Tweaks →
@@ -42,24 +27,33 @@ struct GoldenNuggetView: View {
     @AppStorage(Tunnel.Key.port) var tunnelPort = String(Tunnel.defaultServicePort)
     @AppStorage(Tunnel.Key.prefixLength) var tunnelPrefixLength = String(Tunnel.defaultPrefixLength)
     @State private var pairingFileURL: String?
-    /// Launch auto-start bookkeeping for `reimportPairingFile()`.
-    ///
-    /// `didAutoStart` keeps a second `.task` pass (the view is re-created when
-    /// the page comes back) from starting the core twice — `startMinimuxer`'s
-    /// lock only rejects *concurrent* attempts, so a sequential second start
-    /// would probe the tunnel again for no reason.  `autoImportDisabled` is the
-    /// user's "Reset pairing file" saying no: without it the next `.task` pass
-    /// would fall straight back to the `ALTPairingFile` the installer embedded
-    /// and re-pair a device the user just unpaired.
-    @State private var didAutoStart = false
-    @State private var autoImportDisabled = false
+    /// Whether the sidebar is a column of its own or a stack behind the detail —
+    /// see `navBarVisibility`.
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    /// Launch auto-start bookkeeping for `reimportPairingFile()`, **owned by
+    /// `RootView`**: `startMinimuxer`'s lock only rejects *concurrent* attempts,
+    /// so these two have to outlive the view that reads them even though what
+    /// they guard is process-wide.  `didAutoStart` keeps a second `.task` pass
+    /// from starting the core twice; `autoImportDisabled` is the user's "Reset
+    /// pairing file" saying no — without it the next `.task` pass would fall
+    /// straight back to the `ALTPairingFile` the installer embedded and re-pair
+    /// a device the user just unpaired.
+    @Binding var didAutoStart: Bool
+    @Binding var autoImportDisabled: Bool
     @State private var running = false
     @State private var showPairingImporter = false
     @State private var showRebootNotice = false
-    @State private var logs: [String] = []
+    // The run log is not page state any more: `RunLog` owns it and `RunLogCard`
+    // is the only observer, so a logged line no longer re-evaluates this
+    // page's `body` (see `RunLog`'s note — that is where the per-line disk
+    // read came from).
+
     @State private var errorText: String?
     @State private var runStarted: Date?
-    @State private var tweakSelection = TweakSelection()
+    /// The tweak selection, owned by `RootView` because a `NavigationSplitView`
+    /// replaces its detail view on every sidebar selection: as page state it
+    /// would have been discarded the moment another destination was picked.
+    @Binding var tweakSelection: TweakSelection
     /// The pending debounced autosave, cancelled and replaced on every change.
     @State private var autosaveTask: Task<Void, Never>?
     @State private var identity = DeviceIdentity.unknown
@@ -73,6 +67,43 @@ struct GoldenNuggetView: View {
     @State private var statusToken = 0
     @State private var progress: Double?
     @State private var tunnelExpanded = false
+    /// The tunnel status line's two halves, **cached** rather than computed in
+    /// the body.
+    ///
+    /// `Tunnel.describe()` and — much worse — `Tunnel.probePeer()` used to be
+    /// interpolated straight into the disclosure's `Text`.  `probePeer` is a
+    /// non-blocking connect followed by a `poll()` that waits **up to two
+    /// seconds** (`timeout: 2.0`) for the peer's lockdown port, and it ran on the
+    /// main thread on **every** body pass: scrolling the page, any state change,
+    /// or tapping a `NavigationLink` (the page re-renders while the destination is
+    /// pushed).  A two-second stall inside body evaluation is the reported freeze.
+    ///
+    /// `refreshTunnelStatus()` fills both, off the main actor, and only while the
+    /// disclosure is open.
+    @State private var tunnelSummary = "not probed"
+    @State private var peerReachable: Bool?
+
+    /// Explicit, so `AppShell.swift` gets a signature it can depend on.
+    ///
+    /// The synthesized memberwise initializer covers these three (they are the
+    /// only stored properties without a default), but its parameters come out in
+    /// **declaration order** — `didAutoStart:autoImportDisabled:tweakSelection:`
+    /// — so the call site would silently depend on where each one happens to sit
+    /// among a dozen other properties, and moving one breaks a different file.
+    /// Everything else keeps its default.
+    ///
+    /// Note this initializer is also why one was needed at all: a custom `init()`
+    /// suppresses the memberwise one, and the only `init()` this struct used to
+    /// have (a `UIDocumentPickerViewController` swizzle) could not initialize
+    /// these — which surfaced as "return from initializer without initializing
+    /// all stored properties".
+    init(tweakSelection: Binding<TweakSelection>,
+         didAutoStart: Binding<Bool>,
+         autoImportDisabled: Binding<Bool>) {
+        _tweakSelection = tweakSelection
+        _didAutoStart = didAutoStart
+        _autoImportDisabled = autoImportDisabled
+    }
 
     var body: some View {
         GoldenPage(spacing: GoldenTheme.sectionSpacing) {
@@ -84,7 +115,7 @@ struct GoldenNuggetView: View {
             if !status.isEmpty { processStatus }
             connectionSection
             diagnosticsSection
-            if !logs.isEmpty { logSection }
+            RunLogCard()
         }
         .navigationTitle("GoldenNugget")
         .navigationBarTitleDisplayMode(.inline)
@@ -92,7 +123,11 @@ struct GoldenNuggetView: View {
         // a second, empty one.  Hiding it *here* — not on the pushed page — keeps
         // the Tweaks page's bar, and with it the interactive swipe-back gesture,
         // exactly as the reference's `IOSNavBar` has them.
-        .toolbar(.hidden, for: .navigationBar)
+        //
+        // Except when the split view is collapsed (`.compact`: Slide Over, a
+        // third of the screen): there the same bar is the **only** way back to
+        // the sidebar, and hiding it would strand the user on this page.
+        .toolbar(navBarVisibility, for: .navigationBar)
         // Owned here, next to the selection itself, rather than inside one of the
         // pages that can change it. It was on TweaksView, which made persistence
         // depend on navigation: a daemon switched on the Daemons page changed the
@@ -100,6 +135,17 @@ struct GoldenNuggetView: View {
         // hierarchy, so nothing was written. It looked intermittent, because
         // touching any tweak afterwards swept the daemon along with it.
         .onChange(of: tweakSelection) { _, _ in scheduleAutosave() }
+        // Probe only while the tunnel details are open, and never in a body: the
+        // probe can wait two seconds for the peer, and two seconds on the main
+        // thread is a frozen scroll.  `.task(id:)` cancels the loop when the
+        // disclosure closes.
+        .task(id: tunnelExpanded) {
+            guard tunnelExpanded else { return }
+            while !Task.isCancelled {
+                await refreshTunnelStatus()
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
         .task {
             spawnLogPrinter()
             // The Rust progress callbacks fire on their own queues; the handler
@@ -141,6 +187,14 @@ struct GoldenNuggetView: View {
 
     // MARK: - Sections
 
+    /// `.hidden` in a regular width, where the sidebar is already on screen;
+    /// `.automatic` in a compact one, where the bar carries the control that
+    /// reveals it.
+    private var navBarVisibility: Visibility {
+        horizontalSizeClass == .compact ? .automatic : .hidden
+    }
+
+
     /// `home.py`'s header row: logo, title, and the device line under it.
     ///
     /// The reference puts a device picker next to the title and a refresh button
@@ -153,7 +207,10 @@ struct GoldenNuggetView: View {
         GoldenHeader(title: "GoldenNugget", subtitle: identity.describe) {
             GoldenIconButton(systemImage: "arrow.clockwise",
                              enabled: paired && !readingDevice) {
-                Task { await readDevice() }
+                Task {
+                    await readDevice()
+                    await refreshTunnelStatus()
+                }
             }
         }
     }
@@ -183,13 +240,17 @@ struct GoldenNuggetView: View {
         return "\(n) file(s), \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))"
     }
 
+    /// The cards and the sidebar drive the **same** stack, so they cannot
+    /// disagree about what is showing: these are `NavigationLink(value:)` with
+    /// the destination declared once, in `RootView`'s `navigationDestination`,
+    /// rather than links carrying their own view.  A view-carrying link pushed a
+    /// page the path knew nothing about, and in a split view that left the
+    /// sidebar still highlighting "GoldenNugget" over a Tweaks page.
     private var tweakCards: some View {
         GoldenCardGrid(itemCount: 5) { index in
             switch index {
             case 0:
-                NavigationLink {
-                    TweaksView(selection: $tweakSelection)
-                } label: {
+                NavigationLink(value: AppDestination.tweaks) {
                     GoldenFeatureCardLabel(
                         title: "Tweaks",
                         subtitle: "Customize system settings",
@@ -198,9 +259,7 @@ struct GoldenNuggetView: View {
                 }
                 .buttonStyle(.plain)
             case 1:
-                NavigationLink {
-                    DaemonsView(selection: $tweakSelection)
-                } label: {
+                NavigationLink(value: AppDestination.daemons) {
                     GoldenFeatureCardLabel(
                         title: "Daemons",
                         subtitle: "Launchd services",
@@ -208,9 +267,7 @@ struct GoldenNuggetView: View {
                 }
                 .buttonStyle(.plain)
             case 2:
-                NavigationLink {
-                    SupervisionView()
-                } label: {
+                NavigationLink(value: AppDestination.supervision) {
                     GoldenFeatureCardLabel(
                         title: "Supervision",
                         subtitle: "Device supervision",
@@ -218,9 +275,7 @@ struct GoldenNuggetView: View {
                 }
                 .buttonStyle(.plain)
             case 3:
-                NavigationLink {
-                    MediaView()
-                } label: {
+                NavigationLink(value: AppDestination.media) {
                     GoldenFeatureCardLabel(
                         title: "Media",
                         subtitle: "Photos and videos",
@@ -228,9 +283,7 @@ struct GoldenNuggetView: View {
                 }
                 .buttonStyle(.plain)
             default:
-                NavigationLink {
-                    FilesView()
-                } label: {
+                NavigationLink(value: AppDestination.files) {
                     GoldenFeatureCardLabel(
                         title: "Files",
                         subtitle: "Browse the device",
@@ -377,7 +430,10 @@ struct GoldenNuggetView: View {
                     TextField(String(Tunnel.defaultServicePort), text: $tunnelPort)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
+                        // `.numberPad` has no Return key, so on a phone this
+                        // keyboard could not be dismissed at all.
                         .keyboardType(.numberPad)
+                        .goldenKeyboardDone()
                 }
                 if !tunnelPortOK {
                     GoldenSafetyNote(text: "Not a port in 1…65535 — \(Tunnel.defaultServicePort) is being probed instead.")
@@ -386,13 +442,19 @@ struct GoldenNuggetView: View {
                     TextField(String(Tunnel.defaultPrefixLength), text: $tunnelPrefixLength)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
+                        // `.numberPad` has no Return key, so on a phone this
+                        // keyboard could not be dismissed at all.
                         .keyboardType(.numberPad)
+                        .goldenKeyboardDone()
                 }
                 if !tunnelPrefixOK {
                     GoldenSafetyNote(text: "Not 0…32 — LocalDevVPN's tunnel-IP field takes a CIDR, and this is the part after the slash.")
                 }
                 GoldenMutedNote(text: "Copy into LocalDevVPN: tunnel IP \(Tunnel.ifaceIP)/\(Tunnel.ifacePrefixLength), peer \(Tunnel.peerIP), port \(Tunnel.servicePort).")
-                GoldenStatusText(text: "tunnel: \(Tunnel.describe()) · peer \(Tunnel.peerIP):\(Tunnel.servicePort) reachable: \(Tunnel.probePeer())")
+                // Both values come from state — see `tunnelSummary`.  The probe
+                // is a 2 s `poll()` and must never run in a body.
+                GoldenStatusText(text: "tunnel: \(tunnelSummary) · peer \(Tunnel.peerIP):\(Tunnel.servicePort) "
+                    + "reachable: \(peerReachable.map(String.init) ?? "…")")
                 GoldenActionRow(title: "Reset tunnel addresses", systemImage: "arrow.counterclockwise") {
                     Tunnel.resetToDefaults()
                     tunnelIfaceIP = Tunnel.defaultIfaceIP
@@ -400,6 +462,7 @@ struct GoldenNuggetView: View {
                     tunnelPort = String(Tunnel.defaultServicePort)
                     tunnelPrefixLength = String(Tunnel.defaultPrefixLength)
                     GoldenNuggetEngine.shared.log("tunnel addresses reset to defaults: \(Tunnel.requirements)")
+                    Task { await refreshTunnelStatus() }
                 }
             }
             .padding(.top, 8)
@@ -433,7 +496,7 @@ struct GoldenNuggetView: View {
                                     tone: running ? .disabled : .primary) {
                         Task {
                             let block = await GoldenNuggetEngine.shared.diagnostics()
-                            await MainActor.run { logs.append(block) }
+                            RunLog.shared.append(block)
                         }
                     }
                     .disabled(running)
@@ -462,10 +525,6 @@ struct GoldenNuggetView: View {
                 }
             )
         )
-    }
-
-    private var logSection: some View {
-        GoldenSection(title: "Log", content: AnyView(GoldenLogView(lines: logs)))
     }
 
     /// One share action as a row.  Kept in one place so the three cannot drift
@@ -498,7 +557,7 @@ struct GoldenNuggetView: View {
         // installer's embedded record would undo this on the next `.task` pass.
         autoImportDisabled = true
         didAutoStart = false
-        logs = []
+        RunLog.shared.clear()
     }
 
     // Extensions accepted by the pairing-file picker and onOpenURL handler.
@@ -634,10 +693,49 @@ struct GoldenNuggetView: View {
         }
     }
 
+    /// Fill the tunnel status line, off the main actor.
+    ///
+    /// `Task.detached` on purpose: `probePeer` waits up to two seconds for the
+    /// peer's lockdown port, and both halves read process-wide state (`Tunnel`'s
+    /// addresses come from `@AppStorage`), so nothing here needs the main actor
+    /// until the two assignments.
+    private func refreshTunnelStatus() async {
+        let (summary, reachable) = await Task.detached(priority: .utility) {
+            (Tunnel.describe(), Tunnel.probePeer())
+        }.value
+        tunnelSummary = summary
+        peerReachable = reachable
+    }
+
     private func readDevice() async {
         guard paired else { return }
         readingDevice = true
-        let read = await DeviceIdentity.read()
+        // Wait for the device before reading it.  `.task` starts minimuxer and
+        // calls this immediately after, so the first read races the gateway
+        // coming up and comes back `.unknown` — which used to be logged as "the
+        // device has not answered lockdown yet" and then kept for the rest of
+        // the session.  An empty identity is not harmless here: it *disables*
+        // the registry's version bounds (`TweakSpec.isCompatible` skips them on
+        // an empty version, as the reference does) and it parses to major 0,
+        // which is how a 27.0 device ended up on the engine's iOS 26 branch and
+        // died with `205 — No keybag in manifest` (2026-09-26).  Same bounded
+        // poll the rest of the app waits with: fast at first, then backing off.
+        var read = await DeviceIdentity.read()
+        if read == .unknown {
+            let deadline = Date().addingTimeInterval(15)
+            var attempt = 0
+            var delay: UInt64 = 300_000_000              // 0.3 s -> doubles -> 2 s cap
+            while read == .unknown, Date() < deadline {
+                attempt += 1
+                try? await Task.sleep(nanoseconds: delay)
+                delay = min(delay * 2, 2_000_000_000)
+                read = await DeviceIdentity.read()
+            }
+            if read != .unknown {
+                GoldenNuggetEngine.shared.log("device identity: lockdownd answered on attempt "
+                    + "\(attempt + 1), after the first read raced minimuxer's start")
+            }
+        }
         identity = read
         readingDevice = false
         if read == .unknown {
@@ -655,7 +753,7 @@ struct GoldenNuggetView: View {
     private func applyTweaks() {
         running = true
         runStarted = Date()
-        logs = []
+        RunLog.shared.clear()
         showStatus("Applying tweaks…", .accent, autoHide: false)
         let snapshot = tweakSelection
         let device = identity
@@ -848,21 +946,14 @@ struct GoldenNuggetView: View {
         return Array(dict.keys)
     }
 
+    /// Route engine log lines into `RunLog`.
+    ///
+    /// This used to append to `@State logs` on this view, one full-page
+    /// invalidation per line; the store coalesces a burst into one main-thread
+    /// flush and only `RunLogCard` observes it.
     func spawnLogPrinter() {
         GoldenNuggetEngine.shared.onLog = { line in
-            logs.append(line)
-            // A long run appends a lot (RSD chatter, retries, diagnostics).
-            // Keeping the array bounded keeps the list responsive while
-            // scrolling through a run.
-            if logs.count > 600 {
-                logs.removeFirst(logs.count - 600)
-            }
-        }
-    }
-
-    init() {
-        if let fixMethod = class_getInstanceMethod(UIDocumentPickerViewController.self, Selector(("fix_initForOpeningContentTypes:asCopy:"))), let origMethod = class_getInstanceMethod(UIDocumentPickerViewController.self, #selector(UIDocumentPickerViewController.init(forOpeningContentTypes:asCopy:))) {
-            method_exchangeImplementations(origMethod, fixMethod)
+            RunLog.shared.append(line)
         }
     }
 }

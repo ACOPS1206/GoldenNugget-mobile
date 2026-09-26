@@ -16,6 +16,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PRODUCTS="${1:-}"
+# `--first <pattern>` hoists every matching source to the front of the list.
+# Load-bearing, not cosmetic: `swiftc -typecheck` reports diagnostics for the
+# files it reaches and then stops, so a source that always errors (a stale
+# vendored module turns `Nugget/Core/AfcFileExplorer.swift` into 28 phantom
+# errors) means **nothing after it in the list is checked at all** — a
+# brand-new file with a real error reads as a clean pass.  `scripts/typecheck.sh
+# "" --first AppShell.swift` is how you check a file sitting behind that.
+FIRST=""
+if [[ "${2:-}" == "--first" ]]; then FIRST="${3:-}"; fi
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 
 # Default to the FRESHEST Products dir.  Debug and Release are built at
@@ -60,6 +69,22 @@ if (( n < 10 )); then
   exit 2
 fi
 
+# Hoist `--first` matches above everything else.
+if [[ -n "$FIRST" ]]; then
+  python3 - "$FIRST" <<'PYEOF'
+import sys, pathlib
+pattern = sys.argv[1]
+path = pathlib.Path("/tmp/typecheck-sources.txt")
+lines = path.read_text().splitlines()
+head = [line for line in lines if pattern in line]
+if not head:
+    sys.exit("error: --first matched no source: %s" % pattern)
+rest = [line for line in lines if pattern not in line]
+path.write_text("\n".join(head + rest) + "\n")
+print("checking first: %s" % ", ".join(head))
+PYEOF
+fi
+
 echo "type-checking $n sources against $SDK"
 
 # Staleness guard.  The gate reads the .swiftmodule files, not the vendored
@@ -72,10 +97,16 @@ if [[ -n "$stale" ]]; then
   echo "         Xcode; errors in Nugget/ are real either way." >&2
 fi
 
+# `-target` must match the deployment target this project actually builds with
+# (Package.swift, project.yml and Info.plist all say 26.0).  An older one turns
+# every newer API into a *false* "only available in iOS 17.0 or newer" error --
+# which is what ios16.0 did to `onChange(of:initial:_:)` in
+# GoldenNuggetView.swift.  (Comments go above the command, never between its
+# backslash-continued lines: a `#` there eats the joined line's remainder.)
 xargs < /tmp/typecheck-sources.txt xcrun swiftc -typecheck \
   -disable-sandbox \
   -sdk "$SDK" \
-  -target arm64-apple-ios16.0 \
+  -target arm64-apple-ios26.0 \
   -swift-version 5 \
   -I "$PRODUCTS" \
   -I Vendor/IDevice.xcframework/ios-arm64/Headers \
@@ -96,5 +127,10 @@ errors=$(grep -c 'error:' /tmp/typecheck.log || true)
 warnings=$(grep -c 'warning:' /tmp/typecheck.log || true)
 own=$(grep -cE '^Nugget/(Core|Views|AppPackage|Tunnel|NuggetApp)[^:]*:.*(warning|error):' /tmp/typecheck.log || true)
 echo "=== $errors error(s), $warnings warning(s) ($own in Nugget/ app code) ==="
+if (( errors > 0 )); then
+  echo "NOTE: swiftc -typecheck stops reporting after the first failing file, so" >&2
+  echo "      sources behind it are NOT checked in this run.  To guarantee a" >&2
+  echo "      file is checked, hoist it:  scripts/typecheck.sh \"$PRODUCTS\" --first <substring>" >&2
+fi
 exit "$errors"
 

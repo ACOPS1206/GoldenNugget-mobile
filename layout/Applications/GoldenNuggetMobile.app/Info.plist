@@ -27,11 +27,6 @@
 		</dict>
 	</dict>
 	<key>CFBundleIdentifier</key>
-	<!-- Literal, not $(PRODUCT_BUNDLE_IDENTIFIER): xtool copies this plist into
-	     the bundle verbatim and does not expand build settings, so a variable here
-	     ships to the device as the literal string "$(PRODUCT_BUNDLE_IDENTIFIER)".
-	     The value is also PRODUCT_BUNDLE_IDENTIFIER in project.yml and in
-	     project.pbxproj — keep the three in step. -->
 	<string>com.awesomenull.goldennugget</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>

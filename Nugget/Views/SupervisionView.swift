@@ -25,6 +25,7 @@ struct SupervisionView: View {
     var body: some View {
         GoldenPage(spacing: GoldenTheme.rowSpacing) {
             supervisionCard
+            skipSetupCard
         }
         .navigationTitle("Supervision")
         .navigationBarTitleDisplayMode(.inline)
@@ -89,6 +90,54 @@ struct SupervisionView: View {
             lines.append("Connected device: iOS \(identity.version).")
         }
         return lines.joined(separator: "\n\n")
+    }
+
+    private var skipSetupCard: some View {
+        GoldenSection(
+            title: "Skip Setup",
+            content: AnyView(
+                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
+                    HStack(spacing: 12) {
+                        Text("Write the skip-setup files on every apply")
+                            .font(GoldenFont.rowTitle)
+                            .foregroundColor(GoldenTheme.textPrimary)
+                        Spacer(minLength: 12)
+                        GoldenSwitch(isOn: skipSetupBinding)
+                    }
+                    .goldenRowSurface()
+                    GoldenMutedNote(text: skipSetupNote)
+                }
+            )
+        )
+    }
+
+    private var skipSetupBinding: Binding<Bool> {
+        Binding(get: { settings.skipSetupEnabled }, set: { settings.setSkipSetup($0) })
+    }
+
+    /// What the switch does, in the order the two files are written.  Upstream's
+    /// own name for this is `pref_manager.skip_setup`; the enforcement point is
+    /// `SkipSetup.build`, which the engine prepends to the tweak payloads.
+    private var skipSetupNote: String {
+        var lines = [
+            "Off: an apply carries only the tweaks (upstream defaults this to on; this port "
+                + "leaves it off until a run has confirmed the files land).",
+            "On: an apply adds two files ahead of the tweaks, in this order —",
+            "1. SysSharedContainerDomain-systemgroup.com.apple.configurationprofiles/"
+                + "Library/ConfigurationProfiles/CloudConfigurationDetails.plist, "
+                + "\(SkipSetup.panes.count) setup panes marked skipped;",
+            "2. ManagedPreferencesDomain/mobile/com.apple.purplebuddy.plist, setup marked done.",
+            "The device's existing cloud configuration is not merged in (reading it needs a "
+                + "lockdown service this port has no path for), and no keybag certificate is "
+                + "generated, so this writes the unsupervised shape.",
+        ]
+        if settings.isSupervised {
+            lines.append("Supervision is on: the run will assert IsSupervised = true and warn that "
+                + "SupervisorHostCertificates is missing. Upstream's own note is that a device left "
+                + "believing it is supervised cannot have its profiles removed — turn supervision "
+                + "off here unless that is what you want.")
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func commitOrganization() {
