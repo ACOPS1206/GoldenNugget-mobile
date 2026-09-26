@@ -91,9 +91,18 @@ jobs:
           # it fails with "None of the input asset catalogs contained a
           # matching app icon set". So the primary is named by path.
           #
-          # `ScrappedIcon.icon` is passed explicitly for the same reason: it is
-          # not the primary, and a car without a rendition for it compiles clean
-          # and then renders a placeholder.
+          # `ScrappedIcon.appiconset` is passed explicitly for the same reason:
+          # it is not the primary, and a car without a rendition for it compiles
+          # clean and then renders a placeholder.
+          #
+          # It is a plain `.appiconset` in Telegram's exact shape -- the full
+          # 18-entry iphone/ipad/ios-marketing matrix, named by
+          # `scripts/generate-scrapped-appiconset.py` -- because that is the one
+          # configuration that has never actually been tried here. Eight earlier
+          # builds moved the plist keys and the asset kind along separate axes
+          # but never combined this appiconset with `CFBundleIconFiles` and
+          # `UIPrerenderedIcon` together, which is what
+          # `Telegram/Telegram-iOS/Info.plist` ships.
           xcrun --sdk iphoneos actool \
             --compile "$OUT" \
             --platform iphoneos \
@@ -108,7 +117,7 @@ jobs:
             --notices --warnings \
             "$CATALOG" \
             "$CATALOG/AppIcon.icon" \
-            "$CATALOG/ScrappedIcon.icon"
+            "$CATALOG/ScrappedIcon.appiconset"
 
           test -s "$OUT/Assets.car"
           ls -l "$OUT"
