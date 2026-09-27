@@ -21,7 +21,6 @@ enum AppDestination: String, CaseIterable, Identifiable, Hashable {
     case home
     case tweaks
     case daemons
-    case supervision
     case media
     case files
     case settings
@@ -33,7 +32,6 @@ enum AppDestination: String, CaseIterable, Identifiable, Hashable {
         case .home: "GoldenNugget"
         case .tweaks: "Tweaks"
         case .daemons: "Daemons"
-        case .supervision: "Supervision"
         case .media: "Media"
         case .files: "Files"
         case .settings: "Settings"
@@ -45,7 +43,6 @@ enum AppDestination: String, CaseIterable, Identifiable, Hashable {
         case .home: "house"
         case .tweaks: "slider.horizontal.3"
         case .daemons: "server.rack"
-        case .supervision: "lock.shield"
         case .media: "photo.on.rectangle"
         case .files: "folder"
         case .settings: "gearshape"
@@ -216,8 +213,6 @@ struct RootView: View {
                     TweaksView(selection: $tweakSelection)
                 case .daemons:
                     DaemonsView(selection: $tweakSelection)
-                case .supervision:
-                    SupervisionView()
                 case .media:
                     MediaView()
                 case .files:

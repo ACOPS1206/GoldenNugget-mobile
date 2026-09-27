@@ -8,6 +8,9 @@ import Minimuxer
 /// sentence if the reader knows which build produced it and whether it is the file
 /// that has anything in it.
 ///
+/// The Apply half is the one switch that is not a development switch: Skip Setup,
+/// which rides every run (see `SkipSetupSettings` for what it can and cannot do).
+///
 /// The Development half sits behind a master switch because every row on it changes
 /// a real device: the branch a run takes, whether the protocol is recorded, whether
 /// minutes of AFC work happen at all. None of that is discoverable by looking, and
@@ -20,6 +23,11 @@ struct SettingsView: View {
     @AppStorage(DevSettings.Key.forcePartialRestore) private var forcePartialRestore = false
     @AppStorage(DevSettings.Key.verboseLog) private var verboseLog = true
     @AppStorage(DevSettings.Key.skipAfcMedia) private var skipAfcMedia = false
+
+    /// Skip Setup's switch. Observed rather than mirrored with a second
+    /// `@AppStorage` on the same key: the store is what the engine reads, and one
+    /// object owning the value is the whole point of it being an `ObservableObject`.
+    @ObservedObject private var skipSetup = SkipSetupSettings.shared
 
     /// Read through `engine` rather than recomputed in the body, because a log is
     /// written by another thread while this page is open — the sizes and the share
@@ -47,6 +55,7 @@ struct SettingsView: View {
             aboutCard
             creditsCard
             logsCard
+            applyCard
             developmentCard
         }
         .navigationTitle("Settings")
@@ -177,6 +186,52 @@ struct SettingsView: View {
                 }
             )
         )
+    }
+
+    // MARK: - Apply
+
+    /// Skip Setup, on its own page rather than behind the Development master: it is
+    /// not a switch for working around a bug, it is part of what a run writes, and it
+    /// was the one thing on the deleted Supervision page that did anything. It used to
+    /// live there because the reference keeps `skip_setup` / `supervised` /
+    /// `organization_name` in one settings object on one screen; only the first of the
+    /// three survived the port, and it does not need company.
+    private var applyCard: some View {
+        GoldenSection(
+            title: "Apply",
+            content: AnyView(
+                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
+                    switchRow("Skip Setup",
+                              note: skipSetupNote,
+                              isOn: Binding(
+                                  get: { skipSetup.skipSetupEnabled },
+                                  set: { skipSetup.setSkipSetup($0) }))
+                }
+            )
+        )
+    }
+
+    /// What the switch does, in the order the two files are written. Upstream's own
+    /// name for it is `pref_manager.skip_setup`; the enforcement point is
+    /// `SkipSetup.build`, which the engine prepends to the tweak payloads.
+    ///
+    /// The last sentence is the honest limit rather than a caveat bolted on: the
+    /// upstream shape of this feature also takes `IsSupervised`, an organization name
+    /// and a keybag certificate, and this port has never written the certificate. The
+    /// switch therefore writes the unsupervised shape and only that.
+    private var skipSetupNote: String {
+        [
+            "Off: an apply carries only the tweaks (upstream defaults this to on; this "
+                + "port leaves it off until a run has confirmed the files land).",
+            "On: an apply adds two files ahead of the tweaks, in this order —",
+            "1. SysSharedContainerDomain-systemgroup.com.apple.configurationprofiles/"
+                + "Library/ConfigurationProfiles/CloudConfigurationDetails.plist, "
+                + "\(SkipSetup.panes.count) setup panes marked skipped;",
+            "2. ManagedPreferencesDomain/mobile/com.apple.purplebuddy.plist, setup marked done.",
+            "The device's existing cloud configuration is not merged in (reading it needs "
+                + "a lockdown service this port has no path for), and no keybag certificate "
+                + "is generated.",
+        ].joined(separator: "\n")
     }
 
     // MARK: - Development

@@ -75,13 +75,11 @@ enum GoldenTheme {
 
     // Spacing, straight from the two page layouts: the home page uses
     // `setContentsMargins(16,16,16,16)` + `setSpacing(16)`, the tweaks page
-    // `setContentsMargins(16,16,16,32)` + `setSpacing(8)`; the home card grid
-    // reflows at `MIN_CARD_WIDTH = 200` with `SPACING = 12`.
+    // `setContentsMargins(16,16,16,32)` + `setSpacing(8)`.  The reference's card
+    // grid metrics (`MIN_CARD_WIDTH = 200`, `SPACING = 12`) went with the grid.
     static let pageMargin: CGFloat = 16
     static let sectionSpacing: CGFloat = 16
     static let rowSpacing: CGFloat = 8
-    static let gridSpacing: CGFloat = 12
-    static let gridMinCardWidth: CGFloat = 200
 
     /// The iOS GUI renders inside a phone frame on the desktop, i.e. it never
     /// gets wider than a phone.  This app runs on an iPad (TARGETED_DEVICE_FAMILY

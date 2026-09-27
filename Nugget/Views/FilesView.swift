@@ -1,5 +1,7 @@
 import SwiftUI
+import Foundation
 import DeviceGatewayAPI
+import QuickLook
 
 /// A file browser for whatever the device's AFC service publishes.
 ///
@@ -9,9 +11,20 @@ import DeviceGatewayAPI
 /// and a browser that hardcoded `/var/mobile/Media` would look broken on one
 /// that publishes containers instead.
 ///
-/// The two things worth reading before using it: this deletes, with no trash and
-/// no undo, and it writes through a single-call AFC write capped at 64 MiB. Both
-/// limits are stated at the point of action rather than discovered.
+/// It is built as a `List` because that is what a file browser is on this
+/// platform, and the resemblance is not decoration — it is what carries the
+/// behaviours. The previous shape (a stack of `GoldenCard`s, a pencil and a bin
+/// on every row, a card of "actions" above the listing) had to hand-write the
+/// things a `List` already does: swipe-to-delete, a context menu, pull to
+/// refresh, a disclosure chevron, a content-unavailable state. What a user
+/// reaches for in a browser is learned from Files, not from this app's other
+/// pages, so this page follows Files.
+///
+/// Three things worth reading before using it: this deletes, with no trash and
+/// no undo; a write is a single-call AFC write capped at 64 MiB; and a preview
+/// pulls the whole file to this device first, because AFC has no read the
+/// previewer can seek in. All three are stated at the point of action rather
+/// than discovered.
 struct FilesView: View {
     @State private var path: [String] = []
     @State private var entries: [AfcFsEntry] = []
@@ -22,22 +35,118 @@ struct FilesView: View {
     @State private var status: String?
     @State private var pullProgress: Double?
 
+    /// Persisted rather than `@State`, because a sort the user has to set again
+    /// after every visit is not a preference.
+    @AppStorage(Self.sortKey) private var sortRaw = SortOrder.name.rawValue
+
     @State private var showImporter = false
     @State private var showNewFolder = false
     @State private var newFolderName = ""
     @State private var renaming: AfcFsEntry?
     @State private var renameText = ""
     @State private var deleting: AfcFsEntry?
+    @State private var preview: Preview?
 
-    var body: some View {
-        GoldenPage(spacing: GoldenTheme.rowSpacing) {
-            breadcrumbCard
-            actionsCard
-            listingCard
-            if let volume {
-                volumeCard(volume)
+    /// Quick Look over a file that has been pulled to the temporary directory.
+    /// `URL` is not `Identifiable` and the sheet needs an identity to present
+    /// from, so the URL is carried rather than passed.
+    private struct Preview: Identifiable {
+        let id = UUID()
+        let url: URL
+    }
+
+    /// What the listing is ordered by. Folders stay above files under every
+    /// option: a browser that interleaves them buries the next directory under
+    /// whatever files happen to sort first, which is the one thing a user
+    /// navigating a tree cannot afford.
+    private enum SortOrder: String, CaseIterable, Identifiable {
+        case name, size, date
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .name: "Name"
+            case .size: "Size"
+            case .date: "Date"
             }
         }
+
+        var systemImage: String {
+            switch self {
+            case .name: "textformat.abc"
+            case .size: "arrow.up.arrow.down"
+            case .date: "clock"
+            }
+        }
+    }
+
+    private static let sortKey = "FilesSortOrder"
+
+    private var sort: SortOrder { SortOrder(rawValue: sortRaw) ?? .name }
+
+    var body: some View {
+        List {
+            if entries.isEmpty, !loading, error == nil {
+                // The system's own empty state, so an empty directory looks like
+                // an empty directory in every other app on the phone.
+                ContentUnavailableView {
+                    Label("Folder is Empty", systemImage: "folder")
+                } description: {
+                    Text(path.isEmpty
+                         ? "The device's AFC service published nothing here."
+                         : "\(path[path.count - 1]) has nothing in it.")
+                } actions: {
+                    Button("New Folder") { newFolderName = ""; showNewFolder = true }
+                        .buttonStyle(.borderedProminent)
+                }
+                .listRowSeparator(.hidden)
+            }
+
+            ForEach(entries) { entry in
+                row(entry)
+            }
+
+            if let pullProgress {
+                VStack(alignment: .leading, spacing: 4) {
+                    ProgressView(value: pullProgress)
+                    Text("Pulling \(Int(pullProgress * 100))%")
+                        .font(GoldenFont.caption)
+                        .foregroundColor(GoldenTheme.textDisabled)
+                }
+                .listRowBackground(Color.clear)
+            }
+
+            if let volume {
+                volumeRow(volume)
+            }
+
+            // The write cap, where a reader of the listing will find it rather
+            // than where a failed upload finds them. It is the one limit on this
+            // page that is not the device's, so it is stated as this app's.
+            Text("Uploads are capped at \(AfcFileExplorer.format(AfcFileExplorer.pushSizeLimit)) "
+                 + "— an AFC write is a single call with no streaming form, so a larger file "
+                 + "is refused rather than truncated.")
+                .font(GoldenFont.caption)
+                .foregroundColor(GoldenTheme.textDisabled)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(GoldenTheme.backgroundPrimary)
+        // A path bar between the navigation bar and the list, the way Finder
+        // and Files both put it. A `safeAreaInset` rather than a list row: as a
+        // row it scrolls away, and a browser that cannot say where it is has
+        // lost the one thing it exists to answer.
+        .safeAreaInset(edge: .top, spacing: 0) { pathBar }
+        // What a run of the page says back. It was a line under the breadcrumb
+        // card; with the cards gone there is nothing to hang it under, and an
+        // alert per rename would be the platform's way of saying something that
+        // is not a question. A banner that clears itself is what a phone does.
+        .overlay(alignment: .bottom) { bannerView }
+        .animation(.easeInOut(duration: 0.18), value: banner)
+        .refreshable { await load() }
         .navigationTitle("Files")
         // Compact widths only -- on a tablet the split view draws its own sidebar
         // toggle, and a second button beside it is the duplicate-controls mess.
@@ -47,7 +156,45 @@ struct FilesView: View {
         .toolbarBackground(GoldenTheme.backgroundSecondary, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                // The three things that act on the listing, in the platform's own
+                // idiom: a sort menu, and a plus that opens a new-folder action.
+                // They were a card of three rows above the listing, which is a
+                // toolbar written out longhand.
+                Menu {
+                    Picker("Sort by", selection: $sortRaw) {
+                        ForEach(SortOrder.allCases) { order in
+                            Label(order.title, systemImage: order.systemImage).tag(order.rawValue)
+                        }
+                    }
+                } label: {
+                    Label("Sort", systemImage: "arrow.up.arrow.down")
+                }
+
+                Menu {
+                    Button {
+                        newFolderName = ""
+                        showNewFolder = true
+                    } label: {
+                        Label("New Folder", systemImage: "folder.badge.plus")
+                    }
+                    Button {
+                        showImporter = true
+                    } label: {
+                        Label("Upload", systemImage: "square.and.arrow.up")
+                    }
+                } label: {
+                    Label("Add", systemImage: "plus")
+                }
+                .disabled(busy)
+            }
+        }
         .task { await load() }
+        .sheet(item: $preview) { preview in
+            QuickLookPreview(url: preview.url)
+                .ignoresSafeArea()
+        }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.data]) { result in
             switch result {
             case .success(let url): Task { await push(url) }
@@ -81,171 +228,295 @@ struct FilesView: View {
         }
     }
 
-    // MARK: - Cards
+    // MARK: - Banner
 
-    private var breadcrumbCard: some View {
-        GoldenCard {
-            // Horizontal instead of wrapping.  A device path is deeper than any
-            // window this app can be given — `/var/mobile/Containers/Data/
-            // Application/<UUID>/…` alone is over 300 pt — and letting it wrap
-            // made the card grow a line per component while each "/" drifted
-            // away from the name it separates.  One line each at natural width,
-            // scrolled: a short path looks exactly as before, a long one is
-            // reachable without the card changing height.
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(Array(path.enumerated()), id: \.offset) { index, component in
-                        if index > 0 {
-                            Text("/").foregroundColor(GoldenTheme.textDisabled)
-                        }
-                        Button {
-                            path = Array(path.prefix(index + 1))
-                            Task { await load() }
-                        } label: {
-                            Text(component)
-                                .font(GoldenFont.rowTitle)
-                                .foregroundColor(index == path.count - 1
-                                                 ? GoldenTheme.textPrimary
-                                                 : GoldenTheme.accent)
-                                // Natural width, never compressed: the scroll
-                                // view is what absorbs the overflow.
-                                .fixedSize()
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    if loading { ProgressView().goldenField() }
-                }
-            }
-            if let error {
-                GoldenMutedNote(text: error)
-            } else if let status {
-                GoldenMutedNote(text: status)
-            }
-        }
+    /// The one line of feedback the page has, and what it is for.
+    ///
+    /// An error outranks a status: both cannot be true at once, and the one that
+    /// needs the user to do something must not be the one that was overwritten.
+    ///
+    /// A type rather than a tuple because the banner is animated on change and
+    /// keys a self-clearing task, and both of those want `Equatable`.
+    private struct Banner: Equatable {
+        let text: String
+        let isError: Bool
     }
 
-    private var actionsCard: some View {
-        GoldenCard {
-            GoldenActionRow(title: "Upload here", systemImage: "square.and.arrow.up",
-                            tone: busy ? .disabled : .primary) {
-                showImporter = true
-            }
-            GoldenActionRow(title: "New folder", systemImage: "folder.badge.plus",
-                            tone: busy ? .disabled : .primary) {
-                newFolderName = ""
-                showNewFolder = true
-            }
-            GoldenActionRow(title: "Up one level", systemImage: "arrow.up.to.line",
-                            tone: busy || path.isEmpty ? .disabled : .secondary) {
-                guard !path.isEmpty else { return }
-                path.removeLast()
-                Task { await load() }
-            }
-            GoldenMutedNote(text: "Writes are capped at "
-                + "\(AfcFileExplorer.format(AfcFileExplorer.pushSizeLimit)): the AFC write is a single "
-                + "call with no streaming form, so a larger file is refused rather than truncated.")
-        }
+    private var banner: Banner? {
+        if let error { return Banner(text: error, isError: true) }
+        if let status { return Banner(text: status, isError: false) }
+        return nil
     }
 
-    /// The header and the rows are **siblings** on purpose: a `GoldenSection`
-    /// wraps its content in a `VStack`, which the page's lazy stack treats as one
-    /// child — so every entry in the listing (three rows each) was built on the
-    /// first pass, however long the directory is.  Emitting the header and a bare
-    /// `ForEach` instead lets a row be built when it scrolls into view.  Same
-    /// reason the tweaks page's sections were split (see `GoldenCollapsibleHeader`).
     @ViewBuilder
-    private var listingCard: some View {
-        GoldenSectionHeader(text: "Contents (\(entries.count))")
-        if entries.isEmpty, !loading {
-            GoldenMutedNote(text: "Nothing here.")
-        }
-        ForEach(entries) { entry in
-            row(entry)
-        }
-        if let pullProgress {
-            VStack(alignment: .leading, spacing: 4) {
-                ProgressView(value: pullProgress)
-                GoldenMutedNote(text: "Pulling \(Int(pullProgress * 100))%")
-            }
-        }
-    }
-
-    private func row(_ entry: AfcFsEntry) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 12) {
-                if entry.isDirectory {
-                    Button { open(entry) } label: {
-                        label(entry, tint: GoldenTheme.accent)
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    label(entry, tint: GoldenTheme.textPrimary)
-                }
-                Spacer(minLength: 8)
-                if entry.isDirectory {
-                    Button { renaming = entry; renameText = entry.name } label: {
-                        Image(systemName: "pencil").foregroundColor(GoldenTheme.textSecondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-                Button { deleting = entry } label: {
-                    Image(systemName: "trash").foregroundColor(GoldenTheme.error)
+    private var bannerView: some View {
+        if let banner {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: banner.isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .foregroundColor(banner.isError ? GoldenTheme.warning : GoldenTheme.success)
+                Text(banner.text)
+                    .font(GoldenFont.caption)
+                    .foregroundColor(GoldenTheme.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    error = nil
+                    status = nil
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(GoldenTheme.textSecondary)
                 }
                 .buttonStyle(.plain)
             }
-            if let link = entry.linkTarget {
-                GoldenMutedNote(text: "Symlink → \(link). Not followed, not pulled.")
-            }
-            if !entry.isDirectory {
-                HStack(spacing: 10) {
-                    GoldenActionRow(title: "Pull", systemImage: "arrow.down.to.line",
-                                    tone: busy ? .disabled : .secondary) {
-                        Task { await pull(entry) }
-                    }
-                    GoldenActionRow(title: "Rename", systemImage: "pencil",
-                                    tone: busy ? .disabled : .secondary) {
-                        renaming = entry
-                        renameText = entry.name
-                    }
-                }
+            .padding(12)
+            .background(GoldenTheme.backgroundTertiary)
+            .clipShape(RoundedRectangle(cornerRadius: GoldenTheme.controlRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: GoldenTheme.controlRadius)
+                    .strokeBorder(GoldenTheme.divider, lineWidth: 1)
+            )
+            .padding(.horizontal, GoldenTheme.pageMargin)
+            .padding(.bottom, GoldenTheme.rowSpacing)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            // Self-clearing, but only a success. An error waits for the user to
+            // acknowledge it or for the next thing they do to replace it.
+            .task(id: banner) {
+                guard !banner.isError else { return }
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                if status == banner.text { status = nil }
             }
         }
-        .goldenRowSurface()
     }
 
-    private func label(_ entry: AfcFsEntry, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 8) {
+    // MARK: - Path bar
+
+    private var pathBar: some View {
+        HStack(spacing: 0) {
+            // The way out of a directory. It lives here rather than in the
+            // navigation bar because the navigation bar's back button is not this
+            // page's to take: it pops Files and lands on the home page, which is a
+            // different "back" from the one a person one level down is asking for.
+            // Overriding it with `.navigationBarBackButtonHidden` would also take
+            // the edge-swipe with it, so instead the control sits where Finder
+            // puts one — beside the path, outside the scroll, always in the same
+            // place however deep the tree is.
+            if !path.isEmpty {
+                Button(action: goUp) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(GoldenTheme.accent)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Up one level")
+                .padding(.leading, GoldenTheme.pageMargin)
+            }
+
+            breadcrumb
+        }
+        .background(GoldenTheme.backgroundPrimary)
+        .overlay(alignment: .bottom) {
+            Divider().background(GoldenTheme.divider)
+        }
+    }
+
+    /// Horizontal instead of wrapping.  A device path is deeper than any window
+    /// this app can be given — `/var/mobile/Containers/Data/Application/<UUID>/…`
+    /// alone is over 300 pt — and letting it wrap made the bar grow a line per
+    /// component while each separator drifted away from the name it separates.
+    /// One line each at natural width, scrolled: a short path looks exactly as
+    /// before, a long one is reachable without the bar changing height.
+    private var breadcrumb: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                if path.isEmpty {
+                    // The service's own root, which has no name of its own. A
+                    // leading "afc://" says where the tree comes from, which the
+                    // empty breadcrumb otherwise does not.
+                    Image(systemName: "internaldrive")
+                        .foregroundColor(GoldenTheme.textSecondary)
+                    Text("afc://")
+                        .font(GoldenFont.rowTitle)
+                        .foregroundColor(GoldenTheme.textPrimary)
+                }
+                ForEach(Array(path.enumerated()), id: \.offset) { index, component in
+                    if index > 0 {
+                        // A chevron, which is what makes a stack of tappable
+                        // words read as a path rather than as a sentence.
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(GoldenTheme.textDisabled)
+                    }
+                    Button {
+                        path = Array(path.prefix(index + 1))
+                        Task { await load() }
+                    } label: {
+                        Text(component)
+                            .font(GoldenFont.rowTitle)
+                            .foregroundColor(index == path.count - 1
+                                             ? GoldenTheme.textPrimary
+                                             : GoldenTheme.accent)
+                            // Natural width, never compressed: the scroll view is
+                            // what absorbs the overflow.
+                            .fixedSize()
+                    }
+                    .buttonStyle(.plain)
+                }
+                if loading { ProgressView().goldenField() }
+            }
+            .padding(.horizontal, GoldenTheme.pageMargin)
+            .padding(.vertical, 8)
+        }
+    }
+
+    private func goUp() {
+        guard !path.isEmpty else { return }
+        path.removeLast()
+        Task { await load() }
+    }
+
+    // MARK: - Rows
+
+    /// One row, laid out the way a `List` lays out a row: a leading icon, the
+    /// name over a secondary line, a chevron for a directory.
+    ///
+    /// The header and the rows used to be siblings inside a `GoldenSection`, which
+    /// wraps content in a `VStack` that the page's lazy stack treats as one child —
+    /// so every entry was built on the first pass, however long the directory is.
+    /// A `List` is lazy per row for free, which is the other half of why this page
+    /// stopped being a card stack.
+    private func row(_ entry: AfcFsEntry) -> some View {
+        Button {
+            // Tapping a row does what tapping a row does in Files: a directory
+            // opens, a file is looked at. The visible pencil and bin this replaced
+            // are a context menu and a swipe away, which is where a phone puts
+            // them.
+            if entry.isDirectory { open(entry) } else { Task { await preview(entry) } }
+        } label: {
+            HStack(spacing: 12) {
                 Image(systemName: entry.isDirectory
                       ? "folder.fill"
                       : (entry.linkTarget != nil ? "link" : "doc"))
-                // One line, truncated in the middle.  A device filename is
-                // routinely 40+ characters, which in a 288 pt window wrapped to
-                // two or three lines and made every long entry a block — the
-                // list stopped scanning as a list.  Middle truncation keeps the
-                // extension, which is the part a browser is usually read for.
-                Text(entry.name)
-                    .font(GoldenFont.rowTitle)
-                    .foregroundColor(tint)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                    .foregroundColor(entry.isDirectory ? GoldenTheme.accent : GoldenTheme.textSecondary)
+                    .frame(width: 22)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    // One line, truncated in the middle.  A device filename is
+                    // routinely 40+ characters, which in a 288 pt window wrapped
+                    // to two or three lines and made every long entry a block —
+                    // the list stopped scanning as a list.  Middle truncation
+                    // keeps the extension, which is the part a browser is usually
+                    // read for.
+                    Text(entry.name)
+                        .font(GoldenFont.rowTitle)
+                        .foregroundColor(GoldenTheme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(subtitle(for: entry))
+                        .font(GoldenFont.caption)
+                        .foregroundColor(GoldenTheme.textDisabled)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                if entry.isDirectory {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(GoldenTheme.textDisabled)
+                }
             }
-            Text(entry.isDirectory
-                 ? "folder"
-                 : AfcFileExplorer.format(entry.size))
-                .font(GoldenFont.caption)
-                .foregroundColor(GoldenTheme.textDisabled)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(GoldenTheme.backgroundSecondary)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            // No full swipe: `afcDelete` is a real unlink with no trash, and a
+            // gesture that destroys without a confirmation is exactly the thing
+            // the delete dialog is here to prevent.
+            Button(role: .destructive) { deleting = entry } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            if entry.isDirectory {
+                Button { renaming = entry; renameText = entry.name } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
+                .tint(GoldenTheme.textSecondary)
+            } else {
+                Button { Task { await pull(entry) } } label: {
+                    Label("Pull", systemImage: "arrow.down.to.line")
+                }
+                .tint(GoldenTheme.textSecondary)
+            }
+        }
+        .contextMenu {
+            if !entry.isDirectory {
+                Button { Task { await preview(entry) } } label: {
+                    Label("Quick Look", systemImage: "eye")
+                }
+                Button { Task { await pull(entry) } } label: {
+                    Label("Pull to This Device", systemImage: "arrow.down.to.line")
+                }
+                Divider()
+            }
+            Button { renaming = entry; renameText = entry.name } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            Button(role: .destructive) { deleting = entry } label: {
+                Label("Delete", systemImage: "trash")
+            }
         }
     }
 
-    private func volumeCard(_ volume: AfcFsVolumeInfo) -> some View {
-        GoldenCard {
-            GoldenRowLabel(title: "Volume",
-                           value: "\(AfcFileExplorer.format(volume.freeBytes)) free of "
-                            + "\(AfcFileExplorer.format(volume.totalBytes))",
-                           systemImage: "internaldrive")
-            GoldenMutedNote(text: volume.model)
+    /// The grey line under a name.  A directory says what it is; a file says how
+    /// big and how old, because that is the pair a person is looking for when
+    /// they are trying to tell two similarly named files apart — and the
+    /// modification date was being read off the entry and thrown away.
+    private func subtitle(for entry: AfcFsEntry) -> String {
+        if let link = entry.linkTarget { return "Symlink → \(link)" }
+        guard !entry.isDirectory else { return "Folder" }
+        let size = AfcFileExplorer.format(entry.size)
+        guard let modified = entry.modified else { return size }
+        return "\(size) · \(Self.dateText(modified))"
+    }
+
+    /// Finder's date vocabulary rather than a locale dump: today and yesterday are
+    /// named, and anything older is a plain date.  The formatter is built once —
+    /// `DateFormatter` construction is expensive enough to show up in a list that
+    /// draws a row per file.
+    private static let dateText: (Date) -> String = {
+        let calendar = Calendar.current
+        let time: DateFormatter = {
+            let f = DateFormatter()
+            f.dateFormat = "HH:mm"
+            return f
+        }()
+        let day: DateFormatter = {
+            let f = DateFormatter()
+            f.dateStyle = .medium
+            f.timeStyle = .none
+            return f
+        }()
+        return { date in
+            if calendar.isDateInToday(date) { return "Today, \(time.string(from: date))" }
+            if calendar.isDateInYesterday(date) { return "Yesterday, \(time.string(from: date))" }
+            return day.string(from: date)
         }
+    }()
+
+    private func volumeRow(_ volume: AfcFsVolumeInfo) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "internaldrive")
+                .foregroundColor(GoldenTheme.textDisabled)
+            Text("\(AfcFileExplorer.format(volume.freeBytes)) free of "
+                 + "\(AfcFileExplorer.format(volume.totalBytes))")
+                .font(GoldenFont.caption)
+                .foregroundColor(GoldenTheme.textDisabled)
+            Spacer(minLength: 0)
+        }
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 
     // MARK: - Actions
@@ -260,9 +531,61 @@ struct FilesView: View {
         loading = true
         defer { loading = false }
         do {
-            entries = try await AfcFileExplorer.children(of: AfcFileExplorer.join(path))
+            entries = ordered(try await AfcFileExplorer.children(of: AfcFileExplorer.join(path)))
             volume = try? await AfcFileExplorer.volume()
             error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Folders first under every order, then the order itself.  Done here rather
+    /// than in `AfcFileExplorer` because it is a view preference — the sort is
+    /// remembered per install, not per device.
+    private func ordered(_ listed: [AfcFsEntry]) -> [AfcFsEntry] {
+        let folders = listed.filter(\.isDirectory)
+        let files = listed.filter { !$0.isDirectory }
+        func byName(_ a: AfcFsEntry, _ b: AfcFsEntry) -> Bool {
+            a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }
+        switch sort {
+        case .name:
+            return folders.sorted(by: byName) + files.sorted(by: byName)
+        case .size:
+            return folders.sorted(by: byName) + files.sorted {
+                $0.size == $1.size ? byName($0, $1) : $0.size > $1.size
+            }
+        case .date:
+            return folders.sorted(by: byName) + files.sorted {
+                // Undated entries sort last rather than first: `nil` compares as
+                // "no opinion", and a file the device did not timestamp is the one
+                // a date sort should not be leading with.
+                switch ($0.modified, $1.modified) {
+                case let (a?, b?): return a == b ? byName($0, $1) : a > b
+                case (nil, _?): return false
+                case (_?, nil): return true
+                case (nil, nil): return byName($0, $1)
+                }
+            }
+        }
+    }
+
+    private func preview(_ entry: AfcFsEntry) async {
+        busy = true
+        pullProgress = 0
+        defer { busy = false; pullProgress = nil }
+        do {
+            // A preview is a pull, so it says so before it starts: AFC exposes no
+            // read the previewer can seek in, which means a 40 MB video is 40 MB
+            // over the wire and 40 MB in the temp directory before the first
+            // frame. Hiding that behind a tap would be the surprise.
+            status = "Fetching \(entry.name) · \(AfcFileExplorer.format(entry.size)) to preview"
+            let local = try await AfcFileExplorer.pullToTemporaryFile(entry) { fraction in
+                Task { @MainActor in pullProgress = fraction }
+            }
+            error = nil
+            preview = Preview(url: local)
+            status = nil
         } catch {
             self.error = error.localizedDescription
         }
@@ -340,6 +663,43 @@ struct FilesView: View {
             await load()
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+}
+
+/// Quick Look, hosted.
+///
+/// The system previewer is the whole point: a plist previews as a plist, a
+/// video plays with a scrubber, an image opens in the real Photos viewer, and
+/// none of that is ours to write. `QLPreviewController` is a `UIViewController`,
+/// so it needs a `UIViewControllerRepresentable` to sit in a sheet — the one
+/// piece of UIKit this page is written in.
+private struct QuickLookPreview: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator { Coordinator(url: url) }
+
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ controller: QLPreviewController, context: Context) {}
+
+    /// `QLPreviewControllerDataSource` and not `QLPreviewDataSource`: the latter is
+    /// the macOS spelling of the same protocol, and QuickLook on iOS only has the
+    /// first one.
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        let url: URL
+
+        init(url: URL) { self.url = url }
+
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+
+        func previewController(_ controller: QLPreviewController,
+                               previewItemAt index: Int) -> QLPreviewItem {
+            url as NSURL
         }
     }
 }

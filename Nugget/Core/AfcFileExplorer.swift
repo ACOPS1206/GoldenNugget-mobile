@@ -81,25 +81,59 @@ enum AfcFileExplorer {
 
     // MARK: - Reading
 
-    /// Pull one file into the container, streaming it.
-    ///
-    /// Streamed rather than `afcRead` into a `Data` because the read has no size
-    /// ceiling and a photo library entry can be larger than a phone wants to hold
-    /// twice: once in the AFC buffer and once as a Swift `Data`. The write goes
-    /// to a `.partial` name and is renamed only after the device says it sent
-    /// every byte, so an interrupted pull cannot masquerade as a complete file.
+    /// Pull one file into the container, keeping it there.
     @discardableResult
     static func pull(_ entry: AfcFsEntry, progress: (@Sendable (Double) -> Void)? = nil) async throws -> URL {
         guard !entry.isDirectory else {
             throw GoldenNuggetError("Only files can be pulled. \(entry.name) is a folder.")
         }
-        let gateway = try await gateway()
         try FileManager.default.createDirectory(at: downloadsRoot, withIntermediateDirectories: true)
-
         let existing = Set(try FileManager.default.contentsOfDirectory(atPath: downloadsRoot.path))
         let destination = downloadsRoot.appendingPathComponent(uniqueName(entry.name, against: existing))
-        let partial = destination.appendingPathExtension("afcpartial")
+        try await stream(entry, into: destination, progress: progress)
+        return destination
+    }
 
+    /// The same bytes, into the temporary directory, for a file that is about to be
+    /// looked at rather than kept.
+    ///
+    /// Quick Look needs a local file, and `pull` would leave the preview in
+    /// `Documents/Files` — where it is indistinguishable from a file the user chose
+    /// to keep, and where the next preview of the same name lands beside it as
+    /// `name (2).ext`. The temp directory is reclaimed by the system, so a preview
+    /// leaves nothing behind whether or not the sheet is ever dismissed.
+    @discardableResult
+    static func pullToTemporaryFile(
+        _ entry: AfcFsEntry,
+        progress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> URL {
+        guard !entry.isDirectory else {
+            throw GoldenNuggetError("Only files can be previewed. \(entry.name) is a folder.")
+        }
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent(entry.name)
+        try? FileManager.default.removeItem(at: destination.deletingLastPathComponent())
+        try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try await stream(entry, into: destination, progress: progress)
+        return destination
+    }
+
+    /// Stream one file to a local path, via a `.partial` sibling that is renamed
+    /// only after the device says it sent every byte.
+    ///
+    /// Streamed rather than `afcRead` into a `Data` because the read has no size
+    /// ceiling and a photo library entry can be larger than a phone wants to hold
+    /// twice: once in the AFC buffer and once as a Swift `Data`. The `.partial`
+    /// name means an interrupted pull cannot masquerade as a complete file.
+    private static func stream(
+        _ entry: AfcFsEntry,
+        into destination: URL,
+        progress: (@Sendable (Double) -> Void)?
+    ) async throws {
+        let gateway = try await gateway()
+        let partial = destination.appendingPathExtension("afcpartial")
         try? FileManager.default.removeItem(at: partial)
         FileManager.default.createFile(atPath: partial.path, contents: nil)
         let handle = try FileHandle(forWritingTo: partial)
@@ -122,7 +156,6 @@ enum AfcFileExplorer {
         }
         try? FileManager.default.removeItem(at: destination)
         try FileManager.default.moveItem(at: partial, to: destination)
-        return destination
     }
 
     // MARK: - Writing

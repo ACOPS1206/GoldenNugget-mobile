@@ -48,14 +48,15 @@
 		37BDA4DA7B3732D698F924F2 /* SkipSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C13914645FB209708711B0 /* SkipSetup.swift */; };
 		406691A53A3755BE7434B389 /* SkipSetupCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B71CFF2C640582DC97E891A3 /* SkipSetupCatalog.swift */; };
 		88BF13A4B64876644E9B178D /* StallGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 989555D74B847B3F468BC1DC /* StallGuard.swift */; };
-		3EC01C63F03C83569AE193A6 /* SupervisionSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA5B1026029FABF4BBD94979 /* SupervisionSettings.swift */; };
-		4DF930C93F19FCD0A31633DA /* SupervisionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 989DDFE32F20F006B3946B58 /* SupervisionView.swift */; };
+		3EC01C63F03C83569AE193A6 /* SkipSetupSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA5B1026029FABF4BBD94979 /* SkipSetupSettings.swift */; };
 		495EAECFEA30AF8C2A6C9BF0 /* TransportFailure.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7270E65A4703F9C0AB9AA65F /* TransportFailure.swift */; };
 		37ED7E92BD392586B1D0A4DF /* Tunnel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D1BC98037C6BDC8AF58496B /* Tunnel.swift */; };
 		4E0010FD17DF55D881CB25AA /* TweakCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77B7AF6A5B6F051A9CA68A4D /* TweakCatalog.swift */; };
 		2E8EE1BA2040A369F85AE3F3 /* TweakCatalogDaemons.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEC4576E97290242BE461F36 /* TweakCatalogDaemons.swift */; };
 		701F631AFAECD47690B8FB7D /* TweakCompiler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17F2C43731423B70CB6C4334 /* TweakCompiler.swift */; };
 		B455D7BEF37CFB628AB7865C /* TweakDomainMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9346ED8851E31EE614F7302D /* TweakDomainMap.swift */; };
+		33FB94F9FE3904D2BB7AAC79 /* TweakReset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EF249B17F02AC4241B04711 /* TweakReset.swift */; };
+		5A01780C82E541CA0340E0E0 /* ResetPagesSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD4EED31AD30A3DEA76C9577 /* ResetPagesSheet.swift */; };
 		6EAA0BD3E97DAA974DBCCAF4 /* TweakInjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5115129235D0DAF38C497A28 /* TweakInjector.swift */; };
 		28E9216B55D8DB6B7F1F4AF6 /* TweakModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 980679A3C896C7012DDD8F66 /* TweakModel.swift */; };
 		547AFD63F883C35F60A96328 /* TweakRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A77000F278E3D52579527931 /* TweakRow.swift */; };
@@ -107,14 +108,15 @@
 		61C13914645FB209708711B0 /* SkipSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkipSetup.swift; sourceTree = "<group>"; };
 		B71CFF2C640582DC97E891A3 /* SkipSetupCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkipSetupCatalog.swift; sourceTree = "<group>"; };
 		989555D74B847B3F468BC1DC /* StallGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StallGuard.swift; sourceTree = "<group>"; };
-		AA5B1026029FABF4BBD94979 /* SupervisionSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupervisionSettings.swift; sourceTree = "<group>"; };
-		989DDFE32F20F006B3946B58 /* SupervisionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupervisionView.swift; sourceTree = "<group>"; };
+		AA5B1026029FABF4BBD94979 /* SkipSetupSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkipSetupSettings.swift; sourceTree = "<group>"; };
 		7270E65A4703F9C0AB9AA65F /* TransportFailure.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportFailure.swift; sourceTree = "<group>"; };
 		9D1BC98037C6BDC8AF58496B /* Tunnel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tunnel.swift; sourceTree = "<group>"; };
 		77B7AF6A5B6F051A9CA68A4D /* TweakCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweakCatalog.swift; sourceTree = "<group>"; };
 		CEC4576E97290242BE461F36 /* TweakCatalogDaemons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweakCatalogDaemons.swift; sourceTree = "<group>"; };
 		17F2C43731423B70CB6C4334 /* TweakCompiler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweakCompiler.swift; sourceTree = "<group>"; };
 		9346ED8851E31EE614F7302D /* TweakDomainMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweakDomainMap.swift; sourceTree = "<group>"; };
+		3EF249B17F02AC4241B04711 /* TweakReset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweakReset.swift; sourceTree = "<group>"; };
+		AD4EED31AD30A3DEA76C9577 /* ResetPagesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResetPagesSheet.swift; sourceTree = "<group>"; };
 		5115129235D0DAF38C497A28 /* TweakInjector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweakInjector.swift; sourceTree = "<group>"; };
 		980679A3C896C7012DDD8F66 /* TweakModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweakModel.swift; sourceTree = "<group>"; };
 		A77000F278E3D52579527931 /* TweakRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweakRow.swift; sourceTree = "<group>"; };
@@ -174,7 +176,7 @@
 				61C13914645FB209708711B0 /* SkipSetup.swift */,
 				B71CFF2C640582DC97E891A3 /* SkipSetupCatalog.swift */,
 				989555D74B847B3F468BC1DC /* StallGuard.swift */,
-				AA5B1026029FABF4BBD94979 /* SupervisionSettings.swift */,
+				AA5B1026029FABF4BBD94979 /* SkipSetupSettings.swift */,
 				7270E65A4703F9C0AB9AA65F /* TransportFailure.swift */,
 				77B7AF6A5B6F051A9CA68A4D /* TweakCatalog.swift */,
 				CEC4576E97290242BE461F36 /* TweakCatalogDaemons.swift */,
@@ -182,6 +184,7 @@
 				9346ED8851E31EE614F7302D /* TweakDomainMap.swift */,
 				5115129235D0DAF38C497A28 /* TweakInjector.swift */,
 				980679A3C896C7012DDD8F66 /* TweakModel.swift */,
+				3EF249B17F02AC4241B04711 /* TweakReset.swift */,
 				343E173B6BF30E9113DD3CA4 /* WireCensus.swift */,
 			);
 			path = Core;
@@ -245,9 +248,9 @@
 				F4432398FF02541D88F5E11B /* GoldenNuggetView.swift */,
 				85A3D093FF4C72DC8FA10411 /* GoldenTheme.swift */,
 				F1405DB7C8287A4D6101F564 /* MediaView.swift */,
+				AD4EED31AD30A3DEA76C9577 /* ResetPagesSheet.swift */,
 				9E007DB1B5DADCC9E6394E17 /* RunLog.swift */,
 				9F72AE6CD4E8EC369A26D247 /* SettingsView.swift */,
-				989DDFE32F20F006B3946B58 /* SupervisionView.swift */,
 				A77000F278E3D52579527931 /* TweakRow.swift */,
 				FB4799584FF11C9BF5BE59FF /* TweaksView.swift */,
 			);
@@ -389,8 +392,7 @@
 				37BDA4DA7B3732D698F924F2 /* SkipSetup.swift in Sources */,
 				406691A53A3755BE7434B389 /* SkipSetupCatalog.swift in Sources */,
 				88BF13A4B64876644E9B178D /* StallGuard.swift in Sources */,
-				3EC01C63F03C83569AE193A6 /* SupervisionSettings.swift in Sources */,
-				4DF930C93F19FCD0A31633DA /* SupervisionView.swift in Sources */,
+				3EC01C63F03C83569AE193A6 /* SkipSetupSettings.swift in Sources */,
 				495EAECFEA30AF8C2A6C9BF0 /* TransportFailure.swift in Sources */,
 				37ED7E92BD392586B1D0A4DF /* Tunnel.swift in Sources */,
 				4E0010FD17DF55D881CB25AA /* TweakCatalog.swift in Sources */,
@@ -400,7 +402,9 @@
 				6EAA0BD3E97DAA974DBCCAF4 /* TweakInjector.swift in Sources */,
 				28E9216B55D8DB6B7F1F4AF6 /* TweakModel.swift in Sources */,
 				547AFD63F883C35F60A96328 /* TweakRow.swift in Sources */,
+				5A01780C82E541CA0340E0E0 /* ResetPagesSheet.swift in Sources */,
 				1F4598565EB3ECC262843292 /* TweaksView.swift in Sources */,
+				33FB94F9FE3904D2BB7AAC79 /* TweakReset.swift in Sources */,
 				637D690748869293AAB5B9C8 /* WireCensus.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

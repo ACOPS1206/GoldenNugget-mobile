@@ -1,8 +1,7 @@
 import Foundation
 
 /// "Skip Setup": the two files upstream's `add_skip_setup` adds to **every**
-/// apply, ported so this app can do the same once the switch on the Supervision
-/// page is on.
+/// apply, ported so this app can do the same once the switch in Settings is on.
 ///
 /// Reference chain, all in `~/GoldenNugget`:
 ///
@@ -38,9 +37,9 @@ import Foundation
 ///      keybag (`pymobiledevice3.ca.create_keybag_file`) when the run is
 ///      supervised with an organization name; this port has no keybag generator,
 ///      so it writes `IsSupervised`/`OrganizationName`/`OrganizationMagic`
-///      without the certificate and says so.  `SupervisionView` already states
-///      that supervised delivery is not implemented here; this keeps that honest
-///      rather than writing half of it silently.
+///      without the certificate and says so.  The app never selects that variant
+///      — nothing here supervises a device — but the shape is kept so this code
+///      still says plainly what it is not doing.
 enum SkipSetup {
 
     /// Upstream's `cloud_config["SkipSetup"]` — the generated pane list.

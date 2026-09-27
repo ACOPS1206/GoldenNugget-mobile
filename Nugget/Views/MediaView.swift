@@ -104,11 +104,12 @@ struct MediaView: View {
             }
         }
         .task { loadManifest() }
-        // The only page that had no navigation bar at all: it was the one page
-        // reached from Home's card grid that did not need a back button, because
-        // the grid was a *launcher* rather than a stack.  With the grid gone and
-        // every destination pushed on one stack, this page needs the same bar as
-        // the rest — title included, which it never had.
+        // The only page that had no navigation bar at all, because it used to be
+        // the one destination reached from a launcher (Home's card grid) rather
+        // than pushed on a stack, so it never needed a back button.  Both of
+        // those are gone: the sidebar is the only way in and it pushes like
+        // everything else, so this page gets the same bar as the rest — title
+        // included, which it never had.
         .navigationTitle("Media")
         // Compact widths only -- on a tablet the split view draws its own sidebar
         // toggle, and a second button beside it is the duplicate-controls mess.
