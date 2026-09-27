@@ -74,15 +74,11 @@ struct RootView: View {
     /// selection change, and the selection would have gone with it.
     @State private var tweakSelection = TweakSelection()
     /// Launch auto-start bookkeeping, hoisted for the same reason as the
-    /// selection: the flag guards a process-wide singleton
-    /// (`startMinimuxer`'s lock rejects *concurrent* attempts only), so it has
-    /// to outlive the view that reads it.  See `GoldenNuggetView`.
-    ///
-    /// The pairing record itself is **not** here — it is a `PairingStore`
-    /// singleton, and "Reset pairing file" is persisted inside it.  Those two
-    /// lived here as flags until a relaunch dropped them and with them the
-    /// import.
+    /// selection: the two flags guard a process-wide singleton
+    /// (`startMinimuxer`'s lock rejects *concurrent* attempts only), so they
+    /// have to outlive the view that reads them.  See `GoldenNuggetView`.
     @State private var didAutoStart = false
+    @State private var autoImportDisabled = false
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -96,7 +92,8 @@ struct RootView: View {
                 // TweaksView's own binding.  The order is the explicit
                 // initializer's, not the property declaration order.
                 GoldenNuggetView(tweakSelection: $tweakSelection,
-                                 didAutoStart: $didAutoStart)
+                                 didAutoStart: $didAutoStart,
+                                 autoImportDisabled: $autoImportDisabled)
                     .navigationDestination(for: AppDestination.self) { destination in
                         switch destination {
                         case .home:
