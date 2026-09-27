@@ -417,9 +417,11 @@ Home page → **Tweaks** → *GoldenNugget tweaks*:
   reference's `description`. Number items show `min–max, step`, and input is **clamped** to
   the registry's bounds as you type.
 - **Clear all tweaks** clears the selection (this app only, **the device is not touched**).
-- **Apply N tweak(s)** runs the whole chain; afterwards the page shows the last 30 log lines
-  at the bottom, and the home page's log area has the full log. **Reboot the device** after
-  applying for the injected preferences to take effect.
+- **Apply N tweak(s)** — the home page's single Apply — runs the whole chain; afterwards the
+  page shows the last 30 log lines at the bottom, and the home page's log area has the full
+  log. It also carries whatever the PosterBoard page has selected, in the same run (see
+  `docs/posterboard-port.md` §2); with no wallpapers selected it is a tweak-only run, exactly
+  as before. **Reboot the device** after applying for the injected preferences to take effect.
 
 Home page **Reset Tweaks** → a sheet to pick pages → resets the **device**
 (Springboard / Internal / Daemons); semantics, the file set and the per-branch null are in

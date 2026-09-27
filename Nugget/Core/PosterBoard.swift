@@ -133,16 +133,58 @@ struct PosterBoardConfigItem: Equatable {
     let setSelected: Bool
 }
 
-/// What the page has assembled for one apply.
+/// What the PosterBoard page has assembled, carried by the one apply.
+///
+/// The video's **options live here and not inside `PosterBoardVideoPlan`** on purpose:
+/// the plan only exists once a video has been picked, while the switches have to be
+/// editable before that.  `plan` is then the single place the two are combined, so the
+/// page that sets "Loop" and the apply that reads it cannot disagree.
+///
+/// Owned by `RootView`, like `TweakSelection`: the page edits it, and the plain
+/// `Apply` on the home page is what delivers it — a `NavigationSplitView` destroys the
+/// detail view on every sidebar selection, so as page state the wallpapers would be gone
+/// by the time the user reached the button.
 struct PosterBoardSelection {
     var tendies: [PosterBoardTendie] = []
-    var video: PosterBoardVideoPlan?
+    /// The picked video and its freeze frame, as files in this app's container.
+    var video: URL?
+    var thumbnail: URL?
+
+    /// The four options the reference keeps on the tweak object.
+    var loop = true
+    var reverse = false
+    var foreground = false
+    var calculationMode: PosterBoardCalculationMode = .linear
+
+    /// A reset is a one-shot instruction, so it is deliberately **not** persisted: a
+    /// "Full Reset" that survived a launch would be a loaded gun. Upstream holds it in
+    /// memory for the same reason.
     var resetModes: Set<PosterBoardResetMode> = []
     var fullReset = false
+
+    /// The reference's `pref_manager.auto_refresh_posterboard` — **the one option that
+    /// is a preference rather than a per-run choice**, so it is the one that persists.
+    /// A computed property rather than a stored one because a struct cannot write
+    /// itself back on assignment, and this is the only field that needs to.
+    var autoRefresh: Bool {
+        get { PosterBoardPreferences.autoRefresh }
+        set { PosterBoardPreferences.autoRefresh = newValue }
+    }
 
     /// Whether the apply has anything to do — the reference's `uses_domains`.
     var isActive: Bool {
         fullReset || !resetModes.isEmpty || !tendies.isEmpty || video != nil
+    }
+
+    /// The video stage's input, or nil when no video was picked.
+    var plan: PosterBoardVideoPlan? {
+        guard let video else { return nil }
+        return PosterBoardVideoPlan(video: video,
+                                    thumbnail: thumbnail,
+                                    loop: loop,
+                                    reverse: reverse,
+                                    foreground: foreground,
+                                    calculationMode: calculationMode)
     }
 
     /// The reference's own summary of what an apply will carry, for the log.
@@ -153,8 +195,30 @@ struct PosterBoardSelection {
         }
         var parts: [String] = []
         if !tendies.isEmpty { parts.append("\(tendies.count) pack(s)") }
-        if let video { parts.append("video \(video.name)") }
+        if let video { parts.append("video \(video.lastPathComponent)") }
         return parts.isEmpty ? "nothing" : parts.joined(separator: ", ")
+    }
+
+    /// Re-read the inputs that live on disk: the imported packs and the two picked
+    /// files.  The options are left alone — they are the user's, not the filesystem's —
+    /// which is also what makes this safe to call on every appearance.
+    mutating func loadFromDisk() {
+        tendies = PosterBoardImports.load()
+        video = PosterBoard.storedFile(in: PosterBoard.videoDirectory)
+        thumbnail = PosterBoard.storedFile(in: PosterBoard.thumbnailDirectory)
+    }
+}
+
+/// The one PosterBoard setting that survives a launch.
+///
+/// Upstream splits the same way: every option lives on the tweak object and only
+/// `auto_refresh_posterboard` in `preference_manager`.
+enum PosterBoardPreferences {
+    static let autoRefreshKey = "PosterBoardAutoRefresh"
+
+    static var autoRefresh: Bool {
+        get { UserDefaults.standard.object(forKey: autoRefreshKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: autoRefreshKey) }
     }
 }
 
@@ -177,7 +241,6 @@ extension PosterBoard {
     ///   - deviceVersion: the device's `ProductVersion`; the reset and refresh
     ///     preference plists grow two extra keys at 26.4 and the store layout
     ///     moved with them.
-    ///   - forceRefresh: the reference's `pref_manager.auto_refresh_posterboard`.
     ///   - workingDirectory: scratch space, wiped by the caller.  Video frames
     ///     and extracted packs are written here and referenced by path — they
     ///     are far too big to hold as `Data`.
@@ -186,7 +249,6 @@ extension PosterBoard {
         structureVersion: Int,
         database: URL?,
         deviceVersion: String,
-        forceRefresh: Bool,
         workingDirectory: URL,
         log: @escaping @Sendable (String) -> Void
     ) async throws -> [TweakPayload] {
@@ -236,8 +298,8 @@ extension PosterBoard {
         // 4. Generated video first, then the packs — the reference's order, and
         //    it matters: a live-photo pack's descriptor is written by the video
         //    step, and both are then found by the single walk below.
-        if let video = selection.video {
-            try await PosterBoardVideo.generate(plan: video,
+        if let plan = selection.plan {
+            try await PosterBoardVideo.generate(plan: plan,
                                                 outputDirectory: workingDirectory,
                                                 log: log)
         }
@@ -280,7 +342,7 @@ extension PosterBoard {
         }
 
         // 7. Force refresh: upstream's `auto_refresh_posterboard`, on by default.
-        if forceRefresh {
+        if selection.autoRefresh {
             payloads.append(TweakPayload(domain: domain,
                                          relativePath: preferencesPath,
                                          contents: try refreshPreferences(deviceVersion: deviceVersion)))

@@ -174,15 +174,23 @@ class GoldenNuggetEngine {
 
     // MARK: - Run: apply the ported GoldenNugget tweaks
 
-    /// Apply a tweak selection: the protective backup → prune → inject →
-    /// restore flow, carrying the compiled plist tweaks.
+    /// Apply everything this app can deliver: the compiled plist tweaks, the skip-setup
+    /// files, and the PosterBoard selection — **one pass, one button**.
     ///
-    /// This is GoldenNugget's apply (`device_manager._apply_tweak_pass`) ported
-    /// onto this app's restore pipeline.  The compile step runs *before* the
-    /// device is touched, so an empty or impossible selection fails without
-    /// paying for a backup first.
+    /// This is GoldenNugget's `device_manager._apply_tweak_pass`, whose file list is
+    /// built from every feature at once: its `needs_posterboard` flag decides whether the
+    /// store's database has to be fetched first, and the wallpapers then ride the same
+    /// restore as the tweaks.  There is no separate apply for wallpapers — this port had
+    /// one for a while, a second button running the same four stages over a different
+    /// payload set, and it is gone.  What is left of it is the flag.
+    ///
+    /// The compile runs *before* the device is touched, so an empty or impossible
+    /// selection fails without paying for a backup first.  The PosterBoard database is
+    /// the one input that has to come off the device; that stage therefore talks to it,
+    /// but it is still ahead of the expensive protective pull and of the restore.
     func applyTweaks(
         selection: TweakSelection,
+        posterBoard: PosterBoardSelection,
         deviceVersion: String,
         isIPhone: Bool
     ) async throws {
@@ -190,7 +198,7 @@ class GoldenNuggetEngine {
         warnIfPreviousCallStillRunning()
         clearCancel()
         clearProgress()
-        let runStage = StageTimer("RUN tweak apply")
+        let runStage = StageTimer("RUN apply")
         defer { runStage.done() }
 
         let compiled = TweakCompiler.compile(selection: selection,
@@ -213,9 +221,10 @@ class GoldenNuggetEngine {
             ? SkipSetup.build(supervised: false, organizationName: "")
             : SkipSetup.Build(payloads: [], warnings: [])
 
-        guard !compiled.payloads.isEmpty || !skipSetup.payloads.isEmpty else {
-            throw GoldenNuggetError("No tweaks are enabled (or every enabled tweak was skipped) "
-                + "and skip setup is off — nothing to apply.")
+        guard !compiled.payloads.isEmpty || !skipSetup.payloads.isEmpty || posterBoard.isActive else {
+            throw GoldenNuggetError("Nothing to apply: no tweak is enabled (or every enabled one "
+                + "was skipped), skip setup is off, and there is nothing selected on the "
+                + "PosterBoard page.")
         }
         log("Tweaks: \(compiled.payloads.count) file(s) from \(compiled.locations.count) plist(s)")
         for location in compiled.locations { log("  → \(location.rawValue)") }
@@ -226,96 +235,62 @@ class GoldenNuggetEngine {
             for warning in skipSetup.warnings { log("⚠️ \(warning)") }
         }
 
-        // Skip setup first, then the compiled tweaks: one array, one pass
-        // through the injector, which derives the directory rows from each
-        // payload's path and therefore writes the two skip-setup files in the
-        // order `add_skip_setup` appends them.
-        let payloads = skipSetup.payloads + compiled.payloads
         let udid = try await prepareRun()
-        try await deliver(payloads: payloads, udid: udid, deviceVersion: deviceVersion,
-                          label: "tweak restore") {
-            log("Tweak apply succeeded: the device confirmed it finished.")
-            log("Reboot the device so the injected preferences take effect.")
-        }
-    }
-
-    /// Apply a PosterBoard selection: wallpapers, a video, or a reset.
-    ///
-    /// Same flow as `applyTweaks` — one channel, `AppDomain-com.apple.PosterBoard`
-    /// — with one extra stage in front of it and one rule relaxed:
-    ///
-    ///   * **The database comes first.** A wallpaper exists only once it has a
-    ///     row in the store's own sqlite, and the reference's answer is a
-    ///     *targeted* backup that names just that container (`PosterBoardBackup`).
-    ///     It runs before the compile because the compile cannot be done without
-    ///     it; the compile still runs before the expensive protective pull.
-    ///   * **A reset needs no database and no fetch**, so a reset-only apply is
-    ///     compile-first exactly like a tweak apply.
-    ///
-    /// The two backups are deliberate rather than fused: the protective pull's
-    /// `FactoryInfo` says "no app containers" and that is what makes it fast and
-    /// what the tweak path has production evidence for.  Asking it for one
-    /// container as well would change the shape of the one path that is known to
-    /// work, to save one exchange.
-    func applyPosterBoard(
-        selection: PosterBoardSelection,
-        deviceVersion: String,
-        forceRefresh: Bool
-    ) async throws {
-        AppLog.shared.memory.reset()
-        warnIfPreviousCallStillRunning()
-        clearCancel()
-        clearProgress()
-        let runStage = StageTimer("RUN posterboard apply")
-        defer { runStage.done() }
-
-        guard selection.isActive else {
-            throw GoldenNuggetError("Nothing is selected on the PosterBoard page: import a "
-                + ".tendies pack, pick a video, or choose what to reset.")
-        }
-        log("PosterBoard: \(selection.describe)")
-
-        let udid = try await prepareRun()
+        // Resolved once, here, because two stages need it: the PosterBoard compile (its
+        // reset preferences change at 26.4) and the manifest-format fork inside
+        // `deliver`.  `resolvedDeviceVersion` carries the reasoning for refusing to
+        // guess — a device whose version cannot be read must not be treated as iOS 26.
         let version = try await resolvedDeviceVersion(deviceVersion)
+        let major = Int(version.split(separator: ".").first ?? "0") ?? 0
+        log("device version for the manifest-format fork: \(version) (major \(major))")
 
-        var structureVersion = PosterBoard.fallbackStructureVersion
-        var database: URL?
-        if !selection.fullReset && selection.resetModes.isEmpty {
-            let fetchRoot = AppPaths.posterBoardFetchRoot
-            let fetched = try await PosterBoardBackup.fetch(
-                backupRoot: fetchRoot, udid: udid,
-                onProgress: { overall in self.logProgress("posterboard backup progress", overall) },
-                log: { AppLog.write($0) })
-            database = fetched.database
-            structureVersion = fetched.structureVersion
-        } else {
-            log("PosterBoard: reset only — no database is needed, and none is fetched.")
-        }
-
-        let working = PosterBoard.workDirectory
-        let payloads = try await PosterBoard.compile(selection: selection,
-                                                     structureVersion: structureVersion,
-                                                     database: database,
-                                                     deviceVersion: version,
-                                                     forceRefresh: forceRefresh,
-                                                     workingDirectory: working,
-                                                     log: { AppLog.write($0) })
-        guard !payloads.isEmpty else {
-            throw GoldenNuggetError("PosterBoard produced no files for this selection.")
-        }
-        let onDisk = payloads.filter { $0.source != nil }.count
-        let totalBytes = payloads.reduce(0) { $0 + $1.byteCount }
-        let human = ByteCountFormatter.string(fromByteCount: Int64(totalBytes), countStyle: .file)
-        log("PosterBoard: \(payloads.count) payload(s), \(onDisk) of them on disk (\(human))")
-
-        try await deliver(payloads: payloads, udid: udid, deviceVersion: version,
-                          label: "posterboard restore") {
-            log("PosterBoard apply succeeded: the device confirmed it finished.")
-            if selection.fullReset || !selection.resetModes.isEmpty {
-                log("The store was cleared. Reboot the device, then add wallpapers from a fresh "
-                    + "database fetch — a reset makes the copy fetched before it stale.")
+        // PosterBoard, if the page has anything: the store's database first — a wallpaper
+        // exists only once it has a row in it — then the wallpapers themselves.
+        var posterBoardPayloads: [TweakPayload] = []
+        if posterBoard.isActive {
+            log("PosterBoard: \(posterBoard.describe)")
+            var structureVersion = PosterBoard.fallbackStructureVersion
+            var database: URL?
+            if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
+                // A reset needs no database, so it needs no fetch and no exchange.
+                log("PosterBoard: reset only — no database is needed, and none is fetched.")
             } else {
-                log("Reboot the device so the store picks the new wallpapers up.")
+                let fetched = try await PosterBoardBackup.fetch(
+                    backupRoot: AppPaths.posterBoardFetchRoot, udid: udid,
+                    onProgress: { overall in
+                        self.logProgress("posterboard backup progress", overall)
+                    },
+                    log: { AppLog.write($0) })
+                database = fetched.database
+                structureVersion = fetched.structureVersion
+            }
+            posterBoardPayloads = try await PosterBoard.compile(
+                selection: posterBoard,
+                structureVersion: structureVersion,
+                database: database,
+                deviceVersion: version,
+                workingDirectory: PosterBoard.workDirectory,
+                log: { AppLog.write($0) })
+            let onDisk = posterBoardPayloads.filter { $0.source != nil }.count
+            let total = posterBoardPayloads.reduce(0) { $0 + $1.byteCount }
+            log("PosterBoard: \(posterBoardPayloads.count) payload(s), \(onDisk) of them on disk "
+                + "(\(ByteCountFormatter.string(fromByteCount: Int64(total), countStyle: .file)))")
+        }
+
+        // Skip setup first, then the tweaks, then the wallpapers: one array, one pass
+        // through the injector, which derives the directory rows from each payload's path
+        // and therefore writes the two skip-setup files in the order `add_skip_setup`
+        // appends them.
+        let payloads = skipSetup.payloads + compiled.payloads + posterBoardPayloads
+        try await deliver(payloads: payloads, udid: udid, version: version, label: "apply") {
+            log("Apply succeeded: the device confirmed it finished.")
+            log("Reboot the device so the injected preferences take effect.")
+            if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
+                log("The PosterBoard store was cleared. Reboot the device, then add wallpapers "
+                    + "from a fresh database fetch — a reset makes the copy fetched before it "
+                    + "stale.")
+            } else if posterBoard.isActive {
+                log("Reboot the device so the PosterBoard store picks the new wallpapers up.")
             }
         }
     }
@@ -352,13 +327,13 @@ class GoldenNuggetEngine {
     // pull is what authorizes the session, the prune must precede the injection,
     // and the restore is what delivers any of it.
 
-    /// One payload set through stages 1–4 (`udid` comes from the caller, because
-    /// a PosterBoard apply has already talked to the device by the time it
-    /// compiles).
+    /// One payload set through stages 1–4.  `udid` and `version` come from the caller:
+    /// the PosterBoard stage talks to the device (and needs the version) before this
+    /// runs, so resolving them again here would be a second answer to a settled question.
     private func deliver(
         payloads: [TweakPayload],
         udid: String,
-        deviceVersion: String,
+        version: String,
         label: String,
         onSuccess: () -> Void
     ) async throws {
@@ -369,15 +344,6 @@ class GoldenNuggetEngine {
         // the device's own state. Comparing "26.0" against "27.0" lexically
         // would put 26.9 on the wrong side, so compare the major component.
         //
-        // The version is read HERE rather than taken on trust from the caller.
-        // The pages read it once, when they appear, and `DeviceIdentity.unknown`
-        // is the empty string — which parses to major 0, i.e. "not iOS 27". That
-        // is how a 27.0 device ended up on the iOS 26 branch, synthesising a
-        // legacy MBDB backup and dying with `205 — No keybag in manifest`
-        // (2026-09-26) while the branch it should have taken works. `prepareRun()`
-        // has just proved the gateway is ready, so a read here is the first one
-        // that can succeed.
-        let version = try await resolvedDeviceVersion(deviceVersion)
         let major = Int(version.split(separator: ".").first ?? "0") ?? 0
         // Development mode can force the iOS 26 branch, so the reported version is no
         // longer the last word on which branch runs -- only the default for it. Read

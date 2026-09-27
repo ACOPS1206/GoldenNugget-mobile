@@ -54,19 +54,32 @@ Every payload still lands in `AppDomain-com.apple.PosterBoard`, through the exis
 app-container PoC and the footnote's sibling rows), and its row shape was already measured
 in `TweakRowProfile`. PosterBoard introduced no new row shape.
 
-One PosterBoard apply:
+Inside **the one apply** (the reference's `_apply_tweak_pass` shape: one pass, one button,
+with `needs_posterboard` deciding whether the extra stage runs at all):
 
 ```
-① PosterBoardBackup.fetch     a targeted backup whose FactoryInfo names only
-                              com.apple.PosterBoard (the device's own app record, forwarded)
-                              → the database pulled out of Manifest.db by file name
-                              → WAL-merged → <Documents>/PosterBoard/<udid>.sqlite3
-② PosterBoard.compile         unpack the .tendies → recursive_add routing + UUID/id
-                              randomisation + the plist rewrites → PosterBoardStore.stitch
-                              adds rows to a copy of the database → [TweakPayload]
-③ deliver (the same tail the tweak apply uses)
-                              protective backup (the authorising session) → prune → inject → restore
+run: applyTweaks(selection:posterBoard:…)
+  ├─ TweakCompiler.compile        the tweaks, unconditionally
+  ├─ if posterBoard.isActive:     ← upstream's `needs_posterboard`
+  │   ① PosterBoardBackup.fetch   a targeted backup whose FactoryInfo names only
+  │                              com.apple.PosterBoard (the device's own app record,
+  │                              forwarded) → the database pulled out of Manifest.db by
+  │                              file name → WAL-merged → <Documents>/PosterBoard/<udid>.sqlite3
+  │   ② PosterBoard.compile       unpack the .tendies → recursive_add routing + UUID/id
+  │                              randomisation + the plist rewrites → PosterBoardStore.stitch
+  │                              adds rows to a copy of the database → [TweakPayload]
+  └─ deliver                      skip setup + tweaks + wallpapers, ONE array:
+                                  protective backup (the authorising session) → prune → inject → restore
 ```
+
+**There is no separate Apply for wallpapers.**  The port had one for a while — a second
+button running the same four stages over a different payload set — and it was removed on
+request: two runs of the same pipeline is two backups, two restores, two chances to leave
+the device half-applied, and no way to tell from the log which one carried what.  The
+PosterBoard page now edits a selection that `RootView` owns and the **home page's Apply**
+delivers, which is also the only arrangement that works: a `NavigationSplitView` destroys the
+detail view on every sidebar selection, so a selection held by the page would be gone by the
+time the user reached the button.
 
 - **Two mobilebackup2 exchanges**, deliberately not fused: the protective backup's
   `FactoryInfo` says "no app containers" (`{"Applications": {}}`), which is exactly what
@@ -232,8 +245,10 @@ Home → **PosterBoard**:
    Suggested Photos / Gallery Cache, each a 0-byte file over its directory). **The reset
    choice is not persisted**: it is a one-shot instruction, and a "Full Reset" that survives
    a launch is a loaded gun (upstream keeps it in memory too).
-5. **Apply PosterBoard** runs the whole chain (the full log is in the run log). **Reboot
-   the device afterwards.**
+5. Then press **Apply** on the home page — it carries this page's selection together with
+   the tweaks, in one backup and one restore, and names itself for what it will carry
+   ("Apply Tweaks & Wallpapers" / "Apply Wallpapers" / "Apply Tweaks"). **Reboot the device
+   afterwards**; the store is read at boot. The full log is in the run log.
 
 ## 8. Limits (read this first)
 

@@ -25,27 +25,18 @@ import UniformTypeIdentifiers
 ///     fetched database stale, so the next apply fetches a fresh one; saying so
 ///     here is cheaper than the puzzle of a store that half-works.
 struct PosterBoardView: View {
-    // Options that survive a launch. `@AppStorage` rather than a settings object
-    // because there are five of them and none is shared with another page (the
-    // contrast is `TweakSelection`, which two pages edit).
-    @AppStorage("PosterBoardVideoLoop") private var loop = true
-    @AppStorage("PosterBoardVideoReverse") private var reverse = false
-    @AppStorage("PosterBoardVideoForeground") private var foreground = false
-    @AppStorage("PosterBoardVideoCalculationMode") private var calculationMode = "linear"
-    @AppStorage("PosterBoardAutoRefresh") private var autoRefresh = true
+    /// Everything this page edits, **owned by `RootView`**: the page picks the
+    /// wallpapers and the home page's single `Apply` delivers them, so the selection has
+    /// to outlive this view — which a `NavigationSplitView` destroys on every sidebar
+    /// selection.  The old `@AppStorage` options moved in here for the same reason: two
+    /// sources of truth for "was Loop on" is one too many when the second one is the one
+    /// that applies.
+    @Binding var selection: PosterBoardSelection
 
-    // Per-session, on purpose: these are a one-shot instruction, and a persisted
-    // "full reset" would be a loaded gun across launches. Upstream keeps them in
-    // memory for the same reason.
-    @State private var resetModes: Set<PosterBoardResetMode> = []
-    @State private var fullReset = false
-
-    @State private var packs: [PosterBoardTendie] = []
-    @State private var video: URL?
-    @State private var thumbnail: URL?
     @State private var identity: DeviceIdentity = .unknown
     @State private var databaseSummary = "not checked yet"
     @State private var pickError: String?
+    /// Only the database fetch runs from this page — the apply is the home page's.
     @State private var status: String?
     @State private var statusTone: GoldenTone = .secondary
     @State private var running = false
@@ -74,17 +65,22 @@ struct PosterBoardView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         // Loading the pack list and the database state is a directory walk and a
-        // file stat, so it happens here and not in `body`.
-        .task { reload() }
+        // file stat, so it happens here and not in `body`. `loadFromDisk` is idempotent
+        // and does not touch the options: `RootView` already ran it at launch, and this
+        // pass is what picks up a pack imported from somewhere else meanwhile.
+        .task {
+            selection.loadFromDisk()
+            refreshDatabaseSummary()
+        }
         .fileImporter(isPresented: $showPackImporter, allowedContentTypes: [.data]) { result in
             importPack(result)
         }
         .fileImporter(isPresented: $showVideoImporter,
                       allowedContentTypes: [.movie, .video, .quickTimeMovie, .mpeg4Movie]) { result in
-            importMedia(result, into: PosterBoard.videoDirectory) { video = $0 }
+            importMedia(result, into: PosterBoard.videoDirectory) { selection.video = $0 }
         }
         .fileImporter(isPresented: $showThumbnailImporter, allowedContentTypes: [.heic, .image]) { result in
-            importMedia(result, into: PosterBoard.thumbnailDirectory) { thumbnail = $0 }
+            importMedia(result, into: PosterBoard.thumbnailDirectory) { selection.thumbnail = $0 }
         }
     }
 
@@ -111,7 +107,7 @@ struct PosterBoardView: View {
                             .font(GoldenFont.rowTitle)
                             .foregroundColor(GoldenTheme.textPrimary)
                         Spacer(minLength: 12)
-                        GoldenSwitch(isOn: $autoRefresh)
+                        GoldenSwitch(isOn: $selection.autoRefresh)
                     }
                     .goldenRowSurface()
                     GoldenActionRow(title: "Fetch database from device",
@@ -135,7 +131,7 @@ struct PosterBoardView: View {
                 + "and the metadata the picker sorts by, so they cannot be invented: the apply "
                 + "fetches the store from the device first and adds rows to a copy of it.",
         ]
-        if autoRefresh {
+        if selection.autoRefresh {
             lines.append("Automatic refresh is on (upstream's default): each apply also writes "
                 + "PBF_RESET_FILE_PROTECTIONS, which is what makes PosterBoard re-read the "
                 + "store at boot. Turn it off to leave the device's preferences alone.")
@@ -147,7 +143,7 @@ struct PosterBoardView: View {
 
     private var packsSection: some View {
         GoldenSection(
-            title: "Wallpaper packs (\(packs.count))",
+            title: "Wallpaper packs (\(selection.tendies.count))",
             content: AnyView(
                 VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
                     GoldenActionRow(title: "Import .tendies pack",
@@ -156,19 +152,19 @@ struct PosterBoardView: View {
                         showPackImporter = true
                     }
                     .disabled(running)
-                    if packs.isEmpty {
+                    if selection.tendies.isEmpty {
                         GoldenMutedNote(text: "No packs imported yet. A `.tendies` file is a ZIP "
                             + "holding a wallpaper's descriptor; import one from a wallpaper "
                             + "collection (Cowabunga and CaPlayground publish them), then Apply.")
                     } else {
-                        ForEach(packs) { pack in
+                        ForEach(selection.tendies) { pack in
                             packRow(pack)
                         }
                         GoldenActionRow(title: "Remove all packs",
                                             systemImage: "trash",
                                             tone: running ? .disabled : .error) {
-                            packs.forEach(PosterBoardImports.remove)
-                            reload()
+                            selection.tendies.forEach(PosterBoardImports.remove)
+                            selection.loadFromDisk()
                         }
                         .disabled(running)
                         GoldenMutedNote(text: "Upstream caps a selection at "
@@ -199,7 +195,7 @@ struct PosterBoardView: View {
             Spacer(minLength: 8)
             Button {
                 PosterBoardImports.remove(pack)
-                reload()
+                selection.loadFromDisk()
             } label: {
                 Image(systemName: "trash")
                     .font(.system(size: 14))
@@ -219,34 +215,34 @@ struct PosterBoardView: View {
             content: AnyView(
                 VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
                     GoldenActionRow(title: "Choose video",
-                                    value: video?.lastPathComponent,
+                                    value: selection.video?.lastPathComponent,
                                     systemImage: "film",
                                     tone: running ? .disabled : .primary) {
                         showVideoImporter = true
                     }
                     .disabled(running)
-                    goldenToggle("Loop (CoreAnimation frame list)", isOn: $loop)
-                    if loop {
-                        goldenToggle("Reverse on loop", isOn: $reverse)
-                        goldenToggle("Cover the clock", isOn: $foreground)
+                    goldenToggle("Loop (CoreAnimation frame list)", isOn: $selection.loop)
+                    if selection.loop {
+                        goldenToggle("Reverse on loop", isOn: $selection.reverse)
+                        goldenToggle("Cover the clock", isOn: $selection.foreground)
                         calculationModeRow
                     } else {
                         GoldenActionRow(title: "Choose freeze frame (.heic)",
-                                        value: thumbnail?.lastPathComponent,
+                                        value: selection.thumbnail?.lastPathComponent,
                                         systemImage: "photo",
                                         tone: running ? .disabled : .primary) {
                             showThumbnailImporter = true
                         }
                         .disabled(running)
                     }
-                    if video != nil || thumbnail != nil {
+                    if selection.video != nil || selection.thumbnail != nil {
                         GoldenActionRow(title: "Clear the video choice",
                                         systemImage: "xmark.circle",
                                         tone: .error) {
                             PosterBoard.clearFiles(in: PosterBoard.videoDirectory)
                             PosterBoard.clearFiles(in: PosterBoard.thumbnailDirectory)
-                            video = nil
-                            thumbnail = nil
+                            selection.video = nil
+                            selection.thumbnail = nil
                         }
                     }
                     GoldenMutedNote(text: videoNote)
@@ -274,7 +270,7 @@ struct PosterBoardView: View {
                 .font(GoldenFont.rowTitle)
                 .foregroundColor(GoldenTheme.textPrimary)
             Spacer(minLength: 12)
-            Picker("", selection: $calculationMode) {
+            Picker("", selection: $selection.calculationMode) {
                 ForEach(PosterBoardCalculationMode.allCases) { mode in
                     Text(mode.title).tag(mode.rawValue)
                 }
@@ -288,7 +284,7 @@ struct PosterBoardView: View {
 
     private var videoNote: String {
         var lines = [String]()
-        if loop {
+        if selection.loop {
             lines.append("Looping decodes the video to JPEG frames and hands PosterBoard a "
                 + "CoreAnimation frame list (up to \(PosterBoardVideo.frameLimit) frames, at the "
                 + "video's own resolution). It is slow, and the frames are written into the "
@@ -302,7 +298,7 @@ struct PosterBoardView: View {
                 + "descriptor with no thumbnail. The video is rewrapped as .mov unless it "
                 + "already is one.")
         }
-        if loop && reverse {
+        if selection.loop && selection.reverse {
             lines.append("Reverse on loop plays the clip forwards and then backwards.")
         }
         return lines.joined(separator: "\n\n")
@@ -316,7 +312,7 @@ struct PosterBoardView: View {
             content: AnyView(
                 VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
                     goldenToggle("Full reset — wipe everything and start empty",
-                                 isOn: $fullReset)
+                                 isOn: $selection.fullReset)
                     ForEach(PosterBoardResetMode.allCases) { mode in
                         goldenToggle(mode.rawValue, isOn: binding(for: mode))
                     }
@@ -328,49 +324,60 @@ struct PosterBoardView: View {
 
     private func binding(for mode: PosterBoardResetMode) -> Binding<Bool> {
         Binding(
-            get: { !fullReset && resetModes.contains(mode) },
+            get: { !selection.fullReset && selection.resetModes.contains(mode) },
             set: { isOn in
-                if isOn { resetModes.insert(mode) } else { resetModes.remove(mode) }
+                if isOn {
+                    selection.resetModes.insert(mode)
+                } else {
+                    selection.resetModes.remove(mode)
+                }
             })
     }
 
     private var resetWarning: String {
-        if fullReset {
+        if selection.fullReset {
             return "Full reset: the store's Extensions, GalleryCache and Backups directories are "
                 + "zeroed and replaced with an empty database. Every wallpaper on the device is "
                 + "gone, and the database fetched before this point is stale — the next apply "
                 + "fetches a fresh one."
         }
-        if resetModes.isEmpty { return "" }
-        let names = resetModes.map(\.rawValue).sorted().joined(separator: ", ")
+        if selection.resetModes.isEmpty { return "" }
+        let names = selection.resetModes.map(\.rawValue).sorted().joined(separator: ", ")
         return "Selected: \(names). A reset is written as a 0-byte file over the folder, which is "
             + "how the reference clears them; it runs without needing the store database, so it "
             + "is the recovery path for a store that is already misbehaving. It does not undo "
             + "anything already applied."
     }
 
-    // MARK: - Apply
+    // MARK: - What the one Apply will carry
 
+    /// **There is no Apply button here**, and that is the point: the reference has one
+    /// apply pass for everything (`_apply_tweak_pass`, with a `needs_posterboard` flag),
+    /// and so does this app — the button lives on the home page, next to the tweaks, and
+    /// it carries this page's selection with them in one backup and one restore.
+    ///
+    /// A second button would have been two runs of the same four stages over two payload
+    /// sets: two backups, two restores, two chances to leave the device half-applied, and
+    /// no way for the operator to know which of them carried what.  Upstream's own
+    /// sidebar has a single Apply page for the same reason.
     private var applyCard: some View {
         GoldenCard {
-            GoldenMutedNote(text: "Applies this page's selection. Reboot the device afterwards — "
-                + "the store is read at boot.")
-            GoldenPrimaryButton(title: running ? "Applying…" : "Apply PosterBoard",
-                                running: running,
-                                disabled: !canApply) {
-                apply()
+            if selection.isActive {
+                GoldenStatusText(text: "Ready: \(selection.describe)", tone: .accent)
+                GoldenMutedNote(text: "Delivered by the **Apply** button on the home page, "
+                    + "together with the tweaks. It fetches the store's database from the "
+                    + "device first, so that run takes one extra exchange. Reboot the device "
+                    + "afterwards — the store is read at boot.")
+            } else {
+                GoldenMutedNote(text: "Nothing selected yet. Whatever is picked here is "
+                    + "delivered by the **Apply** button on the home page, together with the "
+                    + "tweaks — one backup, one restore.")
             }
-            if running {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    let seconds = Int(context.date.timeIntervalSince(runStarted ?? context.date))
-                    GoldenStatusText(text: "elapsed \(seconds)s", tone: .secondary)
-                }
-            }
+            GoldenMutedNote(text: "The database itself can be fetched on its own, from the "
+                + "card above — it is the one stage that can fail on its own terms (the device "
+                + "decides whether it will upload the container), so being able to run it, "
+                + "watch it and retry is worth its own button.")
         }
-    }
-
-    private var canApply: Bool {
-        !running && (fullReset || !resetModes.isEmpty || !packs.isEmpty || video != nil)
     }
 
     private var statusText: String { status ?? "" }
@@ -380,30 +387,6 @@ struct PosterBoardView: View {
     }
 
     // MARK: - Behaviour
-
-    /// The selection this page's controls describe.
-    private var selection: PosterBoardSelection {
-        PosterBoardSelection(tendies: packs,
-                             video: video.map {
-                                 PosterBoardVideoPlan(
-                                    video: $0,
-                                    thumbnail: thumbnail,
-                                    loop: loop,
-                                    reverse: reverse,
-                                    foreground: foreground,
-                                    calculationMode: PosterBoardCalculationMode(rawValue: calculationMode)
-                                        ?? .linear)
-                             },
-                             resetModes: fullReset ? [] : resetModes,
-                             fullReset: fullReset)
-    }
-
-    private func reload() {
-        packs = PosterBoardImports.load()
-        video = PosterBoard.storedFile(in: PosterBoard.videoDirectory)
-        thumbnail = PosterBoard.storedFile(in: PosterBoard.thumbnailDirectory)
-        refreshDatabaseSummary()
-    }
 
     private func refreshDatabaseSummary() {
         // The cache is keyed by UDID (upstream does the same), but the page has
@@ -434,7 +417,7 @@ struct PosterBoardView: View {
         case .failure(let error): pickError = error.localizedDescription
         case .success(let url):
             do {
-                let existing = packs.reduce(0) { $0 + $1.descriptorCount }
+                let existing = selection.tendies.reduce(0) { $0 + $1.descriptorCount }
                 let pack = try PosterBoardImports.import(from: url)
                 // Upstream's cap (`verify_tendie`): a container pack carries no
                 // descriptor and so is never counted, which is also what its
@@ -447,12 +430,12 @@ struct PosterBoardView: View {
                         + "unusable past \(PosterBoardImports.descriptorLimit) — remove a pack "
                         + "first.")
                 }
+                selection.loadFromDisk()
                 pickError = nil
-                reload()
                 RunLog.shared.append("PosterBoard: imported \(pack.name) (\(pack.summary))")
             } catch {
                 pickError = error.localizedDescription
-                reload()
+                selection.loadFromDisk()
             }
         }
     }
@@ -499,51 +482,6 @@ struct PosterBoardView: View {
                 status = text
                 statusTone = tone
                 refreshDatabaseSummary()
-            }
-        }
-    }
-
-    private func apply() {
-        guard !running else { return }
-        running = true
-        runStarted = Date()
-        RunLog.shared.clear()
-        status = "Applying PosterBoard…"
-        statusTone = .accent
-        let snapshot = selection
-        let device = identity
-        let refresh = autoRefresh
-        Task {
-            var text = ""
-            var tone: GoldenTone = .primary
-            var succeeded = false
-            do {
-                try await GoldenNuggetEngine.shared.applyPosterBoard(selection: snapshot,
-                                                                     deviceVersion: device.version,
-                                                                     forceRefresh: refresh)
-                text = "Applied. Reboot the device."
-                tone = .success
-                succeeded = true
-            } catch let failure as TransportFailure where failure.isCancellation {
-                text = "⏹ stopped by the user (\(failure.label))"
-                tone = .warning
-            } catch {
-                text = "❌ \(error.localizedDescription)"
-                tone = .error
-            }
-            await MainActor.run {
-                running = false
-                runStarted = nil
-                status = text
-                statusTone = tone
-                // A reset clears the store, so the fetched copy is stale and the
-                // next apply must not reuse it; the same is true of a run that
-                // added wallpapers the device has not booted into yet.
-                if succeeded {
-                    resetModes = []
-                    fullReset = false
-                    refreshDatabaseSummary()
-                }
             }
         }
     }
