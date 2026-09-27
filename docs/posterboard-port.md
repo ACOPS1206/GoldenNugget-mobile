@@ -127,7 +127,7 @@ record into a boolean.
   | Source | Shape |
   |---|---|
   | iTunes/MobileSync **full** backup, iPad16,2 iOS 27.0 (24A5424a) | `AppDomain-com.apple.PosterBoard` + `Library/Application Support/PRBPosterExtensionDataStore/61/<name>.sqlite3` — **no** `Containers/`, and no path in that backup starts with `/` |
-  | mobilebackup2 **targeted** backup (what this app does) | the shape the reference's diagnostics are written for: it counts rows `LIKE '%Containers/%'` |
+  | mobilebackup2 **targeted** backup (what this app does) | `/.b/<n>/Containers/…` — the reference's `_posterboard_db_match` docstring names this as the iOS 27 upload shape, and its diagnostics count rows `LIKE '%Containers/%'` |
 
   What this app's targeted fetch actually produces has **not** been captured yet, which is
   why `extract` also carries a lookup that ignores the manifest entirely and identifies the

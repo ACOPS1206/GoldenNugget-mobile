@@ -81,8 +81,23 @@ enum PosterBoardBackup {
         //    correct for a record the device produced.
         log("PosterBoard: asking the device for the \(PosterBoard.bundleID) container…")
         let entry = try await Minimuxer.shared().appFactoryEntry(bundleId: PosterBoard.bundleID)
-        log("PosterBoard: container \(entry["Container"] as? String ?? "<not reported>") "
-            + "(\(entry.keys.count) field(s) from the device's own record)")
+        let container = entry["Container"] as? String ?? ""
+        log("PosterBoard: container \(container.isEmpty ? "<not reported>" : container) — "
+            + "\(entry.keys.count) field(s) from the device's own record: "
+            + "\(entry.keys.sorted().joined(separator: ", "))")
+        // `Container` is the knob itself. Without it the device has nothing to
+        // upload, and the only thing a backup would then produce is the host's
+        // own metadata — which is exactly what a 265-second run returned once,
+        // failing only at the end. Refuse here instead: the answer is known in
+        // about a second, and this is the one precondition worth asserting.
+        guard !container.isEmpty else {
+            throw GoldenNuggetError(
+                "The device's own record for \(PosterBoard.bundleID) carries no Container, so "
+                + "there is nothing for a backup to upload. Fields it did return: "
+                + "\(entry.keys.sorted().joined(separator: ", ")). The entry is forwarded "
+                + "verbatim from installation_proxy — it is not composed here — so this is the "
+                + "device declining to name the container, not a malformed request.")
+        }
 
         // 2. Host-side metadata. `isFullBackup: true` is the same marker the
         //    protective pull uses and for the same reason: a sparse marker asks
@@ -105,10 +120,37 @@ enum PosterBoardBackup {
             backupRoot: backupRoot.path(percentEncoded: false),
             sourceIdentifier: udid,
             applications: [PosterBoard.bundleID: entry],
-            shouldPreserve: { _, file in
-                let mentionsStore = file.contains(PosterBoard.databaseFileName)
-                let keep = ProtectiveBackup.isMetadataFile(file) || mentionsStore
-                counter.note(file: file, keep: keep, isStore: mentionsStore)
+            shouldPreserve: { deviceName, fileName in
+                // **The device's own name is the first argument, and matching
+                // the wrong argument is what made this fetch return nothing.**
+                //
+                // `mb2_should_preserve(deviceName, fileName)` hands the host two
+                // strings, and they are not the same kind of thing: `fileName`
+                // is the *host* path the payload is being written to — its last
+                // component is the 40-hex fileID, which is what the 0-byte
+                // placeholder stand-ins in the log are named after — while
+                // `deviceName` is the path the device knows the file by
+                // (`AppDomain-com.apple.PosterBoard/Library/…`, or the raw
+                // container tree). The reference filters on `device_name`
+                // (`_pb_only` → `_domain_match` / `_posterboard_db_match`).
+                //
+                // The first version of this filter ignored the device name and
+                // searched `fileName` for the database's name. A fileID never
+                // contains it, so every PosterBoard file was drained: the run
+                // reported "6 kept of 29078 offered", the six being exactly the
+                // host-side metadata files, and failed 4.4 minutes later.
+                //
+                // Both strings are still checked, because which of them carries
+                // the device path is not something this file can observe, and
+                // being wrong costs a full device run. A false positive would
+                // require a fileID to contain the database's name.
+                let inDevice = deviceName.contains(PosterBoard.databaseFileName)
+                let inFile = fileName.contains(PosterBoard.databaseFileName)
+                let mentionsStore = inDevice || inFile
+                // The metadata files are the one thing named on the host side.
+                let keep = ProtectiveBackup.isMetadataFile(fileName) || mentionsStore
+                counter.note(deviceName: deviceName, fileName: fileName,
+                             keep: keep, isStore: mentionsStore)
                 return keep
             },
             onProgress: { overall in
@@ -120,6 +162,9 @@ enum PosterBoardBackup {
             delegateLog: { line in AppLog.write(line) }
         )
         log("PosterBoard: backup done — \(counter.summary)")
+        // Logged on every run, not only on failure: the first few offers are the
+        // only record of which string this device's stream carries the path in.
+        log("PosterBoard: offers — \(counter.sample())")
         // The store itself has to have come through — metadata alone is not a result.
         // The first version accepted any kept file at all, so a run that carried nothing
         // but `Status.plist` went on to fail several stages later, deep in the manifest
@@ -132,7 +177,12 @@ enum PosterBoardBackup {
                 + "them was \(PosterBoard.databaseFileName). Either the container was never "
                 + "offered — the factory info it was handed did not name it, or the device "
                 + "declined — or it was offered under a name the filter did not recognise; the "
-                + "names below tell the two apart. Names the device offered: \(counter.sample())")
+                + "names below tell the two apart. Offers: \(counter.sample()). "
+                + "(A kept count that is exactly the host's metadata set — Info.plist, "
+                + "Manifest.plist, Status.plist, Manifest.db and its -shm/-wal — means the "
+                + "filter matched nothing the device streamed, not that the device sent "
+                + "nothing: check whether the names being matched are the device's or the "
+                + "host's.)")
         }
 
         // 4. Pull it out, merge the WAL, and hand back the version it was found
@@ -391,26 +441,32 @@ private final class Counter: @unchecked Sendable {
     private var _lastStep = -1
     private var _posterBoardOffers: [String] = []
 
-    func note(file: String, keep: Bool, isStore: Bool) {
+    func note(deviceName: String, fileName: String, keep: Bool, isStore: Bool) {
         lock.lock()
         defer { lock.unlock() }
         _total += 1
         if keep { _kept += 1 }
-        // The store *itself*, not its `-wal`/`-shm` siblings — those contain the name too.
-        // Its device-side path is the best source for the structure version, and its
-        // presence is what decides whether this fetch produced anything at all.
-        if keep, isStore, !file.hasSuffix("-wal"), !file.hasSuffix("-shm") {
+        // The store *itself*, not its `-wal`/`-shm` siblings — those contain the
+        // name too. Its device-side path is the best source for the structure
+        // version, and its presence decides whether this fetch produced anything.
+        if keep, isStore, !deviceName.hasSuffix("-wal"), !deviceName.hasSuffix("-shm") {
             _posterBoardKept += 1
-            if _posterBoardName == nil { _posterBoardName = file }
+            if _posterBoardName == nil { _posterBoardName = deviceName }
         }
-        if _samples.count < 20 { _samples.append(keep ? "+ \(file)" : "- \(file)") }
-        // The names that mention PosterBoard at all are the ones worth seeing
-        // when nothing matched: they say whether the container was uploaded
-        // under a name the filter did not expect.
-        let lower = file.lowercased()
+        // The first few offers are printed as a PAIR, which is the only way to
+        // settle, from a log alone, which of the two strings carries the device
+        // path. That question cost one full device run to answer.
+        if _samples.count < 5 {
+            _samples.append("\(keep ? "+" : "-") device=\(deviceName) file=\(fileName)")
+        } else if _samples.count < 20 {
+            _samples.append("\(keep ? "+" : "-") \(deviceName)")
+        }
+        // Anything mentioning PosterBoard is worth seeing when nothing matched:
+        // it says whether the container was uploaded under an unexpected name.
+        let haystack = (deviceName + " " + fileName).lowercased()
         if _posterBoardOffers.count < 10
-            && (lower.contains("poster") || lower.contains("prb")) {
-            _posterBoardOffers.append(file)
+            && (haystack.contains("poster") || haystack.contains("prb")) {
+            _posterBoardOffers.append(deviceName.isEmpty ? fileName : deviceName)
         }
     }
 
@@ -427,7 +483,9 @@ private final class Counter: @unchecked Sendable {
     var kept: Int { lock.lock(); defer { lock.unlock() }; return _kept }
     var posterBoardKept: Int { lock.lock(); defer { lock.unlock() }; return _posterBoardKept }
     /// The device's own name for the store file, e.g.
-    /// `/.b/1/Containers/…/PRBPosterExtensionDataStore/62/PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3`.
+    /// `/.b/1/Containers/…/PRBPosterExtensionDataStore/62/…sqlite3` (iOS 27) or
+    /// `AppDomain-com.apple.PosterBoard/Library/Application Support/…` (the shape
+    /// this iPad's own iTunes backup uses).
     var posterBoardName: String? { lock.lock(); defer { lock.unlock() }; return _posterBoardName }
 
     var summary: String {
