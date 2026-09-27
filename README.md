@@ -128,7 +128,7 @@ See [CONTRIBUTING.md](https://github.com/awesomenull-dev/GoldenNugget/blob/main/
 
 [caplayground]: https://caplayground.vercel.app/wallpapers
 [i18n]: https://github.com/awesomenull-dev/gNugget-i18n
-[NuggetLogo]: https://github.com/GoldenNugget-Team/GoldenNugget-mobile/blob/main/layout/Applications/GoldenNuggetMobile.app/Logo%402x.png
+[NuggetLogo]: https://github.com/GoldenNugget-Team/GoldenNugget-mobile/blob/main/layout/Applications/GoldenNuggetMobile.app/Logo%401x.png
 [LeminLimez]: https://github.com/leminlimez
 [CowabungaLite]: https://github.com/leminlimez/CowabungaLite
 [WallpapersWebsite]: https://cowabun.ga/wallpapers
