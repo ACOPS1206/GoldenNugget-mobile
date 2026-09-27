@@ -21,7 +21,21 @@ import UniformTypeIdentifiers
 struct TweaksView: View {
     @Binding var selection: TweakSelection
 
-    @State private var identity: DeviceIdentity = .unknown
+    /// The version and model this page filters the registry by, from the shared
+    /// monitor.  It was `@State` read once when the page appeared, which meant the
+    /// list was built against whatever the device said at that moment — an empty
+    /// version disables the bounds and shows everything, so a page opened before
+    /// lockdownd answered drew the unfiltered list and stayed that way until it was
+    /// left and re-entered.  A computed read: the page has no copy to fall behind,
+    /// and a device that changes under it re-filters these rows on the next publish.
+    ///
+    /// The *selection* is deliberately not re-imported when the poll publishes a new
+    /// version — `restoreAutosave()` runs on appear only, because it overwrites the
+    /// live selection and a device that rebooted mid-session is not a reason to
+    /// discard what the user has since switched on.  The next launch re-applies the
+    /// stored preset against the new bounds.
+    @ObservedObject private var deviceMonitor = DeviceIdentityMonitor.shared
+    private var identity: DeviceIdentity { deviceMonitor.current }
     @State private var showImporter = false
     /// Whether an autosave is on disk right now, for the note under the rows.
     @State private var autosaveSaved = false
@@ -58,6 +72,9 @@ struct TweaksView: View {
             if !tail.isEmpty { logSection }
         }
         .navigationTitle("Tweaks")
+        // Compact widths only -- on a tablet the split view draws its own sidebar
+        // toggle, and a second button beside it is the duplicate-controls mess.
+        .goldenSidebarButton()
         .navigationBarTitleDisplayMode(.inline)
         // The reference's `IOSNavBar` is `bg_secondary` with a bottom divider;
         // on iOS that is the platform bar with its background pinned visible.
@@ -69,7 +86,12 @@ struct TweaksView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .task {
-            identity = await DeviceIdentity.read()
+            // Read before restoring, and the order is load-bearing: the stored
+            // preset is applied through `TweakSpec.isCompatible`, so restoring
+            // against an empty version would import tweaks this device cannot
+            // take.  The monitor publishes before this returns, so the `identity`
+            // `restoreAutosave()` reads is the one just fetched.
+            await deviceMonitor.refresh()
             // The reference loads AutoSave at startup (`_load_last_preset`) and
             // rewrites it right after, so a stale entry cannot survive a launch.
             restoreAutosave()

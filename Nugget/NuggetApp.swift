@@ -4,6 +4,12 @@ import Minimuxer
 @main
 struct GoldenNuggetApp: App {
     init() {
+        // Development mode's logging switch, applied at launch rather than when the
+        // settings page is opened: it governs the protocol half of every run, and a
+        // stored preference that only took effect once the user visited a page would
+        // mean a session's minimuxer.log was recorded under the wrong setting.
+        DevSettings.applyLoggingPreference()
+
         // LocalDevVPN compatibility: only start our own WireGuard server
         // (em_proxy at 127.0.0.1:51820) when no LocalDevVPN-style tunnel
         // (NEPacketTunnelProvider with iface 10.7.1.1) is already up.

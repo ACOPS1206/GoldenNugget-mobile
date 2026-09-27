@@ -198,14 +198,19 @@ class GoldenNuggetEngine {
                                              isIPhone: isIPhone)
 
         // Upstream's skip-setup block rides the same apply, **ahead of** the
-        // tweaks (`device_manager.add_skip_setup`), and it is what makes the
-        // switch on the Supervision page a delivery rather than an intent.  Its
-        // warnings are logged below: the parts this port cannot reproduce must
-        // not read like parity.
-        let supervision = SupervisionSettings.shared
-        let skipSetup = supervision.skipSetupEnabled
-            ? SkipSetup.build(supervised: supervision.isSupervised,
-                              organizationName: supervision.organizationName)
+        // tweaks (`device_manager.add_skip_setup`).  Its warnings are logged
+        // below: the parts this port cannot reproduce must not read like parity.
+        //
+        // Always the un-supervised variant.  The `supervised` / `organizationName`
+        // arguments used to come off the Supervision page, and the page is gone —
+        // it recorded `IsSupervised` without ever writing the
+        // `SupervisorHostCertificates` that make the flag mean anything, so a
+        // device this app "supervised" sat in a state the reference never
+        // produces on purpose.  `SkipSetup` still carries the supervised shape
+        // because `scripts/skipsetup-check.swift` checks both, but nothing in the
+        // app selects it any more.
+        let skipSetup = SkipSetupSettings.shared.skipSetupEnabled
+            ? SkipSetup.build(supervised: false, organizationName: "")
             : SkipSetup.Build(payloads: [], warnings: [])
 
         guard !compiled.payloads.isEmpty || !skipSetup.payloads.isEmpty else {
@@ -374,10 +379,18 @@ class GoldenNuggetEngine {
         // that can succeed.
         let version = try await resolvedDeviceVersion(deviceVersion)
         let major = Int(version.split(separator: ".").first ?? "0") ?? 0
-        let ios27 = major >= 27
+        // Development mode can force the iOS 26 branch, so the reported version is no
+        // longer the last word on which branch runs -- only the default for it. Read
+        // once, here, and both decisions below quote the same snapshot.
+        let dev = DevSettings.effective
+        let ios27 = major >= 27 && !dev.forcePartialRestore
         // Reported before the fork, because this number *is* the fork: the
         // branch lines below say where the run went, this says why.
         log("device version for the manifest-format fork: \(version) (major \(major))")
+        if dev.forcePartialRestore {
+            log("development mode: forcing the iOS 26 branch on a major \(major) device "
+                + "-- no protective backup will be pulled")
+        }
 
         // iOS 26: a Partial Restore, built rather than pulled -- an empty device
         // directory, the host-side manifests, then this run's rows. Nothing was
@@ -404,7 +417,11 @@ class GoldenNuggetEngine {
             // photos: it is started to apply tweaks, and the media page is where
             // that choice is made with a count and a free-space figure in front
             // of the user.
-            await mediaBackup(deletingOriginals: false)
+            if dev.skipAfcMedia {
+                log("development mode: skipping the AFC media pull (Dev.SkipAfcMedia)")
+            } else {
+                await mediaBackup(deletingOriginals: false)
+            }
         } else {
             log("Manifest format: legacy MBDB (iOS 26 path), built from nothing")
             backupRoot = try await partialRestore(udid: udid)
@@ -421,6 +438,134 @@ class GoldenNuggetEngine {
 
         try await runRestore(backupRoot: backupRoot, udid: udid, label: label,
                              onSuccess: onSuccess)
+    }
+
+    /// Put the named pages back to stock, on the device.
+    ///
+    /// A port of `device_manager.reset_tweaks` (`device_manager.py:1104`): a
+    /// fixed set of files written over the device's own, with nothing read back
+    /// first — no psysbackup capture, on either branch. The page set comes from
+    /// the picker the reference's `ResetDialog` offers, not from this app's
+    /// tweak selection; the two are unrelated, and the reference's dialog is
+    /// likewise built from `get_resettable_pages`, not from what is enabled.
+    ///
+    /// It is the same pipeline as `applyTweaks` with a different payload list, so
+    /// it reuses `protectiveBackup` / `partialRestore` / `pruneAndInject` /
+    /// `runRestore` rather than growing a second restore path. The two branches
+    /// differ in what a nulled file is written as (0 bytes vs. a valid empty
+    /// plist — `TweakReset` has the table and the reason) and in which manifest
+    /// the run needs, for the same reason the apply forks:
+    ///
+    /// * **iOS 27+** speaks the modern sqlite `Manifest.db` and rejects a
+    ///   synthesized one ("Failed to prepare INSERT for ManagedPreferencesDomain"
+    ///   — the real one carries the device's own domain registration), so the
+    ///   reset pulls the protective backup and prunes it, exactly as an apply
+    ///   does. It does **not** pull media: a reset is a preferences operation and
+    ///   the backup filter rejects the media domains anyway.
+    /// * **iOS 26** speaks legacy MBDB and can have a backup built for it from
+    ///   nothing, so the reset synthesises one.
+    ///
+    /// What is deliberately absent is the reference's `clear_lastapply`: it drops
+    /// the apply record so a later apply does not skip Phase 2 against a reset
+    /// device, and there is no phase-2 skip in this port to guard. The app's own
+    /// selection is left alone too, exactly as the reference leaves the tweaks
+    /// page as the user had it — the reset is of the *device*, and the selection
+    /// is what would put the tweaks back.
+    func resetPages(pages: Set<ResetPage>) async throws {
+        AppLog.shared.memory.reset()
+        warnIfPreviousCallStillRunning()
+        clearCancel()
+        clearProgress()
+        let runStage = StageTimer("RUN page reset")
+        defer { runStage.done() }
+
+        guard !pages.isEmpty else {
+            throw GoldenNuggetError("No page was selected — nothing to reset.")
+        }
+
+        let udid = try await prepareRun()
+
+        // Read the version here for the same reason the apply does: the pages
+        // read it before lockdown answers, so a value of "" would put a 27
+        // device on the 26 branch and hand it 0-byte plists.
+        let version = try await resolvedDeviceVersion("")
+        let major = Int(version.split(separator: ".").first ?? "0") ?? 0
+        let dev = DevSettings.effective
+        let ios27 = major >= 27 && !dev.forcePartialRestore
+
+        let plan = TweakReset.plan(pages: pages, ios27: ios27)
+        guard !plan.payloads.isEmpty else {
+            throw GoldenNuggetError("Every selected page resolved to no file — nothing to reset.")
+        }
+
+        // The reference appends the skip-setup files to the *reset's* file list
+        // too (`add_skip_setup(files_to_restore, uses_domains)`, called after the
+        // null loop and before `start_restore`), subject to its own gate — which
+        // on iOS 27 only passes when the file list already restores real domains,
+        // and in the reset path that means the Daemons page was ticked. Reproduced
+        // as written; see `TweakReset.skipSetupAllowed(pages:ios27:)`.
+        let skipSetupOn = SkipSetupSettings.shared.skipSetupEnabled
+        let skipSetup: SkipSetup.Build
+        if !skipSetupOn {
+            skipSetup = SkipSetup.Build(payloads: [], warnings: [])
+        } else if plan.skipSetupAllowed {
+            skipSetup = SkipSetup.build(supervised: false, organizationName: "")
+        } else {
+            skipSetup = SkipSetup.Build(payloads: [], warnings: [])
+            log("Skip Setup is on, but the reference omits its two files here: on iOS 27 "
+                + "the reset restores no real domain unless the Daemons page is ticked, "
+                + "and that is its `add_skip_setup` condition. Tick Daemons, or reset on "
+                + "iOS 26, to include them.")
+        }
+
+        log("Reset: \(pages.count) page(s) — \(plan.targets.count) file(s) on iOS \(version)")
+        for target in plan.targets {
+            log("  → \(target.location.rawValue) [\(target.kind.rawValue), "
+                + "\(target.contents.count) bytes]")
+        }
+        for item in plan.skipped { log("  ⚠️ skipped \(item.label): \(item.reason)") }
+        for page in ResetPage.allCases where pages.contains(page) {
+            log("  page \(page.title): \(page.locations.count) file(s)")
+        }
+        if ios27 {
+            log("iOS 27 branch: a nulled file is written as a valid empty plist, not 0 bytes — "
+                + "a truncated plist is a SpringBoard boot loop on this release. Nothing is read "
+                + "back from the device first: this is the reference's own no-capture fallback, "
+                + "not a psysbackup restore of the original values.")
+        } else {
+            log("iOS 26 branch: a nulled file is written as 0 bytes, over a synthesised MBDB "
+                + "backup (no device content pulled).")
+        }
+
+        let backupRoot: URL
+        let prune: Bool
+        if ios27 {
+            log("Manifest format: sqlite (iOS 27+ path), protective backup pulled, then pruned")
+            backupRoot = try await protectiveBackup(udid: udid)
+            prune = true
+        } else {
+            log("Manifest format: legacy MBDB (iOS 26 path), built from nothing")
+            backupRoot = try await partialRestore(udid: udid)
+            prune = false
+        }
+
+        try await BackupInjector.pruneAndInject(
+            backupRoot: backupRoot,
+            udid: udid,
+            // Same order as the reference's file list: the daemons file first, then
+            // the nulled ones, then the two skip-setup files last — the reference
+            // calls `add_skip_setup` after the null loop.
+            tweakPayloads: plan.payloads + skipSetup.payloads,
+            prune: prune,
+            ios27: ios27
+        )
+
+        try await runRestore(backupRoot: backupRoot, udid: udid, label: "page reset") {
+            log("Reset succeeded: the device confirmed it finished.")
+            log("The pages above are back to their defaults. The selections in this app are "
+                + "untouched — applying again would write the tweaks back.")
+            log("Reboot the device so the restored files take effect.")
+        }
     }
 
     /// The AFC media stage, as a stage rather than a separate button so the run

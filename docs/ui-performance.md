@@ -1,101 +1,120 @@
-# UI 性能：审计、已修与待办（2026-09-26）
+# UI Performance: Audit, Fixes, and To-Do (2026-09-26)
 
-> 目标：找出"卡顿 / 响应缓慢"的真实来源，而不是猜测。**本机不能真跑**（无设备、无 Instruments），所以
-> 结论来自静态审计 + 逐条代价推理，每条都给 `file:line`；已改的三项都是"按构造即可判定"的改动
-> （见 §3 的效果论证）。真机量化方法见 §5。
+> Goal: find the real source of the "stutter / slow response" instead of guessing. **Cannot actually run
+> on this machine** (no device, no Instruments), so the conclusions come from a static audit + per-item
+> cost reasoning, and every item cites a `file:line`; the three items that were changed are all
+> "judgeable by construction" changes (see the effect argument in §3). The on-device quantification
+> method is in §5.
 
-## 1. 结论排序（按真实代价，不按代码行数）
+## 1. Findings ranked (by real cost, not by line count)
 
-| # | 来源 | 机制 | 代价 | 状态 |
+| # | Source | Mechanism | Cost | Status |
 |---|---|---|---|---|
-| 1 | **`mediaDetail` 在 `body` 里读盘 + JSON 解码** | `GoldenNuggetView` 的 Media 卡片徽标调用 `AfcMediaBackup.read()`（`Data(contentsOf:)` + `JSONDecoder().decode`），它在 `body` 里，**每次渲染都跑一次**，在主线程 | 媒体清单按每个已拉文件一条记录，几千条就是几百 KB～MB 级 JSON ⇒ **每次渲染数毫秒～数十毫秒** | **已修**（源头 memoize） |
-| 2 | **一行日志 = 整页重渲染** | `logs: [String]` 是 `GoldenNuggetView` 的 `@State`，`AppLog` 的 UI handler 每行 append 一次 ⇒ 每行触发整页 `body` 重算，第 1 条随之再跑一遍 | 一次运行 10² 数量级的日志行（进度、delegate 账、重试、诊断块）⇒ 10² 次整页重算，每次都附带第 1 条那次读盘 | **已修**（日志独立 store） |
-| 3 | **长列表不是惰性的** | `GoldenPage` 的内层是 `VStack`：页面一出现就把**所有**行都建出来并常驻。Tweaks 页单是 Liquid Glass 就 98 个子卡（每张 = 标题 + 开关/输入框 + id + 说明），Files 每个条目 3 行 | 首次绘制 + 之后任何 diff 都在为屏幕外的行付费 | **已修**（`LazyVStack`） |
-| 4 | **`MediaView.hasStoredFiles` 每渲染走两遍目录树** | 该谓词遍历 store 找 `.afcpartial`，却写在两个 `.disabled(...)` 里 ⇒ 每次重渲染**两次**全树遍历，主线程 | 文件越多越慢（拉过一次媒体后就是几千个文件） | **已修**（算一次进 state） |
-| 5 | 日志窗口滑动时 identity 全体位移 | `ForEach(Array(lines.enumerated()), id: \.offset)`：`removeFirst` 后每个 offset 都变 ⇒ 600 行全部**重建** | 只在超过 600 行后发生，正好是长运行的后半段 | **已修**（稳定 id） |
-| 6 | `TweaksView` 每次渲染过滤目录 4 遍 | `visibleSpecs`（133 × `isCompatible`，内含版本字符串 split）被 `.count` 与 3 个分节各调一次 | 微秒级，**噪声** | 不修（见 §4） |
-| 7 | `DaemonsView` 每渲染按分节过滤 `DaemonGroups.all` | 同上量级 | 噪声 | 不修 |
-| 8 | `MemoryLogSink` 无上限 | 设计如此（诊断尾巴要用它）；视图侧曾有 600 窗口 ✓ 现在窗口在 `RunLog` | 只在 dump 诊断时复制整个数组 | 保持 |
+| 1 | **`mediaDetail` reads from disk + JSON-decodes inside `body`** | The Media card badge in `GoldenNuggetView` calls `AfcMediaBackup.read()` (`Data(contentsOf:)` + `JSONDecoder().decode`); it lives in `body`, so it **runs once per render**, on the main thread | The media manifest holds one record per already-pulled file; a few thousand entries is JSON on the order of a few hundred KB to MB ⇒ **milliseconds to tens of milliseconds per render** | **Fixed** (memoized at the source) |
+| 2 | **One log line = a full-page re-render** | `logs: [String]` is `GoldenNuggetView`'s `@State`; `AppLog`'s UI handler appends once per line ⇒ every line triggers a whole-page `body` recomputation, and item 1 runs again along with it | One run produces on the order of 10² log lines (progress, delegate accounting, retries, diagnostic blocks) ⇒ 10² full-page recomputations, each one also carrying the disk read from item 1 | **Fixed** (logs in their own store) |
+| 3 | **Long lists are not lazy** | The inner container of `GoldenPage` is a `VStack`: as soon as the page appears it builds **all** rows and keeps them resident. The Tweaks page alone has 98 sub-cards just from Liquid Glass (each = title + toggle/text field + id + description); Files has 3 rows per entry | The first draw, and any diff afterwards, pays for the off-screen rows | **Fixed** (`LazyVStack`) |
+| 4 | **`MediaView.hasStoredFiles` walks the directory tree twice per render** | The predicate walks the store looking for `.afcpartial`, yet it is written into two `.disabled(...)` calls ⇒ **two** full-tree walks per re-render, on the main thread | The more files there are, the slower it gets (after one media pull there are thousands of files) | **Fixed** (computed once into state) |
+| 5 | All identities shift when the log window slides | `ForEach(Array(lines.enumerated()), id: \.offset)`: after `removeFirst` every offset changes ⇒ all 600 lines are **rebuilt** | Only happens past 600 lines, which is exactly the second half of a long run | **Fixed** (stable ids) |
+| 6 | `TweaksView` filters the catalog 4 times per render | `visibleSpecs` (133 × `isCompatible`, containing a version-string split) is called once by `.count` and once by each of the 3 sections | Microsecond-level, **noise** | Not fixed (see §4) |
+| 7 | `DaemonsView` filters `DaemonGroups.all` per section on every render | Same order of magnitude | Noise | Not fixed |
+| 8 | `MemoryLogSink` has no upper bound | By design (the diagnostic tail needs it); the view side used to have a 600-row window ✓ the window is now in `RunLog` | Only copies the whole array when dumping diagnostics | Kept as is |
 
-第 1、2 条是同一个根因的两半：**`body` 里做了 I/O**，而**高频事件（日志）又落在页面状态上**，于是读盘被乘以日志行数。
+Items 1 and 2 are two halves of the same root cause: **I/O is done in `body`**, while **high-frequency events (logs) land on page state**, so the disk read gets multiplied by the number of log lines.
 
-## 1.5 第二轮：用户反馈"还是慢"后找到的两条（先看这个）
+## 1.5 Round two: the two heavier items found after the user reported "still slow" (read this first)
 
-用户复测：**打开一个 NavigationLink 要等约 3 秒，滑动主页有时卡死**。原表里漏掉了两条更重的。
+User retest: **opening a NavigationLink takes about 3 seconds, and scrolling the home page sometimes freezes**. The original table missed two heavier items.
 
-| # | 来源 | 机制 | 代价 | 状态 |
+| # | Source | Mechanism | Cost | Status |
 |---|---|---|---|---|
-| **0** | **`Tunnel.probePeer()` 在 `body` 里**（主页隧道详情那一行） | `Tunnel.probePeer` = 非阻塞 `connect` + `poll(fd, POLLOUT, timeout*1000)`，**默认 `timeout: 2.0`**（`Tunnel.swift:234-260`），被直接插值进 `GoldenStatusText`（`GoldenNuggetView.swift:399` 改前）。于是**只要该 DisclosureGroup 展开**，任何一次 body 求值（滚动触发的惰性行创建、任意状态变化、点 NavigationLink 时页面重渲染）都可能在主线程停 **最多 2 秒** | 主线程 2 秒 = 滚动冻结；也是"3 秒才打开页面"的大头 | **已修** |
-| **3'** | **上一轮的 `LazyVStack` 其实没解决问题** | 每个分节把行包在 `VStack` 里再作为**一个** `AnyView` 交给分节视图 ⇒ 惰性栈只看到"一个孩子"，仍会把该分节**全部**行建出来。用户这次恢复了 **172 个 tweak**（三节默认全开）⇒ 打开 Tweaks 页要同步构造 133 张卡（每张一个控件）；Files 的列表同理（每条目 3 行） | 首帧/推入时数百毫秒级，且在 3s 里占一部分 | **已修**（把"表头"与"行"拆成**兄弟**节点） |
+| **0** | **`Tunnel.probePeer()` in `body`** (the tunnel detail row on the home page) | `Tunnel.probePeer` = a non-blocking `connect` + `poll(fd, POLLOUT, timeout*1000)`, **default `timeout: 2.0`** (`Tunnel.swift:234-260`), interpolated straight into `GoldenStatusText` (`GoldenNuggetView.swift:399`, before the fix). So **as long as that DisclosureGroup is expanded**, any body evaluation (lazy row creation triggered by scrolling, any state change, the page re-render when tapping a NavigationLink) can stall the main thread for **up to 2 seconds** | 2 seconds on the main thread = frozen scrolling; also the bulk of the "3 seconds to open the page" | **Fixed** |
+| **3'** | **The previous round's `LazyVStack` actually did not fix the problem** | Each section wraps its rows in a `VStack` and then hands that to the section view as **one** `AnyView` ⇒ the lazy stack only sees "one child" and still builds **all** rows of that section. This time the user had **172 tweaks** restored (all three sections open by default) ⇒ opening the Tweaks page synchronously builds 133 cards (one control per card); the Files list is the same story (3 rows per entry) | Hundreds of milliseconds on the first frame / push, and it takes part of the 3s | **Fixed** (split the "section header" and the "rows" into **sibling** nodes) |
 
-修法：
+The fix:
 
-- 隧道状态两半（`describe()` 与 `probePeer()`）改为 **state**，由 `refreshTunnelStatus()` 在
-  `Task.detached` 里填充；只在**详情展开时**用 `.task(id: tunnelExpanded)` 每 5 秒探一次（收起即取消），
-  另在头部刷新按钮与"Reset tunnel addresses"后各刷一次。body 里只剩字符串插值。
-- `GoldenCollapsibleSection`（表头 + 内容包在 `VStack` 里）→ **`GoldenCollapsibleHeader`**：调用方把
-  表头与 `if !collapsed { ForEach(rows) { … } }` 作为**兄弟**直接放进页面内容，行因此成为页面
-  `LazyVStack` 的独立子节点，真正按需构造。Tweaks 与 Daemons 两页同时改，间距相同（都是 8 pt）所以
-  视觉不变。
-- Files 的 `Contents` 列表同样拆成 `GoldenSectionHeader` + 裸 `ForEach(entries)`。
+- The two halves of the tunnel status (`describe()` and `probePeer()`) became **state**, filled in by
+  `refreshTunnelStatus()` inside `Task.detached`; only **while the detail is expanded** does
+  `.task(id: tunnelExpanded)` probe once every 5 seconds (collapsing cancels it), plus one refresh each
+  after the header refresh button and after "Reset tunnel addresses". Only string interpolation is left
+  in body.
+- `GoldenCollapsibleSection` (header + content wrapped in a `VStack`) → **`GoldenCollapsibleHeader`**:
+  the caller puts the header and `if !collapsed { ForEach(rows) { … } }` directly into the page content
+  as **siblings**, so the rows become independent children of the page's `LazyVStack` and are really
+  built on demand. The Tweaks and Daemons pages change at the same time; the spacing is identical
+  (8 pt in both cases), so the appearance is unchanged.
+- The `Contents` list in Files is likewise split into `GoldenSectionHeader` + a bare `ForEach(entries)`.
 
-> 用户日志里同时能看到**上一轮修的那个竞态**：`getLockdownValue(ProductVersion) … verifyInitialized()
-> failed: Gateway has not been initialized`（14:57:03）——正是"页面先读到空身份 ⇒ 引擎当初走了 iOS 26
-> 分支"的那次读。`readDevice()` 的有界重试与 `resolvedDeviceVersion` 已经覆盖它，这里不是新问题。
+> The user log also shows **the race that was fixed in the previous round**:
+> `getLockdownValue(ProductVersion) … verifyInitialized() failed: Gateway has not been initialized`
+> (14:57:03) — precisely the read from the time when "the page read an empty identity first ⇒ the engine
+> took the iOS 26 branch". The bounded retry in `readDevice()` and `resolvedDeviceVersion` already cover
+> it; this is not a new problem.
 >
-> 日志里其余的系统噪声（`cannot add handler to 0 from 0 - dropping`、`LaunchServices … process may not
-> map database`、`personaAttributesForPersonaType failed`、`Gesture: System gesture gate timed out`）
-> 是侧载进程的 launchd/LS/XPC 抱怨，不是本 app 的开销。
+> The rest of the system noise in the log (`cannot add handler to 0 from 0 - dropping`, `LaunchServices … process may not
+> map database`, `personaAttributesForPersonaType failed`, `Gesture: System gesture gate timed out`)
+> is launchd/LS/XPC grumbling about the sideloaded process, not this app's cost.
 
-## 2. 证据（逐条）
+## 2. Evidence (item by item)
 
-- `AfcMediaBackup.read()`：`Nugget/Core/AfcMediaBackup.swift:339`（改前）= `Data(contentsOf: manifestURL)` + `JSONDecoder().decode(Manifest.self, …)`；调用点 `Nugget/Views/GoldenNuggetView.swift:178-184`（`mediaDetail`），该属性在 `tweakCards` 的 Media 卡片里用作 `detail:` ⇒ 在 `body` 里。旁边那行注释写着"read from the manifest rather than a directory walk, so it costs nothing on every body pass"——**前半句对，后半句是错的**。
-- 日志：`Logging.swift:145` 把 UI handler `DispatchQueue.main.async` 派发；`GoldenNuggetView.swift:876-884`（改前）在 handler 里 `logs.append` + `logs.count > 600 { removeFirst }` ⇒ `@State` 写入 ⇒ 整页失效。
-- 非惰性列表：`GoldenComponents.swift:17-35`（`GoldenPage`，改前为 `VStack`）；行源见 `TweaksView.swift:151-165`（`ForEach(specs)`）与 `FilesView.swift:143-196`。
-- `MediaView` 的两次遍历：`MediaView.swift:56,60,75`（三处 `.disabled` 里的 `hasStoredFiles`）。
-- 滑动窗口 identity：`GoldenComponents.swift` 的 `GoldenLogView`（改前 `id: \.offset`）。
+- `AfcMediaBackup.read()`: `Nugget/Core/AfcMediaBackup.swift:339` (before the fix) = `Data(contentsOf: manifestURL)` + `JSONDecoder().decode(Manifest.self, …)`; the call site is `Nugget/Views/GoldenNuggetView.swift:178-184` (`mediaDetail`), a property used as `detail:` in the Media card of `tweakCards` ⇒ inside `body`. The comment next to it reads "read from the manifest rather than a directory walk, so it costs nothing on every body pass" — **the first half is right, the second half is wrong**.
+- Logs: `Logging.swift:145` dispatches the UI handler with `DispatchQueue.main.async`; `GoldenNuggetView.swift:876-884` (before the fix) does `logs.append` + `logs.count > 600 { removeFirst }` inside the handler ⇒ an `@State` write ⇒ the whole page is invalidated.
+- Non-lazy lists: `GoldenComponents.swift:17-35` (`GoldenPage`, a `VStack` before the fix); the row sources are `TweaksView.swift:151-165` (`ForEach(specs)`) and `FilesView.swift:143-196`.
+- The two walks in `MediaView`: `MediaView.swift:56,60,75` (`hasStoredFiles` in three `.disabled` calls).
+- Sliding-window identities: `GoldenLogView` in `GoldenComponents.swift` (`id: \.offset` before the fix).
 
-## 3. 已改（三项 + 两个附带）
+## 3. What was changed (three items + two side effects)
 
-| 改动 | 文件 | 为什么这样改是安全的 |
+| Change | File | Why this change is safe |
 |---|---|---|
-| 新增 `RunLog`（`ObservableObject`，按线程加锁的 buffer + 合并 flush）与 `RunLogCard`（**唯一**观察者） | `Nugget/Views/RunLog.swift`（新） | 页面不再读日志 ⇒ 一行日志只让那张卡重算；`append` 可从任意线程进（引擎回调今天在主队列，store 不依赖这点），突发合并成一次主队列 flush；不丢行 |
-| 主页 `logs` 全部改走 store；`spawnLogPrinter`、诊断 dump、两个"开始运行"清空点；日志区无条件放入 `RunLogCard()`（空时它自己什么都不画） | `GoldenNuggetView.swift` | 行为等价：窗口仍是 600 行，诊断块仍作为一条多行条目追加；`grep` 确认全仓只有一处设置 `onLog`，不会互相覆盖 |
-| `AfcMediaBackup.read()` 按"文件 size+mtime"缓存解码结果 | `AfcMediaBackup.swift` | `write` 用 `.atomic` 写：任一保存都会改变 size 或 mtime ⇒ 下次读重新解码（不会读到旧值）；文件不存在时按 `<absent>` 键缓存一个空清单 ✓ 语义与原来一致，只是不再每次解码 |
-| `MediaView.hasStoredFiles` 改成 state，`loadManifest()` 里算一次（拉取路径也补了一次） | `MediaView.swift` | 谓词本身一字未改；触发时机与原逻辑一致（进入页面 / 每个动作结束） |
-| `GoldenPage` 内层 `VStack` → `LazyVStack` | `GoldenComponents.swift` | 同样受 `maxWidth` 约束与居中；子视图的 `.onAppear`/`.task` 改为"出现时才跑"，对输入框草稿、日志卡都是期望语义 |
-| `GoldenLogView` 用稳定 id（新增可选 `firstId`） | `GoldenComponents.swift` | 静态调用点（Tweaks 页的 30 行、Media 页的动作日志）不传 ⇒ 默认 0，行为不变 |
+| Add `RunLog` (`ObservableObject`, a per-thread-locked buffer + coalesced flush) and `RunLogCard` (the **only** observer) | `Nugget/Views/RunLog.swift` (new) | The page no longer reads the logs ⇒ one log line only recomputes that card; `append` can be entered from any thread (the engine callbacks are on the main queue today, and the store does not depend on that), bursts are coalesced into a single main-queue flush; no lines are dropped |
+| All of the home page's `logs` now go through the store; `spawnLogPrinter`, the diagnostic dump, the two "start run" clear points; the log area unconditionally holds a `RunLogCard()` (when empty it draws nothing by itself) | `GoldenNuggetView.swift` | Behaviourally equivalent: the window is still 600 rows, and diagnostic blocks are still appended as one multi-line entry; `grep` confirms that the whole repo has only one place setting `onLog`, so they cannot overwrite each other |
+| `AfcMediaBackup.read()` caches the decoded result by "file size + mtime" | `AfcMediaBackup.swift` | `write` uses `.atomic`: any save changes the size or the mtime ⇒ the next read re-decodes (it will not read a stale value); when the file does not exist it caches an empty manifest under the `<absent>` key ✓ the semantics match the original, it just no longer decodes every time |
+| `MediaView.hasStoredFiles` becomes state, computed once in `loadManifest()` (also added once on the pull path) | `MediaView.swift` | The predicate itself is not changed by a single word; the trigger timing matches the original logic (entering the page / the end of each action) |
+| `GoldenPage`'s inner `VStack` → `LazyVStack` | `GoldenComponents.swift` | Still constrained by `maxWidth` and centred the same way; the children's `.onAppear`/`.task` become "run only once they appear", which is the desired semantics for text field drafts and for the log card |
+| `GoldenLogView` uses stable ids (new optional `firstId`) | `GoldenComponents.swift` | The static call sites (the 30 rows on the Tweaks page, the action log on the Media page) do not pass it ⇒ default 0, behaviour unchanged |
 
-**效果论证（可复核，不需要 profiler）**：第 1、2 条修完后，一次运行的渲染次数从"1 + 日志行数"变成"1"，
-而 `body` 里再也**没有**重活。复核命令：
+**Effect argument (verifiable, no profiler needed)**: after fixing items 1 and 2, the number of renders for one
+run goes from "1 + number of log lines" to "1", and there is **no** heavy work left in `body`. Verification
+command:
 
 ```bash
 grep -nE "contentsOf|JSONDecoder|enumerator|attributesOfItem|AfcMediaBackup\.read" Nugget/Views/*.swift
 ```
 
-改后只剩四处，逐一看都是允许的：`GoldenComponents.swift:505-507`（`GoldenLogo` 的
-`static let bundledIcon`，**一次性**加载）、`GoldenNuggetView.swift:183`（`mediaDetail` ⇒ 现在只是
-`AfcMediaBackup.read()` 的 **`stat`**，解码已被 §3 的缓存吃掉）、`MediaView.swift:28,47`（都在
-`loadManifest()` / `storeHasFiles()` 里，由 `.task` 或动作调用，**不在 `body`**）、其余命中都在
-配对文件与预设导入等**动作**里。第 3 条让屏幕外的行不再被构造，这是首帧与 diff 的直接减少。
+After the change only four hits remain, and each one is allowed on inspection: `GoldenComponents.swift:505-507`
+(`GoldenLogo`'s `static let bundledIcon`, a **one-time** load), `GoldenNuggetView.swift:183` (`mediaDetail`
+⇒ now only a **`stat`** inside `AfcMediaBackup.read()`; the decoding is absorbed by the cache in §3),
+`MediaView.swift:28,47` (both inside `loadManifest()` / `storeHasFiles()`, invoked by `.task` or by an
+action, **not in `body`**); the remaining hits are all in **actions** such as pairing files and importing
+presets. Item 3 means off-screen rows are no longer constructed, which directly reduces the first frame and
+the diffs.
 
-## 4. 看过但决定不改的（附理由）
+## 4. Looked at but deliberately not changed (with reasons)
 
-- **`visibleSpecs` 每次渲染算 4 遍**（`TweaksView.swift:114,151`）：可以改成"父级算一次、按参数传下去"，
-  但一次 = 133 × 版本字符串比较，量级是微秒 ⇒ 属于噪声。要改就等真机 Instruments 显示它是热点再改。
-- **`TweakVersion.components` 每次都 split 字符串**：同上，量级更小；给它做 memo 只增加状态。
-- **`DaemonsView` 的分节过滤**：同上。
-- **`MemoryLogSink` 不设上限**：设计决策（诊断尾巴需要完整），视图侧已有窗口。
-- **`AppLog` 每行一次 `DispatchQueue.main.async`**：`RunLog` 已把突发合并；要彻底消除得改 `AppLog` 的
-  派发策略，而那会影响多处调用点，收益不如现在这条。
+- **`visibleSpecs` is computed 4 times per render** (`TweaksView.swift:114,151`): it could be changed to
+  "compute it once in the parent and pass it down as a parameter", but one computation = 133 × version
+  string comparisons, which is on the order of microseconds ⇒ it is noise. If we change it, we wait until
+  on-device Instruments shows that it is a hotspot.
+- **`TweakVersion.components` splits the string every time**: same thing, an even smaller order of
+  magnitude; memoizing it would only add state.
+- **`DaemonsView`'s per-section filtering**: same.
+- **`MemoryLogSink` sets no upper bound**: a design decision (the diagnostic tail needs the full data), and
+  the view side already has a window.
+- **`AppLog` does one `DispatchQueue.main.async` per line**: `RunLog` already coalesces bursts; eliminating
+  it entirely would mean changing `AppLog`'s dispatch policy, which would affect several call sites, and
+  the benefit would not be worth it compared with what is there now.
 
-## 5. 真机上怎么量化（下一步）
+## 5. How to quantify on a real device (next step)
 
-1. **Instruments → SwiftUI** 模板（Xcode 27 自带"View Body"轨道）：先记 `GoldenNuggetView` /
-   `TweaksView` 的 body 次数基线，跑一次 apply，对比改动前后。期望：改动前 ≈ 1 + 日志行数，改动后 ≈ 1。
-2. **Time Profiler** 抓一次 apply：看主线程上 `JSONDecoder.decode` / `contentsOf` / `enumerator(atPath:)`
-   是否还在栈上——改动后 `/Views/` 下不应再有这些符号。
-3. **首帧**：进入 Tweaks 页（Liquid Glass 展开）时用 `os_signpost` 或 Instruments 的
-   "Hangs / Animation Hitches" 看首帧时长；`LazyVStack` 之前它是"98 张卡全部构造"。
-4. App 自带通道：`Share poc.log` / `Share diagnostics.txt`（`RunLog` 的 600 行窗口 + 引擎内存 sink 的
-   完整尾巴）就是"发生了什么"的现场，改动不改变它们的可用性。
+1. **Instruments → SwiftUI** template (Xcode 27 ships a "View Body" track): first record the baseline
+   body-evaluation count for `GoldenNuggetView` / `TweaksView`, run one apply, and compare before and
+   after the change. Expected: before ≈ 1 + number of log lines, after ≈ 1.
+2. **Time Profiler** on one apply: check whether `JSONDecoder.decode` / `contentsOf` / `enumerator(atPath:)`
+   are still on the stack on the main thread — after the change there should be no such symbols left under
+   `/Views/`.
+3. **First frame**: when entering the Tweaks page (Liquid Glass expanded), use `os_signpost` or the
+   "Hangs / Animation Hitches" instrument in Instruments to look at the first-frame duration; before
+   `LazyVStack` it was "all 98 cards constructed".
+4. The app's own channel: `Share poc.log` / `Share diagnostics.txt` (the 600-row `RunLog` window + the
+   full tail of the engine's in-memory sink) is the crime scene of "what happened"; the change does not
+   affect their availability.

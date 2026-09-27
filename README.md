@@ -1,50 +1,168 @@
+![Artboard][NuggetLogo]
+
 # GoldenNugget (Mobile)
-Unlock your device fullest potential without pc!
-# Quick start
-1st Grab latest release\
-2nd install localdevvpn from app store\
-3rd Disable Find My\
-and 4 sideload programm via: Livecontainer, Alt/SideStore or ILoader
+Unlock your device's full potential, with iOS 27 support!
 
-# Building
+Customize your device with animated wallpapers, disable pesky daemons, and more!
 
-The app binary is `GoldenNuggetMobile`, and `CFBundleExecutable` in
-`layout/Applications/GoldenNuggetMobile.app/Info.plist` has to agree with the
-SwiftPM product name in `Package.swift` — a mismatch fails the xtool build at
-the signing step with `Can't parse BundleExecute file!`.
+Make sure you have installed the [requirements](#requirements) if you are on Windows or Linux.
 
-xtool (works on Linux and macOS, driven by `xtool.yml`):
+> [!NOTE]
+> Please back up your data before using this Project! GoldenNugget may cause unforeseen problems, so it is better to be safe than sorry. We are not responsible for any damage done to your device.
 
-```sh
-xtool dev build -c release -i     # -> xtool/GoldenNuggetMobile.ipa
-```
+> [!WARNING]
+> This fork implements backup→tweak→restore workflow to prevent data loss on iOS 27, **this saves almost all data**.\
+>  **I AM NOT RESPONSIBLE IN ANY DATA LOSS OR BOOTLOOPS, IF SOMETHING GOES OFF ITS YOUR FAULT**
+## Discord server
+Wanted support? join our [Discord Server][server].
 
-Xcode (macOS only, driven by `GoldenNuggetMobile.xcodeproj`):
+## Features
+<details>
+<summary>iOS 26.2 - 27.0+</summary>
 
-```sh
-scripts/build-ipa.sh Release      # -> build/GoldenNuggetMobile.ipa (unsigned)
-```
+- PosterBoard: Animated wallpapers and descriptors.
+  - Community wallpapers can be found [here][WallpapersWebsite] or [here][caplayground]
+  - Customizing community-made wallpapers via batter files
+  - Device-Specific wallpapers in MercuryPoster can be installed
+  - See documentation on the structure of tendies and batter files in [documentation.md](documentation.md)
+- Templates: Custom Operations and file editing
+  - See documentation on the structure of batter files in [documentation.md](documentation.md)
+- Springboard Options
+  - Set Lock Screen Footnote
+  - Set Lock Screen Idle Auto-Lock Time
+  - Disable Lock After Respring
+  - Disable Screen Dimming While Charging
+  - Disable Low Battery Alerts
+  - Hide AC Power on Lock Screen
+  - Show Supervision Text on Lock Screen
+  - Show Dynamic Island in Screenshots
+  - Enable AirPlay support for Stage Manager
+  - Show Red/Green Authentication Line on Lock Screen (See [this issue](https://github.com/leminlimez/Nugget/issues/656) for what it looks like)
+  - Disable Floating Tab Bar on iPads
+- Internal Options
+  - Build Version in Status Bar
+  - Force Right to Left
+  - Show Hidden Icons on Home Screen
+  - Force Metal HUD Debug
+  - iMessage Diagnostics
+  - IDS Diagnostics
+  - VC Diagnostics
+  - App Store Debug Gesture
+  - Notes App Debug Mode
+  - Show Touches With Debug Info
+  - Hide Respring Icon
+  - Play Sound on Paste
+  - Show Notifications for System Pastes
+- Disable Liquid Glass (iOS 26.0+):
+  - Ignore Liquid Glass App Build Check (iOS 26.0+)
+  - Force Solarium Fallback (iOS 26.0+, doesn't work on iOS 27 anymore)
+- Disable Daemons:
+  - OTAd
+  - UsageTrackingAgent
+  - Game Center
+  - Screen Time Agent
+  - Logs, Dumps, and Crash Reports
+  - ATWAKEUP
+  - Tipsd
+  - VPN
+  - Chinese WLAN service
+  - HealthKit
+  - AirPrint
+  - Assistive Touch
+  - iCloud
+  - Internet Tethering (aka Personal Hotspot)
+  - PassBook
+  - Spotlight
+</details>
 
-Source layout and the conventions that matter live in
-`Nugget/Core/GoldenNuggetEngine.swift`.
+## Contributors 
 
-`Package.swift` is the single source of truth for which files the
-`GoldenNuggetMobile` target compiles. After adding or removing a file under
-`Nugget/`, reconcile the Xcode project:
+<div align="center">
 
-```sh
-scripts/sync-pbxproj-sources.py           # rewrite project.pbxproj
-scripts/sync-pbxproj-sources.py --check   # report drift, change nothing
-scripts/typecheck.sh                      # swiftc gate, 0 errors to pass
-```
+**Thanks everyone who contributes to project!** 🎉
 
-That script reconciles **sources only**. A SwiftPM *product* the app depends on
-(`.product(name:package:)` in `Package.swift`) has to be mirrored by hand in
-`project.yml` **and** in `project.pbxproj` (`packageProductDependencies` plus a
-`XCSwiftPackageProductDependency` object) — XcodeGen is not installed here, so
-`project.pbxproj` cannot be regenerated from `project.yml` and the three files
-have to agree. The app depends on two products of the vendored package today:
-`Minimuxer` and `ZIPFoundation` (the latter for `.tendies` packs, which are ZIPs).
+<a href="https://github.com/GoldenNugget-Team/GoldenNugget-mobile/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=GoldenNugget-Team/GoldenNugget-mobile" alt="Contributors" />
+</a>
 
-Both scripts take the source list from `swift package describe`, so they cannot
-disagree about what is in the target.
+Want to see your name here? Open [Pull Request](https://github.com/GoldenNugget-Team/GoldenNugget-mobile/pulls)!
+
+</div>
+
+## Star History
+
+<a href="https://www.star-history.com/?type=date&repos=GoldenNugget-mobile%2FGoldenNugget-mobile">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=GoldenNugget-Team/GoldenNugget-mobile&type=date&theme=dark&legend=top-left&sealed_token=3Suw7Y0hFqwuBPijtmeM2A7pzK2ZCvEPoousYMJzOVFnPza-Aq5SzgNnEcgveIpQsBLEOL2QRtxwZbmaxn_S_3Lf9l0jINrMfRWkjFWGo3dVYCrFRpN6dA" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=GoldenNugget-Team/GoldenNugget-mobile&type=date&legend=top-left&sealed_token=3Suw7Y0hFqwuBPijtmeM2A7pzK2ZCvEPoousYMJzOVFnPza-Aq5SzgNnEcgveIpQsBLEOL2QRtxwZbmaxn_S_3Lf9l0jINrMfRWkjFWGo3dVYCrFRpN6dA" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=GoldenNugget-Team/GoldenNugget-mobile&type=date&legend=top-left&sealed_token=3Suw7Y0hFqwuBPijtmeM2A7pzK2ZCvEPoousYMJzOVFnPza-Aq5SzgNnEcgveIpQsBLEOL2QRtxwZbmaxn_S_3Lf9l0jINrMfRWkjFWGo3dVYCrFRpN6dA" />
+ </picture>
+</a>
+
+<div align="center">
+<br>We think you can star this repo if you think this is a good project.</br>
+</div>
+
+> [!NOTE]
+> ## Mobilegestalt
+> Don't even ask me for it. It will be NEVER implemented again. 
+
+## Requirements:
+1: LocalDevVpn (can be installed from App Store)\
+2: WiFi\
+3: Disabled Find My
+
+# Contributing and forking.
+See [CONTRIBUTING.md](https://github.com/awesomenull-dev/GoldenNugget/blob/main/CONTRIBUTING.md), want fork instead? Then see [FORKING.md](https://github.com/awesomenull-dev/GoldenNugget/blob/main/FORKING.md)
+
+## Credits
+- [awesomenull] Lead developer
+- [Wind0ws11Aero] for helping with development a lot.
+- [LeminLimez] for creating Nugget.
+- [0xjonhnnydev] for [AirLift]
+- [PosterRestore][PosterRestoreDiscord] for their help with PosterBoard
+  - Special thanks to [dootskyre][dootskyreX], [Middo][MiddoX], [dulark][dularkGitHub], forcequitOS, and pingubow for their work on nugget. It would not have been possible without them!
+  - Thanks to [Snoolie for aar handling][python-aar-stuffGitHub]!
+- [iTechExpert][iTechExpertTwitter] for various Springboard/Internal Options
+- [Mikasa-san][Mikasa-sanGitHub] for [Quiet Daemon][QuietDaemonGitHub]
+
+[caplayground]: https://caplayground.vercel.app/wallpapers
+[i18n]: https://github.com/awesomenull-dev/gNugget-i18n
+[NuggetLogo]: https://github.com/GoldenNugget-Team/GoldenNugget-mobile/blob/main/layout/Applications/GoldenNuggetMobile.app/Logo%401x.png
+[LeminLimez]: https://github.com/leminlimez
+[CowabungaLite]: https://github.com/leminlimez/CowabungaLite
+[WallpapersWebsite]: https://cowabun.ga/wallpapers
+[AppleDevices]: https://apps.microsoft.com/detail/9np83lwlpz9k
+[iTunes]: https://support.apple.com/en-us/106372
+[usbmuxdGitHub]: https://github.com/libimobiledevice/usbmuxd
+[libimobiledeviceGitHub]: https://github.com/libimobiledevice/libimobiledevice
+[ShortcutsApp]: https://apps.apple.com/us/app/shortcuts/id915249334
+[MobilegestaltShortcut]: https://www.icloud.com/shortcuts/66bd3c822a0145b98d46cd1c9077e6e5
+[ReadMoreGist]: https://gist.github.com/leminlimez/c602c067349140fe979410ef69d39c28
+[Wind0ws11Aero]: https://github.com/Wind0ws11Aero
+[POEditorJoin]: https://poeditor.com/join/project/UTqpVSE2UD
+[JJTechGitHub]: https://github.com/JJTech0130
+[TrollStoreGitHub]: https://github.com/JJTech0130/TrollRestore
+[PosterRestoreDiscord]: https://discord.gg/gWtzTVhMvh
+[dootskyreX]: https://x.com/dootskyre
+[MiddoX]: https://x.com/MWRevamped
+[dularkGitHub]: https://github.com/dularkian
+[SerStarsX]: https://x.com/SerStars_lol
+[disfordottieX]: https://x.com/disfordottie
+[Mikasa-sanGitHub]: https://github.com/Mikasa-san
+[QuietDaemonGitHub]: https://github.com/Mikasa-san/QuietDaemon
+[sneakyf1shyGitHub]: https://github.com/f1shy-dev
+[lrdsnowGitHub]: https://github.com/Lrdsnow
+[EUEnablerGitHub]: https://github.com/Lrdsnow/EUEnabler
+[pymobiledevice3GitHub]: https://github.com/doronz88/pymobiledevice3
+[PySide6Doc]: https://doc.qt.io/qtforpython-6/
+[python-aar-stuffGitHub]: https://github.com/0xilis/python-aar-stuff
+[AIEligibilityGist]: https://gist.github.com/f1shy-dev/23b4a78dc283edd30ae2b2e6429129b5
+[bl_sbxGitHub]: https://github.com/khanhduytran0/bl_sbx/tree/main
+[DuyGitHub]: https://github.com/khanhduytran0
+[HuyTwitter]: https://x.com/Little_34306
+[iTechExpertTwitter]: https://twitter.com/iTechExpert21
+[server]: https://discord.gg/Rm6r4zeE3y
+[0xjonhnnydev]: https://github.com/0xjohnnydev
+[awesomenull]: https://github.com/awesomenull-dev
+[AirLift]: https://github.com/0xjohnnydev/airlift

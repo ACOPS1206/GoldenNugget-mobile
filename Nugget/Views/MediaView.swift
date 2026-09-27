@@ -104,6 +104,21 @@ struct MediaView: View {
             }
         }
         .task { loadManifest() }
+        // The only page that had no navigation bar at all, because it used to be
+        // the one destination reached from a launcher (Home's card grid) rather
+        // than pushed on a stack, so it never needed a back button.  Both of
+        // those are gone: the sidebar is the only way in and it pushes like
+        // everything else, so this page gets the same bar as the rest — title
+        // included, which it never had.
+        .navigationTitle("Media")
+        // Compact widths only -- on a tablet the split view draws its own sidebar
+        // toggle, and a second button beside it is the duplicate-controls mess.
+        .goldenSidebarButton()
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        .toolbarBackground(GoldenTheme.backgroundSecondary, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .confirmationDialog(
             "Remove \(survey?.files.count ?? 0) original(s) after copying?",
             isPresented: $confirmPull, titleVisibility: .visible

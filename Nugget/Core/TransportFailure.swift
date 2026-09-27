@@ -214,7 +214,7 @@ enum TransportFailure: Error, LocalizedError {
                 + "— the device initiates with DLMessageVersionExchange and we only answer — so nothing "
                 + "the app sends can cause this, and the currently loaded binary is not a suspect. "
                 + "The device-side backup daemon is the one not talking: it wedges on a request it cannot "
-                + "process and stays wedged across app restarts, so REBOOT THE DEVICE (重启设备) before "
+                + "process and stays wedged across app restarts, so REBOOT THE DEVICE before "
                 + "retrying. Background: scripts/patch-idevice-target-identifier.sh"
 
         case .streamStalled(let label, let held, let verdict):

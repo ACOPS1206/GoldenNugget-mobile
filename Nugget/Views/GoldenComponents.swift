@@ -522,6 +522,11 @@ struct GoldenIconButton: View {
 /// the reference's own fallback when the artwork is missing
 /// (`home.py`: a `bg_secondary` square at radius 14).
 struct GoldenLogo: View {
+    /// The square the logo is drawn at. The home header keeps the design system's
+    /// 80; the settings page's About wants it larger, and a second hard-coded
+    /// frame here would be one more number to keep in step with the theme.
+    var size: CGFloat = GoldenTheme.logoSize
+
     var body: some View {
         Group {
             if let image = GoldenLogo.bundledIcon {
@@ -538,116 +543,44 @@ struct GoldenLogo: View {
                     )
             }
         }
-        .frame(width: GoldenTheme.logoSize, height: GoldenTheme.logoSize)
+        .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: GoldenTheme.logoRadius))
     }
 
-    /// The same icon the home screen shows.
+    /// The same artwork the home screen shows.
     ///
-    /// The icon is an Icon Composer bundle compiled into `Assets.car`, so
-    /// `UIImage(named:)` resolves it out of the catalog and returns the variant
-    /// for the current appearance. That is tried first, and it is what makes the
-    /// in-app logo follow the light/dark theme instead of being a frozen PNG.
+    /// It deliberately does **not** go through `UIImage(named: "AppIcon")`, even
+    /// though the icon is a catalog asset and that looks like the obvious way in.
+    /// An app icon is not an image: the name resolves to a `CUINamedImage` out of
+    /// the iconstack rather than to CGImage-backed content, and UIKit's
+    /// `-[_UIImageCGImageContent initWithCGImageSource:CGImage:scale:]` asserts on
+    /// it. That is an `NSAssertionHandler` throw, not a Swift error, so it cannot
+    /// be caught — it aborts the process:
     ///
-    /// The loose `AppIcon60x60@2x` / `AppIcon76x76@2x~ipad` fallbacks are gone
-    /// from the bundle on purpose -- they are light-only and they shadowed the
-    /// iconstack on the home screen, which is why the icon came out white in
-    /// both themes. `Logo@1x/@2x` are the same artwork under names that no
-    /// icon key can claim, kept as the fallback for a catalog lookup that comes
-    /// back empty.
+    ///     GoldenLogo.bundledIcon -> UIImage(named:) -> _UIAssetManager imageNamed:
+    ///       -> CUINamedImage UIImageWithAsset: -> _UIImageCGImageContent initWithCGImageSource:
+    ///       -> NSAssertionHandler handleFailureInMethod: -> objc_exception_throw -> abort
+    ///
+    /// SIGABRT, `bug_type 309`, and because this is a `static let` the trap fires
+    /// on the first view that asks for the logo — during the home screen's first
+    /// layout pass, so the app dies before anything is on screen. One iconstack in
+    /// the car happened to resolve to a loadable rendition; a second one did not,
+    /// which is what turned a latent bad call into a launch crash.
+    ///
+    /// `Logo@1x/@2x` are the same artwork under names no icon key can claim, so
+    /// they cannot shadow the iconstack the way the light-only `AppIcon*.png`
+    /// files used to. Loading them by path cannot abort.
+    ///
+    /// Following the light/dark theme again means a real `.imageset` in the
+    /// catalog with a dark twin — `UIImage(named:)` handles an ordinary imageset
+    /// fine. It needs an actool round-trip, since the car is built on macOS.
     private static let bundledIcon: UIImage? = {
-        if let catalog = UIImage(named: "AppIcon") { return catalog }
         if let path = Bundle.main.path(forResource: "Logo@2x", ofType: "png"),
            let image = UIImage(contentsOfFile: path) { return image }
         if let path = Bundle.main.path(forResource: "Logo@1x", ofType: "png"),
            let image = UIImage(contentsOfFile: path) { return image }
         return nil
     }()
-}
-
-/// `home.py:_make_card` — a 56 pt header band with the 17/600 title, then a
-/// content block with the 13 pt subtitle (and, for this app, the one number the
-/// card stands for).  A plain label so the caller wraps it in whatever it needs
-/// — a `NavigationLink` here — and the whole card stays one tap target.  The
-/// reference's card has no chevron; neither does this.
-struct GoldenFeatureCardLabel: View {
-    let title: String
-    let subtitle: String
-    var detail: String?
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Text(title)
-                .font(GoldenFont.cardTitle)
-                .foregroundColor(GoldenTheme.textPrimary)
-                .frame(maxWidth: .infinity)
-                .frame(height: 56)
-                .background(GoldenTheme.backgroundSecondary)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(subtitle)
-                    .font(GoldenFont.cardSubtitle)
-                    .foregroundColor(GoldenTheme.textSecondary)
-                if let detail {
-                    GoldenValueLabel(text: detail)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(GoldenTheme.cardPadding)
-        }
-        // The reference's card body sits on the page fill while only the header
-        // band is `bg_secondary`, which is what gives the card its two-tone look.
-        .background(GoldenTheme.backgroundTertiary)
-        .clipShape(RoundedRectangle(cornerRadius: GoldenTheme.cardRadius))
-        .contentShape(Rectangle())
-    }
-}
-
-/// `home.py:_CardGrid` — reflows the cards into the largest column count where
-/// each card still gets `gridMinCardWidth`, so a wide screen fills one row
-/// instead of dropping the last card to a second one.
-struct GoldenCardGrid<Content: View>: View {
-    let itemCount: Int
-    let content: (Int) -> Content
-    @State private var width: CGFloat = 0
-
-    init(itemCount: Int, @ViewBuilder content: @escaping (Int) -> Content) {
-        self.itemCount = itemCount
-        self.content = content
-    }
-
-    var body: some View {
-        let columns = columnCount(for: width)
-        let rows = columns > 0 ? Int(ceil(Double(itemCount) / Double(columns))) : 0
-        VStack(spacing: GoldenTheme.gridSpacing) {
-            ForEach(0..<max(rows, 0), id: \.self) { row in
-                HStack(spacing: GoldenTheme.gridSpacing) {
-                    ForEach(0..<max(columns, 1), id: \.self) { column in
-                        let index = row * columns + column
-                        if index < itemCount {
-                            content(index)
-                        } else {
-                            Color.clear
-                        }
-                    }
-                }
-            }
-        }
-        .background(GeometryReader { proxy in
-            Color.clear
-                .onAppear { width = proxy.size.width }
-                .onChange(of: proxy.size.width) { width = $0 }
-        })
-    }
-
-    private func columnCount(for width: CGFloat) -> Int {
-        guard width > 0, itemCount > 0 else { return 1 }
-        for candidate in stride(from: itemCount, through: 1, by: -1) {
-            let available = width - GoldenTheme.gridSpacing * CGFloat(candidate - 1)
-            if available / CGFloat(candidate) >= GoldenTheme.gridMinCardWidth { return candidate }
-        }
-        return 1
-    }
 }
 
 // MARK: - Log

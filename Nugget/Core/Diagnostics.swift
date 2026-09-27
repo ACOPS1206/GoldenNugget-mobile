@@ -140,16 +140,20 @@ enum Diagnostics {
         switch await backupEncryptionEnabled() {
         case .some(true):
             throw GoldenNuggetError("""
-                设备「加密本地备份」已开启（lockdown com.apple.mobile.backup / WillEncrypt = true）。
-                GoldenNugget 的前提是明文 Manifest.db：prune / inject 用裸 sqlite3 直接改写它，
-                而 vendored 的 Rust 库完全没有 encrypt/keybag 处理（pymobice3 那条路要先解密、修剪、再加密）。
-                请先在 设置 → 你的名字 → iCloud → 设备备份 里关掉「加密本地备份」，
-                或用 Finder/iTunes 设备页取消勾选「加密本地备份」，然后再跑。
+                This device has "Encrypt local backup" turned on (lockdown \
+                com.apple.mobile.backup / WillEncrypt = true).
+                GoldenNugget's premise is a plaintext Manifest.db: prune and inject rewrite it \
+                through bare sqlite3, and the vendored Rust library has no encrypt/keybag handling \
+                at all (pymobiledevice3's path decrypts first, prunes, then re-encrypts).
+                Turn "Encrypt local backup" off in Settings → [your name] → iCloud → Device \
+                Backup, or clear it on the device page in Finder/iTunes, then run again.
                 """)
         case .some(false):
-            AppLog.write("preflight: 加密本地备份 = OFF（明文 Manifest.db，前提成立）")
+            AppLog.write("preflight: encrypted local backup = OFF (plaintext Manifest.db, "
+                         + "premise holds)")
         case .none:
-            AppLog.write("preflight: WillEncrypt 读取失败（domain/key 不可用）——继续，但请注意加密备份会让 prune/inject 失效")
+            AppLog.write("preflight: WillEncrypt could not be read (domain/key unavailable) "
+                         + "— continuing, but note that an encrypted backup breaks prune/inject")
         }
     }
 }

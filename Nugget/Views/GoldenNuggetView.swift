@@ -5,16 +5,17 @@ import Foundation
 
 /// The home page, laid out the way the reference's iOS home page lays it out
 /// (`src/gui/ios/home.py`): logo header carrying the device line and a refresh
-/// button → the connection status line → the feature-card grid → Apply Tweaks →
-/// the danger action → the centred process-status line.  What this app needs on
-/// top of that (pairing file, tunnel, diagnostics, log) sits below, because the
-/// reference keeps all of it on its own pages.
+/// button → the connection status line → Apply Tweaks → the danger action → the
+/// centred process-status line.  What this app needs on top of that (pairing
+/// file, tunnel, diagnostics, log) sits below, because the reference keeps all of
+/// it on its own pages.
 ///
-/// The reference draws six feature cards; five of them — PosterBoard, Daemons,
-/// Status Bar, Icon Themes, Passcode Theme — are not ported, so the grid renders
-/// the one that is.  The reflow rule behind the grid is the reference's
-/// (`MIN_CARD_WIDTH = 200`, 12 pt gutters), which is what makes the page behave
-/// the same on a phone and on the iPad this app actually runs on.
+/// There is no feature-card grid here.  The reference's home page opens its
+/// sections from cards, but this app has a sidebar, and the two were reaching the
+/// same five destinations by different routes — the cards now that the sidebar
+/// exists they are a second copy of a list the user is already looking at, and
+/// the copy that goes stale is the one on the page they are reading.  The
+/// sections are reachable from the sidebar and from nowhere else.
 struct GoldenNuggetView: View {
     @AppStorage("PairingFile") var pairingFileRaw: String?
     // The tunnel addressing, persisted under the same keys `Tunnel` reads (see
@@ -58,7 +59,17 @@ struct GoldenNuggetView: View {
     @Binding var tweakSelection: TweakSelection
     /// The pending debounced autosave, cancelled and replaced on every change.
     @State private var autosaveTask: Task<Void, Never>?
-    @State private var identity = DeviceIdentity.unknown
+    /// The device line's data, from the shared monitor rather than as page state.
+    ///
+    /// It was `@State` filled once by `readDevice()`, which made it a snapshot with
+    /// a short life: the header said "unknown device" until the bounded wait in
+    /// `readDevice` succeeded, and nothing after that ever asked again.  Naming the
+    /// observed object something other than `device` because `scheduleAutosave()`
+    /// and `applyTweaks()` both take a local snapshot called `device`.
+    @ObservedObject private var deviceMonitor = DeviceIdentityMonitor.shared
+    /// Every use below reads this, so the page has no identity of its own to keep in
+    /// step with the monitor — one source of truth, four pages, one poll.
+    private var identity: DeviceIdentity { deviceMonitor.current }
     @State private var readingDevice = false
     /// `home.py: process_status_lbl` — the coloured line under the buttons, which
     /// the reference hides again six seconds after it was set.
@@ -68,6 +79,13 @@ struct GoldenNuggetView: View {
     /// cannot wipe the one that replaced it.
     @State private var statusToken = 0
     @State private var progress: Double?
+    /// The pages the reset sheet has open, and whether a reset is in flight.
+    ///
+    /// Separate from `running`, which is the *apply* run: the two never overlap
+    /// (a reset and an apply both write preferences), and a single flag would
+    /// have the Apply button report a reset's progress as its own.
+    @State private var showResetSheet = false
+    @State private var resetting = false
     @State private var tunnelExpanded = false
     /// The tunnel status line's two halves, **cached** rather than computed in
     /// the body.
@@ -111,7 +129,6 @@ struct GoldenNuggetView: View {
         GoldenPage(spacing: GoldenTheme.sectionSpacing) {
             header
             connectionLine
-            tweakCards
             applyCard
             clearCard
             if !status.isEmpty { processStatus }
@@ -120,6 +137,9 @@ struct GoldenNuggetView: View {
             RunLogCard()
         }
         .navigationTitle("GoldenNugget")
+        // Compact widths only -- on a tablet the split view draws its own sidebar
+        // toggle, and a second button beside it is the duplicate-controls mess.
+        .goldenSidebarButton()
         .navigationBarTitleDisplayMode(.inline)
         // The home page carries its own logo header, so the platform bar would be
         // a second, empty one.  Hiding it *here* — not on the pushed page — keeps
@@ -183,6 +203,11 @@ struct GoldenNuggetView: View {
         } message: {
             Text("Reboot the target device so the injected preferences take effect.")
         }
+        .sheet(isPresented: $showResetSheet) {
+            ResetPagesSheet(deviceVersion: identity.version,
+                            isRunning: resetting,
+                            onReset: performReset(pages:))
+        }
     }
 
     // MARK: - Sections
@@ -229,90 +254,9 @@ struct GoldenNuggetView: View {
         return ("Supported!", .success)
     }
 
-    /// The trailing badge on the Media card: what the local store is holding,
-    /// read from the manifest rather than from a directory walk, so it costs
-    /// nothing on every body pass.
-    private var mediaDetail: String {
-        let m = try? AfcMediaBackup.read()
-        let n = m?.entries.count ?? 0
-        if n == 0 { return "Empty" }
-        let bytes = m?.entries.reduce(Int64(0)) { $0 + $1.size } ?? 0
-        return "\(n) file(s), \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))"
-    }
-
-    /// The cards and the sidebar drive the **same** stack, so they cannot
-    /// disagree about what is showing: these are `NavigationLink(value:)` with
-    /// the destination declared once, in `RootView`'s `navigationDestination`,
-    /// rather than links carrying their own view.  A view-carrying link pushed a
-    /// page the path knew nothing about, and in a split view that left the
-    /// sidebar still highlighting "GoldenNugget" over a Tweaks page.
-    private var tweakCards: some View {
-        GoldenCardGrid(itemCount: 5) { index in
-            switch index {
-            case 0:
-                NavigationLink(value: AppDestination.tweaks) {
-                    GoldenFeatureCardLabel(
-                        title: "Tweaks",
-                        subtitle: "Customize system settings",
-                        // The count that used to be this row's trailing badge.
-                        detail: "\(registryTweakCount) enabled")
-                }
-                .buttonStyle(.plain)
-            case 1:
-                NavigationLink(value: AppDestination.daemons) {
-                    GoldenFeatureCardLabel(
-                        title: "Daemons",
-                        subtitle: "Launchd services",
-                        detail: "\(enabledDaemonCount) of \(DaemonGroups.all.count) groups")
-                }
-                .buttonStyle(.plain)
-            case 2:
-                NavigationLink(value: AppDestination.supervision) {
-                    GoldenFeatureCardLabel(
-                        title: "Supervision",
-                        subtitle: "Device supervision",
-                        detail: supervisionDetail)
-                }
-                .buttonStyle(.plain)
-            case 3:
-                NavigationLink(value: AppDestination.media) {
-                    GoldenFeatureCardLabel(
-                        title: "Media",
-                        subtitle: "Photos and videos",
-                        detail: mediaDetail)
-                }
-                .buttonStyle(.plain)
-            default:
-                NavigationLink(value: AppDestination.files) {
-                    GoldenFeatureCardLabel(
-                        title: "Files",
-                        subtitle: "Browse the device",
-                        detail: "Over AFC")
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    /// Only the registry tweaks carry this badge; daemons are counted by group
-    /// because that is the unit their switches work in.
-    private var registryTweakCount: Int {
-        tweakSelection.enabledCount - enabledDaemonCount
-    }
-
-    private var enabledDaemonCount: Int {
-        DaemonGroups.all.filter { group in
-            tweakSelection.isOn(TweakCatalog.byID["Daemon.\(group.name)"]!)
-        }.count
-    }
-
-    private var supervisionDetail: String {
-        SupervisionSettings.shared.isSupervised ? "supervised" : "not supervised"
-    }
-
     /// The reference's apply card (`IOSApplyPage`: a description, the button, and
-    /// a progress line) in the place its home page puts the button — under the
-    /// cards.
+    /// a progress line) in the place its home page puts the button — directly
+    /// under the status line, which is where the cards used to sit.
     private var applyCard: some View {
         GoldenCard {
             GoldenMutedNote(text: "Applies every enabled tweak to the device. "
@@ -338,18 +282,56 @@ struct GoldenNuggetView: View {
         }
     }
 
-    /// Named for the reference's button, but not the reference's behaviour: that
-    /// one restores the original values on the device, and undoing an apply here
-    /// would mean putting back a backup taken before it. So the title is the
-    /// familiar one and the card says what this actually does.
+    /// The reference's home-page `reset_btn` (`home.py:178`): the same
+    /// "Reset Tweaks" label, opening the same page picker
+    /// (`home.reset_tweaks` → `ResetDialog`).
+    ///
+    /// It used to be a *local* clear — `tweakSelection.removeAll()` — and that
+    /// was the wrong half of the pair. The reference splits the two: this button
+    /// resets the **device**, and the Tweaks page's "Clear all tweaks" is the one
+    /// that discards the app's own selection. Keeping a local clear under a
+    /// device-reset name meant the one destructive button on the page did
+    /// nothing to the device while reading as though it had.
     private var clearCard: some View {
         GoldenCard {
-            GoldenMutedNote(text: "Turns every tweak off in this app. The device is not "
-                + "touched: to undo an apply, restore a backup from before it.")
+            GoldenMutedNote(text: "Puts whole pages back to stock on the device: the files those "
+                + "pages' tweaks are written to are overwritten with what a fresh device has. "
+                + "Choose the pages in the next screen.")
             GoldenDangerButton(title: "Reset Tweaks",
-                               disabled: tweakSelection.enabledCount == 0) {
-                tweakSelection.removeAll()
-                showStatus("Tweaks reset.", .warning)
+                               disabled: running || resetting) {
+                showResetSheet = true
+            }
+        }
+    }
+
+    /// The sheet's confirm. `pages` is empty when nothing was ticked, which the
+    /// sheet's own disabled button makes unreachable — the guard is here so a
+    /// future caller cannot start a run that writes nothing.
+    private func performReset(pages: Set<ResetPage>) {
+        guard !pages.isEmpty else { return }
+        resetting = true
+        RunLog.shared.clear()
+        showStatus("Resetting \(pages.count) page(s)…", .accent, autoHide: false)
+        Task {
+            var text = ""
+            var tone: GoldenTone = .primary
+            var succeeded = false
+            do {
+                try await GoldenNuggetEngine.shared.resetPages(pages: pages)
+                text = "Reset done. Reboot the device."
+                tone = .success
+                succeeded = true
+            } catch let failure as TransportFailure where failure.isCancellation {
+                text = "⏹ stopped by the user (\(failure.label))"
+                tone = .warning
+            } catch {
+                text = "❌ \(error.localizedDescription)"
+                tone = .error
+            }
+            await MainActor.run {
+                resetting = false
+                showStatus(text, tone)
+                showRebootNotice = succeeded
             }
         }
     }
@@ -868,15 +850,13 @@ struct GoldenNuggetView: View {
                     + "\(attempt + 1), after the first read raced minimuxer's start")
             }
         }
-        identity = read
         readingDevice = false
-        if read == .unknown {
-            GoldenNuggetEngine.shared.log("device identity unavailable — the device has not answered lockdown yet")
-        } else {
-            GoldenNuggetEngine.shared.log("device identity: \(read.describe)")
-        }
-        // Load the selection here rather than when the Tweaks tab is built, so
-        // the cards above count the restored selection instead of zero.
+        // Published, not assigned: the monitor is what the other three pages read,
+        // and it is also what logs the change.  Handing it a value we already have
+        // avoids the second handshake a `refresh()` here would cost.
+        await deviceMonitor.publish(read)
+        // Load the selection here rather than when the Tweaks page is built, so
+        // this page's own counts see the restored selection instead of zero.
         if let report = AutoSaveBootstrap.apply(into: &tweakSelection, identity: read) {
             for line in report.logLines { GoldenNuggetEngine.shared.log(line) }
         }

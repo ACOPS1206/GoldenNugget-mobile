@@ -200,7 +200,7 @@ enum StallGuard {
                             + "this point — the device initiates with DLMessageVersionExchange and "
                             + "this side only answers — so nothing the app sends can cause it. The "
                             + "device-side daemon is the one not talking, and it stays wedged across "
-                            + "app restarts, so REBOOT THE DEVICE (重启设备) before the next attempt. "
+                            + "app restarts, so REBOOT THE DEVICE before the next attempt. "
                             + "Still waiting; press Stop to end this run.")
                     }
                 } else {

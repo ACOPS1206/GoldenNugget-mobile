@@ -1,254 +1,439 @@
-# GoldenNugget tweaks 移植：范围、兼容性限制与用法
+# GoldenNugget tweaks port: scope, compatibility limits, usage
 
-> **状态：已落地（2026-09-24）。** `scripts/typecheck.sh` **0 error，未新增 warning**
-> （33 sources，改动前 25）。编译段与参照实现做了**差分对拍：142 个选择 × 3 种设备档
-> = 426 例，逐字段（含 plist 类型）全部一致**。
+> **Status: landed (2026-09-24).** `scripts/typecheck.sh` reports **0 errors, no new
+> warnings** (33 sources, 25 before the change). The compile stage was **differentially
+> tested against the reference implementation: 142 selections × 3 device profiles = 426
+> cases, every field (including plist types) identical**.
 >
-> **一处未验证**：注入器为 `ManagedPreferencesDomain` / `HomeDomain` /
-> `SystemPreferencesDomain` / `DatabaseDomain` 合成的行形状取自真机备份**实测**，但
-> **尚未跑过一次真机 restore**。`AppDomain-*` 与 `SysSharedContainerDomain-*` 两个类沿用
-> 本项目已有产线证据的路径，字节未变。
+> **One thing unverified:** the row shapes the injector synthesises for
+> `ManagedPreferencesDomain` / `HomeDomain` / `SystemPreferencesDomain` /
+> `DatabaseDomain` are **measured** from a real device backup, but **no real-device
+> restore has been run yet**. The `AppDomain-*` and `SysSharedContainerDomain-*`
+> classes reuse paths this project already has production evidence for, byte for byte.
 >
-> **2026-09-25**：真机 apply 回 `205 — "Manifest references files not in backup"`，定位到这 4 个域的
-> 文件行缺 `Digest`（设备在这些域恒定写它，在 AppDomain/SysSharedContainer 恒定不写），已补齐
-> —— 见 §2.2。
+> **2026-09-27:** the Supervision page and the `supervised` / `organization_name` halves of
+> `SupervisionSettings` are gone — they only recorded intent, the certificate was never
+> written, and no real supervision could be installed. `skip_setup` lives on its own as a
+> switch in the **Apply** section of the **Settings** page (`SkipSetupSettings`), and the
+> engine always writes the un-supervised form. Reasoning in §2.3.
 >
-> **2026-09-26**：补上 `skip_setup` 的两个文件，做成 Supervision 页的开关（**默认关**，上游默认开），
-> 面板清单改为从参照生成；两处有意分歧（不合并设备现有 cloud config、不写 keybag 证书）见 §2.3 / §3.3。
+> **2026-09-27:** the page-level **reset** is ported — the home page's "Reset Tweaks"
+> opens a page picker and writes the device, on both the iOS 26 and the iOS 27 branch, with
+> **no psysbackup capture on either**. See §2.4.
 >
-> **2026-09-27**：**PosterBoard 独立成一条线，见 `docs/posterboard-port.md`**。本文件描述的是
-> registry 那 133 个 plist tweak；PosterBoard 的壁纸 / 视频壁纸 / 重置走同一条投递通道
-> （`TweakPayload → TweakInjector`，域 `AppDomain-com.apple.PosterBoard`）但有自己的编译段、
-> 自己的数据库阶段和自己的页面。为此 `TweakPayload` 多了一个 `source:`（载荷可以在磁盘上），
-> 见该文档 §2。
+> **2026-09-26:** the two `skip_setup` files are in, as a switch on the Settings page
+> (**off by default**, upstream defaults to on), and the panel list is generated from the
+> reference; the two deliberate divergences (not merging the device's existing cloud
+> config, not writing a keybag certificate) are in §2.3 / §3.3.
 >
-> 真机构建仍需你本地跑 `scripts/build-ipa.sh`。
+> **2026-09-25:** a real-device apply returned `205 — "Manifest references files not in
+> backup"`, traced to these 4 domains' file rows missing their `Digest` (the device writes
+> it in these domains consistently and never writes it in AppDomain/SysSharedContainer).
+> Fixed — see §2.2.
+>
+> **2026-09-27:** PosterBoard is a line of its own now — see `docs/posterboard-port.md`.
+> This file is about the registry's 133 plist tweaks; wallpaper packs, video wallpapers
+> and the store resets go through the **same** delivery channel
+> (`TweakPayload → TweakInjector`, domain `AppDomain-com.apple.PosterBoard`) but have
+> their own compile stage, their own database stage and their own page. It is also why
+> `TweakPayload` can now carry a payload **on disk** as well as in memory — §2 of that
+> document.
+>
+> A real-device build still needs `scripts/build-ipa.sh` run locally.
 
-移植对象：`~/GoldenNugget`（Python / PySide6，`src/tweaks/` 与 `src/controllers/`）。
-承接方：`Nugget/Core/Tweak*.swift`、`Nugget/Core/GoldenNuggetPreset.swift`、
-`Nugget/Views/TweaksView.swift`。
+Ported from: `~/GoldenNugget` (Python / PySide6, `src/tweaks/` and `src/controllers/`).
+Ported into: `Nugget/Core/Tweak*.swift`, `Nugget/Core/GoldenNuggetPreset.swift`,
+`Nugget/Views/TweaksView.swift`.
 
 ---
 
-## 1. 移植范围
+## 1. Scope
 
-### 1.1 已移植：registry 的全部 133 个 tweak
+### 1.1 Ported: all 133 tweaks of the registry
 
-| 分节（Section） | 数量 | 编辑器 |
+| Section | Count | Editor |
 |---|---|---|
-| Liquid Glass | 98 | 开关 / 数值 |
-| SpringBoard | 17 | 开关 / 文本 / 数值 |
-| Internal Options | 18 | 开关 |
+| Liquid Glass | 98 | toggle / number |
+| SpringBoard | 17 | toggle / text / number |
+| Internal Options | 18 | toggle |
 
-**逐字段生成，不是重敲。** `scripts/gen-tweaks-from-goldennugget.py` 用一个 PySide6 桩
-（只替换 `QT_TRANSLATE_NOOP`）导入参照的 `src/tweaks/registry.py`，把 `TweakSpec` 表
-（`id` / `section` / `title` / `location` / `key` / 默认值 / `Kind` / `min_version` /
-`max_version` / `iphone_only` / `ipad_only` / `description` / `factory`）直接生成成
-`Nugget/Core/TweakCatalog.swift`，`FileLocation` 枚举一并生成。`--check` 可查漂移。
-→ 上游加一个 tweak，这里重跑一次脚本就出现，**不存在抄错的可能**。
+**Generated field by field, not retyped.** `scripts/gen-tweaks-from-goldennugget.py`
+imports the reference's `src/tweaks/registry.py` through a PySide6 stub (replacing only
+`QT_TRANSLATE_NOOP`) and emits the `TweakSpec` table (`id` / `section` / `title` /
+`location` / `key` / default value / `Kind` / `min_version` / `max_version` /
+`iphone_only` / `ipad_only` / `description` / `factory`) straight into
+`Nugget/Core/TweakCatalog.swift`, with the `FileLocation` enum generated alongside.
+`--check` detects drift.
+→ Upstream adds a tweak, re-run the script and it appears here; **a mistyped spec is not
+possible**.
 
-同时移植的参照语义（都标了源文件与函数名，便于逐条对照）：
+Reference semantics ported alongside it (each with its source file and function name, so
+they can be checked one by one):
 
-| 参照 | 本项目 | 说明 |
+| Reference | Here | Notes |
 |---|---|---|
-| `src/restore/path_mapping.py` | `TweakDomainMap.split(path:)` | 绝对路径 → (域, 相对路径)；容器域把首段并入域名 |
-| `device_manager._apply_tweak_pass` 的**编译段** | `TweakCompiler.compile` | 同一 `FileLocation` 的键**合并**；`AdvancedPlistTweak` 整字典替换；`.GlobalPreferences.plist` 的 ManagedPreferences→HomeDomain 双写 |
+| `src/restore/path_mapping.py` | `TweakDomainMap.split(path:)` | absolute path → (domain, relative path); a container domain folds the first path segment into the domain name |
+| the **compile stage** of `device_manager._apply_tweak_pass` | `TweakCompiler.compile` | keys for the same `FileLocation` are **merged**; `AdvancedPlistTweak` replaces the whole dict; `.GlobalPreferences.plist` is written twice, ManagedPreferences and HomeDomain |
 | `src/gui/ios/compat.py:is_tweak_compatible` | `TweakSpec.isCompatible` | `min_version`/`max_version` + `iphone_only`/`ipad_only` |
-| `Tweak.set_value(..., toggle_enabled: True)` | `TweakSelection.setValue` | 改值即启用 |
-| `src/controllers/preset_manager.py`（预设 v2 JSON） | `GoldenNuggetPreset` / `GoldenNuggetPresetImport` | 见 §4.2 |
-| `tweak_loader._build_spec` | 生成器把 `factory()` 的字典折进 `multiValues` | `WatchOSCompatibility` 的多键写入 |
+| `Tweak.set_value(..., toggle_enabled: True)` | `TweakSelection.setValue` | setting a value enables the tweak |
+| `src/controllers/preset_manager.py` (preset v2 JSON) | `GoldenNuggetPreset` / `GoldenNuggetPresetImport` | see §4.2 |
+| `tweak_loader._build_spec` | the generator folds `factory()`'s dict into `multiValues` | `WatchOSCompatibility`'s multi-key write |
 
-### 1.2 未移植（4 个 feature）
+### 1.2 Not ported (three features today)
 
-UI 里直接不出现；导入预设时**逐条报告原因**，不静默丢弃。
+As of 2026-09-27 what is still not carried is **Templates**, **Status Bar** and
+**Icon Themes**. The table is the 2026-09-24 statement, kept for the record — the two
+amendments below it say what has moved since.
 
-| 未移植 | 原因 |
+Absent from the UI; on preset import each one is **reported with its reason**, never
+silently dropped.
+
+| Not ported | Why |
 |---|---|
-| Templates | 独立的 `.template` 格式（`config.json` + 五种 option）+ 模板资源库；与 PosterBoard 正交，见 `docs/posterboard-port.md` §6 |
-| Status Bar | 需要 `StatusBarOverrideData` 结构体走 CFFI（`status_bar/status_bar_c/status_setter.py`） |
-| Icon Themes | 需要图标资源持久库 |
-| Daemons（含 `ClearScreenTimeAgentPlist`） | 强制关 launchd daemon，风险最高；且需要 90 个 `INTERFACE_KEY` 的逐项开关 UI |
+| PosterBoard | wallpapers — **the reference excludes them from presets too** ("device-specific and heavy, so they must not travel with a preset") |
+| Templates | depends on the PosterBoard template library |
+| Status Bar | needs the `StatusBarOverrideData` struct over CFFI (`status_bar/status_bar_c/status_setter.py`) |
+| Icon Themes | needs a persistent icon resource library |
+| Daemons (incl. `ClearScreenTimeAgentPlist`) | force-disabling launchd daemons is the highest-risk item; and it needs a per-switch UI over 90 `INTERFACE_KEYS` |
 
-**PosterBoard 不在这张表里了**（2026-09-27 移植，壁纸 + 视频壁纸 + 重置；Templates 仍缺）——
-但参照把它排除出预设（"device-specific and heavy, so they must not travel with a preset"），
-所以导入一个含 `PosterBoard` 条目的预设仍然会把它列进「不在本次移植内」，理由已改为
-「参照自己不导出壁纸，请用 PosterBoard 页」。
+> **Amended 2026-09-27:** Daemons has since been ported — `TweakCatalogDaemons.swift`
+> (generated) plus `Nugget/Views/DaemonsView.swift`, the ScreenTime nullify included — so
+> the last row records the state as of 2026-09-24, not today. It is also the page a reset
+> can act on (§2.4).
+>
+> **Amended 2026-09-27:** so has **PosterBoard** — wallpaper packs, video wallpapers and
+> the store resets, Templates still excluded; see `docs/posterboard-port.md`. Its row
+> stays for the same reason, and it is still reported by a preset import: the reference
+> **itself** refuses to serialise wallpapers ("device-specific and heavy, so they must
+> not travel with a preset"), so there is nothing in a preset to carry. The reason text
+> now points at the PosterBoard page rather than at a missing port.
 
 ---
 
-## 2. 投递方式
+## 2. Delivery
 
-沿用本项目既有链路，**不新增第二条通道**（单通道仍然成立）：
+Reuses this project's existing chain, **without adding a second one** (the single-channel
+property still holds):
 
 ```
-TweakCompiler.compile（不碰设备）
+TweakCompiler.compile (touches no device)
         ↓
-ProtectiveBackup（阶段 1）→ prune（阶段 2）→ TweakInjector（阶段 3）→ RestoreRunner（阶段 4）
+ProtectiveBackup (stage 1) → prune (stage 2) → TweakInjector (stage 3) → RestoreRunner (stage 4)
 ```
 
-- 编译在**碰设备之前**跑完：空选择 / 全被跳过会直接报错，不会先付一次备份的代价。
-- `BackupInjector.pruneAndInject` 新增可选的 `tweakPayloads`；`bundleID` 改成可选——因为
-  参照的 tweak-only apply **根本不投 app 容器**（`_apply_tweak_pass` 的文件列表只由 tweak 组成）。
-- 每个 tweak 文件写 3 类行：域根行、逐级父目录行（`flags=2`）、文件行（`flags=1`）+ 载荷
-  放到 `<aa>/<fileID>`。inode 从 manifest 现有最大值往上数，**保证唯一**——参照明确要求
-  （"the agent deduplicates by inode — a clone sharing the donor's inode gets restored with
-  the donor's content"）。
-- 注入一律在 **prune 之后**，理由与既有的 footnote 注入相同：prune 只保留参照的 keep-set，
-  这些行不在其中，先写会被剪掉。
+- Compilation finishes **before the device is touched**: an empty selection, or one where
+  everything was skipped, errors out immediately rather than paying for a backup first.
+- `BackupInjector.pruneAndInject` gained an optional `tweakPayloads`; `bundleID` became
+  optional — because the reference's tweak-only apply **does not target the app container
+  at all** (the file list of `_apply_tweak_pass` is made of tweaks only).
+- Each tweak file writes 3 kinds of rows: the domain root row, one row per parent
+  directory (`flags=2`), and the file row (`flags=1`), with the payload stored at
+  `<aa>/<fileID>`. Inodes count up from the manifest's current maximum, **guaranteed
+  unique** — the reference is explicit about it ("the agent deduplicates by inode — a clone
+  sharing the donor's inode gets restored with the donor's content").
+- Injection always happens **after the prune**, for the same reason as the existing
+  footnote injection: the prune keeps only the reference's keep-set, these rows are not in
+  it, and writing them first would have them pruned away.
 
-### 2.1 行形状（实测，非猜测）
+### 2.1 Row shapes (measured, not guessed)
 
-来源：`~/Library/Application Support/MobileSync/Backup/00008130-001431082E40001C`
-（iPad16,2 / iOS 27.0 24A5424a）。**设备自己的产出是唯一契约。**
+Source: `~/Library/Application Support/MobileSync/Backup/00008130-001431082E40001C`
+(iPad16,2 / iOS 27.0 24A5424a). **The device's own output is the only contract.**
 
-| 域 | 文件 Mode | User/Group | ProtectionClass | EA publisher | 文件行 Digest |
+| Domain | File Mode | User/Group | ProtectionClass | EA publisher | File-row Digest |
 |---|---|---|---|---|---|
-| `ManagedPreferencesDomain` | 0755(3)/0644(1) | 501/501 | 4 | `com.apple.BackupAgent2` | **有** 4/4 |
-| `HomeDomain` | 0600(526)/0644(181) | 501/501 | 4 | `com.apple.BackupAgent2` | **有** 708/708 |
-| `SystemPreferencesDomain` | 0644 | 0/0 | 4 | **无** | **有** 9/9 |
-| `DatabaseDomain` | 0644(2)/0755(1) | 0/0 | 4 | `com.apple.BackupAgent2` | **有** 3/3 |
-| `SysSharedContainerDomain-*` | 0644 | -2/-2 | 4 | `com.apple.containermanagerd_system` | **无** 0/10 |
-| `AppDomain-*` | 0644 | 501/501 | 3 | `com.apple.containermanagerd_system` | **无** 0/2760 |
+| `ManagedPreferencesDomain` | 0755(3)/0644(1) | 501/501 | 4 | `com.apple.BackupAgent2` | **yes** 4/4 |
+| `HomeDomain` | 0600(526)/0644(181) | 501/501 | 4 | `com.apple.BackupAgent2` | **yes** 708/708 |
+| `SystemPreferencesDomain` | 0644 | 0/0 | 4 | **none** | **yes** 9/9 |
+| `DatabaseDomain` | 0644(2)/0755(1) | 0/0 | 4 | `com.apple.BackupAgent2` | **yes** 3/3 |
+| `SysSharedContainerDomain-*` | 0644 | -2/-2 | 4 | `com.apple.containermanagerd_system` | **no** 0/10 |
+| `AppDomain-*` | 0644 | 501/501 | 3 | `com.apple.containermanagerd_system` | **no** 0/2760 |
 
-目录行：域根 `0/0`（`SysSharedContainerDomain-*` 根是 class 0），中间目录随域
-（`ManagedPreferencesDomain` 是 501/501 class 4，`HomeDomain` 是 501/501 class 0）。
-目录行与符号链接行**任何域都不写 Digest**。
+Directory rows: domain root `0/0` (the `SysSharedContainerDomain-*` root is class 0), the
+intermediate directories follow the domain (`ManagedPreferencesDomain` is 501/501 class 4,
+`HomeDomain` is 501/501 class 0). Directory rows and symlink rows carry **no Digest in any
+domain**.
 
-> 参照给每个 plist tweak 盖 `Tweak.__init__` 的默认 `owner=501, group=501`，但**设备自己的行
-> 按域不同**（footnote 是 `-2/-2`、`DatabaseDomain` 是 `0/0`）。设备记录更权威，所以
-> owner/group/protectionClass/EA 收敛到 `TweakRowProfile`，按域取，而不是照抄 501。
+> The reference stamps every plist tweak with `Tweak.__init__`'s default
+> `owner=501, group=501`, but **the device's own rows differ per domain** (the footnote row
+> is `-2/-2`, `DatabaseDomain` is `0/0`). The device's record wins, so
+> owner/group/protectionClass/EA are collected in `TweakRowProfile` and chosen per domain
+> rather than copied as 501.
 
-### 2.2 `Digest`：按域分成两类，2026-09-25 补齐
+### 2.2 `Digest`: two classes by domain, completed 2026-09-25
 
-`Digest` = 载荷的 SHA-1。**它不是"可有可无的元数据"，而是设备按域恒定写或不写的字段**：
-真机备份里 110 个有文件行的域，没有一个混用两种形状（`scripts/blob-shape-check.swift` §4
-每次重跑都复核这一条）。
+`Digest` = the SHA-1 of the payload. **It is not optional metadata** — it is a field the
+device writes consistently or never writes, per domain: of the 110 domains with file rows
+in a real backup, not one mixes the two shapes (`scripts/blob-shape-check.swift` §4
+re-checks this on every run).
 
-- **必须写**（11 个域）：`HomeDomain` · `SystemPreferencesDomain` · `ManagedPreferencesDomain` ·
-  `DatabaseDomain` · `RootDomain` · `MobileDeviceDomain` · `WirelessDomain` · `NetworkDomain` ·
-  `KeychainDomain` · `ProtectedDomain` · `InstallDomain`
-- **必须不写**（99 个域）：`AppDomain*` 全族（`AppDomain-` / `AppDomainGroup-` /
-  `AppDomainPlugin-`）· `SysSharedContainerDomain-*` · `SysContainerDomain-*` · `CameraRollDomain`
+- **Must be written** (11 domains): `HomeDomain` · `SystemPreferencesDomain` ·
+  `ManagedPreferencesDomain` · `DatabaseDomain` · `RootDomain` · `MobileDeviceDomain` ·
+  `WirelessDomain` · `NetworkDomain` · `KeychainDomain` · `ProtectedDomain` ·
+  `InstallDomain`
+- **Must not be written** (99 domains): the whole `AppDomain*` family (`AppDomain-` /
+  `AppDomainGroup-` / `AppDomainPlugin-`) · `SysSharedContainerDomain-*` ·
+  `SysContainerDomain-*` · `CameraRollDomain`
 
-有 Digest 的行上，它逐字节等于 `sha1(payload)`（已抽验 4 个域各一行）；参照也写同一个值
-（`inject.py:_build_mbfile_blob` / `_patch_donor_blob` 用 `hashlib.sha1(contents).digest()`）。
+On a row that carries one, it equals `sha1(payload)` byte for byte (spot-checked on one
+row in each of 4 domains); the reference writes the same value
+(`inject.py:_build_mbfile_blob` / `_patch_donor_blob` use `hashlib.sha1(contents).digest()`).
 
-**为什么这条曾经是隐形的**：注入器只服务 `AppDomain-*` 时不需要它——AppDomain 恰好是"不写"
-的那一类；footnote 的 `SysSharedContainerDomain-*` 同样是不写的一类。所以"从不写 Digest"在
-两条有产线证据的路径上都对，只在 tweak 的 4 个域上错。设备对这种行回
-`MBErrorDomain/205 — "Manifest references files not in backup"`。
-
+**Why this used to be invisible:** an injector serving only `AppDomain-*` does not need it
+— AppDomain happens to be one of the "never written" classes; the footnote's
+`SysSharedContainerDomain-*` is another. So "never write a Digest" was correct on both paths
+with production evidence, and wrong only for the tweaks' 4 domains. The device answers such
+a row with `MBErrorDomain/205 — "Manifest references files not in backup"`.
 
 ---
 
-### 2.3 `skip_setup` 的两个文件（2026-09-26 补齐）
+### 2.3 The two `skip_setup` files (completed 2026-09-26)
 
-开关在 **Supervision 页**（与上游把 `skip_setup` / `supervised` / `organization_name` 放在同一个
-设置对象里一致）。打开后，每次 apply 都会在 tweak 文件**之前**投递这两个：
+The switch is in the **Apply** section of the **Settings** page. Upstream keeps
+`skip_setup` / `supervised` / `organization_name` in one settings object; only the first is
+ported here: `supervised` / `organization_name` need a keybag certificate to mean anything,
+and that half was never implemented, so they were removed together with the Supervision page
+(see §3.3). When it is on, every apply delivers these two files **before** the tweak files:
 
-| 顺序 | 域 | 相对路径 | 内容来源 |
+| Order | Domain | Relative path | Content source |
 |---|---|---|---|
-| 1 | `SysSharedContainerDomain-systemgroup.com.apple.configurationprofiles` | `Library/ConfigurationProfiles/CloudConfigurationDetails.plist` | `build_cloud_config` 的 7 个固定键 + `SkipSetupCatalog.panes`（81 项） |
-| 2 | `ManagedPreferencesDomain` | `mobile/com.apple.purplebuddy.plist` | 上游的三个字面量（`SetupDone` / `SetupFinishedAllSteps` / `UserChoseLanguage`） |
+| 1 | `SysSharedContainerDomain-systemgroup.com.apple.configurationprofiles` | `Library/ConfigurationProfiles/CloudConfigurationDetails.plist` | the 7 fixed keys of `build_cloud_config` + `SkipSetupCatalog.panes` (81 items) |
+| 2 | `ManagedPreferencesDomain` | `mobile/com.apple.purplebuddy.plist` | upstream's three literals (`SetupDone` / `SetupFinishedAllSteps` / `UserChoseLanguage`) |
 
-- **顺序与目录行**：上游 `add_skip_setup` 只 append 两个文件，目录行由注入侧按路径补。本项目让
-  `TweakInjector` 从两个 payload 的路径推目录链，于是行序恰好是
-  `""` → `Library` → `Library/ConfigurationProfiles` → 文件，再 `""` → `mobile` → 文件。
-- **行形状**：走的是**同一个** `TweakRowProfile`——`SysSharedContainerDomain-*` → `.systemContainer`
-  （`-2/-2`、class 4、EA `containermanagerd_system`、**不写 Digest**），`ManagedPreferencesDomain`
-  → `.managedPreferences`（`501/501`、class 4、EA `BackupAgent2`、**写 Digest**，见 §2.2）。两类都是
-  实测过的形状，所以这两个文件不需要新的测量。
-- **时机**：和其它注入一样**在 prune 之后**——`SystemPreferencesDomain` 之外的域都不在 keep-set 里，
-  先写会被剪掉。iOS 27（拉备份 + prune）与 iOS 26（合成 MBDB，不平铺 prune）两条分支共用同一个
-  payload 数组，所以两个文件在两条路上都会投递。
-- **代码**：`Nugget/Core/SkipSetup.swift`（行为）+ `Nugget/Core/SkipSetupCatalog.swift`（**生成物，
-  勿手改**）。验收：`scripts/skipsetup-check.swift` 与参照产出对拍（见 §3.3）。
+- **Order and directory rows**: upstream's `add_skip_setup` only appends the two files, the
+  directory rows are added by the injection side from the paths. Here `TweakInjector` derives
+  the directory chain from the two payload paths, so the row order is exactly
+  `""` → `Library` → `Library/ConfigurationProfiles` → file, then `""` → `mobile` → file.
+- **Row shapes**: both go through the **same** `TweakRowProfile` —
+  `SysSharedContainerDomain-*` → `.systemContainer` (`-2/-2`, class 4, EA
+  `containermanagerd_system`, **no Digest**), `ManagedPreferencesDomain` →
+  `.managedPreferences` (`501/501`, class 4, EA `BackupAgent2`, **Digest written**, see
+  §2.2). Both are measured shapes, so these two files need no new measurement.
+- **Timing**: like every other injection, **after the prune** — every domain outside
+  `SystemPreferencesDomain` is not in the keep-set, so writing them first would have them
+  pruned. Both branches (iOS 27 = pull + prune, iOS 26 = synthesised MBDB with no flat
+  prune) share the one payload array, so both files are delivered on both paths.
+- **Code**: `Nugget/Core/SkipSetup.swift` (behaviour) +
+  `Nugget/Core/SkipSetupCatalog.swift` (**generated, do not hand-edit**). Verification:
+  `scripts/skipsetup-check.swift` diffed against the reference's output (see §3.3).
 
-## 3. 兼容性限制（务必先读）
+### 2.4 Page-level reset (ported 2026-09-27, no psysbackup on either branch)
 
-1. **注入器未经真机验证。** 除 `AppDomain-*` / `SysSharedContainerDomain-*`（已有产线证据）外，
-   4 个域的行形状是从备份实测来的、合理推断，但**没跑过一次 restore**。日志里会对每个未
-   验证域打一行 `note: the <domain> row shape is measured ... but has not been confirmed by a
-   run yet`。首次真机验证建议**只开 1 个 tweak**（例如 Internal 里的 `SBBuildNumber`），
-   确认生效后再扩量。
-   **2026-09-25 补充**：首次真机 apply 回 `MBErrorDomain/205 — "Manifest references files not
-   in backup"`。已定位到一处与设备契约不符之处并修掉 —— 这 4 个域的文件行必须带
-   `Digest`（AppDomain/SysSharedContainer 恰好不必带，所以老实现看不出来），见 §2.2。
-   `Mode` 上还留着已知偏差（设备在 `ManagedPreferencesDomain` 写 0755、`HomeDomain` 多为
-   0600，我们统一写 0644）：per-row 而非 per-domain，暂不动。
+Home page **Reset Tweaks** → a sheet to pick pages → writes the device. Ported from
+`device_manager.reset_tweaks` (`device_manager.py:1104`) and
+`gui/dialogs/reset_dialog.py`; the entry point matches the reference
+(`home.reset_tweaks` → `ResetDialog`). It runs the **same** injection chain
+(`protectiveBackup`/`partialRestore` → `pruneAndInject` → `runRestore`) with a different
+payload list.
 
-2. **两处有意的编译器分歧**（差分测试里已显式建模，所以它们不是"未测到的差异"）：
-   - **不兼容的 tweak 在编译时被丢弃。** 参照的 apply 段不做这个检查（只有 GUI 隐藏），
-     所以共享预设能在 UI 看不到的情况下启用一个本机不适用的 tweak。本项目宁可少写不写多写。
-   - **HomeDomain 的 `.GlobalPreferences.plist` 镜像只在 GP 真有键时才写。** 参照无条件写
-     `plistlib.dumps({})`——即"本次没动 GP"时会把设备真实的 HomeDomain `.GlobalPreferences.plist`
-     覆盖成空字典。写法保留了参照声明的意图（"also write it to HomeDomain so tweaks that depend
-     on it survive"），但不会用空字典覆盖活文件。
+| Page (`Page.getPageName`) | What is written | Files |
+|---|---|---|
+| Springboard | `springboard`, `uikit` → **nulled** | 2 |
+| Internal | `globalPreferences`, `globalPreferencesHomeDomain`, `appStore`, `backboardd`, `coreMotion`, `pasteboard`, `notes` → **nulled** | 7 |
+| Daemons | `disabled.plist` → the **stock six keys** (`magicswitchd.companion` / `otpaird` / `dhcp6d` / `bootpd` / `relevanced` = true, `ftp-proxy-embedded` = false) | 1 |
 
-3. **`skip_setup` 已移植，但默认关、且有两处已知分歧。** 参照的 `_apply_tweak_pass` 会追加两个
-   skip-setup 文件（`SysSharedContainerDomain-…/CloudConfigurationDetails.plist` 与
-   `ManagedPreferencesDomain/mobile/com.apple.purplebuddy.plist`），由 `pref_manager.skip_setup`
-   驱动。本项目把它做成 **Supervision 页上的开关**（`SupervisionSettings.skipSetupEnabled` →
-   `SkipSetup.build` → 引擎在 tweak payloads **之前**拼进同一个数组，见 §2.3）。
+**"Nulled" is the one thing that differs between the branches**, and it is the reference's
+own split, not an invention here:
 
-   - **默认关**：上游默认 **开**（`preference_manager.py:19`）。这里默认关，因为 `SkipSetup` 还没
-     过一次真机运行——默认开等于给每次 apply 静默加两个文件。跑通后把那一个字面量改成 `true`
-     即与参照的文件集完全一致。
-   - **分歧一：不与设备现有 cloud config 合并。** 上游 `build_cloud_config(existing, …)` 会先
-     `MobileConfigService.get_cloud_configuration()`；本项目没有这条服务，于是只用那 7 个固定键
-     写成文件，设备原有的其它键**不会保留**（每次运行都会把这条写进日志）。
-   - **分歧二：不写 `SupervisorHostCertificates`。** 上游在"已监督 + 有机构名"时用
-     `pymobiledevice3.ca.create_keybag_file` 生成 x509；本项目没有 keybag 生成器，于是只写
-     `IsSupervised` / `OrganizationName` / `OrganizationMagic`，并**在日志里明说证书缺失**。
-     `SupervisionView` 本来就写明"监督只是记录意图"，这样写至少不会把半成品装成成品。
+| branch | nulled file written as | why |
+|---|---|---|
+| iOS 26 and below | **0 bytes** | the original Nugget's behaviour: the managed-preferences copy already holds the tweaked values, and a daemon reading an empty file falls back to its defaults (`NullifyFileTweak`'s trick, already shipped here for ScreenTime) |
+| iOS 27+ | **`plistlib.dumps({})`** — a valid, empty XML plist, byte-identical to what the reference writes | "on iOS 26.2+ a truncated plist (e.g. an empty com.apple.springboard.plist) makes SpringBoard crash at boot, which sends the device into a boot loop. An empty dict parses fine and makes the system fall back to its default values." A 0-byte plist is a *truncated* plist there, so it is not used |
 
-   验收（无设备）：`scripts/skipsetup-check.swift` 把生成的两个 plist 与参照对同一台设备产出的
-   两份文件**逐键对拍**（解析后比较，不比字节——plist 字典无序），并检查域名/路径/顺序与上游
-   `add_skip_setup` 一致；面板清单由 `scripts/gen-skipsetup-from-goldennugget.py` 从参照
-   `skip_setup27.py` 的 `SKIP_ALL_PANES` 生成（带 `--check`），不手抄。
+**No psysbackup anywhere.** The reference's iOS 27 branch captures the device's original
+plists first and restores *those*, which is what makes its reset a true "put back what was
+there" rather than "write the same values again". This port has no capture and no
+materialiser, so it takes the fallback the reference itself documents for a device where the
+capture is unavailable: write a valid empty plist and let the system fall back to its
+defaults. That is a different guarantee and the sheet says so on screen — a file that was
+custom *before* an apply comes back to its default, not to what it held. Concretely, versus
+the reference on iOS 27: values that were already at their defaults come back unchanged
+either way; values this app wrote are reset; values something else wrote are lost.
 
-4. **不支持加密备份。** 参照会显式跳过加密备份的注入（"a locally-injected plaintext payload has
-   no matching wrapped key — the Phase 3 restore agent fails to decrypt it (MBErrorDomain/205)"）。
-   本项目 `Diagnostics.preflightBackupEncryption()` 会在 run 前拦截，tweak 路径**没有**额外处理。
+- **Manifest format, same fork as an apply**: iOS 27 speaks the sqlite `Manifest.db` and
+  rejects a synthesised one ("Failed to prepare INSERT for ManagedPreferencesDomain" — the
+  real one carries the device's own domain registration), so the reset pulls the protective
+  backup and prunes it. iOS 26 speaks legacy MBDB and can have a backup built from nothing.
+  The reset does **not** pull media on the iOS 27 path: it is a preferences operation, and
+  the backup filter rejects the media domains anyway.
+- **Not a selection clear**: the reference splits the two — this button resets the
+  **device**, and **Clear all tweaks** on the Tweaks page clears this app's selection.
+- **The daemons file is not an empty dict**: an empty `disabled.plist` *enables* `otpaird` /
+  `bootpd` / `dhcp6d` / `magicswitchd.companion` / `relevanced`, which a stock device has
+  off, so a reset would be a way to break pairing. `default_daemons` is copied verbatim; the
+  `owner=0, group=0` it asks for comes for free from the `DatabaseDomain` row shape.
+- **`skip_setup` rides along, but only when the reference's own gate passes**:
+  `add_skip_setup` is entered on
+  `pref_manager.skip_setup and (restoring_domains or version < 27.0)`, and in the reset
+  path `uses_domains` is assigned in exactly one place — the Daemons branch. So:
 
-5. **HotLoad 没移植。** 参照有 `hotload_rules.json` kill-switch（按 app 版本 / iOS 版本 / 机型
-   隐藏或禁用 tweak）。就 2026-09-24 读取到的规则而言，唯一生效的那条只针对 `Daemons`（已排除），
-   对已移植的 133 个 tweak 当前无影响——但**规则是可远程更新的**，上游若新增针对别的 tweak 的规则，
-   本项目不会跟随。
+  | reset | iOS 26 | iOS 27 |
+  |---|---|---|
+  | Springboard only / Internal only | the two files ride along | **no skip-setup files** |
+  | anything including Daemons | the two files ride along | the two files ride along |
 
-6. **导入不会启用"本机不兼容"的 tweak。** 见第 2 条分歧。
+  The reference does not explain the iOS 27 arm, and its own comment argues the files are
+  safe regardless ("they always carry real domains, so they can always ride the domain
+  delivery") — which makes the flag look like a leftover from the tweak path, where it is
+  set by a `/var/mobile` nullify. It is reproduced as written so the diff is empty; the
+  consequence is that a Springboard-only reset on iOS 27 leaves the setup-wizard state
+  alone. The run log says so when it happens.
+- **The two skip-setup files are appended last**, like the reference's own file list —
+  it calls `add_skip_setup` after the null loop, so the order there is
+  `disabled.plist`, the nulled files, then the skip-setup pair.
+- **`clear_lastapply` is not ported**: the reference drops its apply record so a later apply
+  does not skip Phase 2 against a reset device. There is no phase-2 skip here to guard, so
+  there is nothing to clear. **The selection is left as the user had it** — the reset is of
+  the device, and the next Apply is what writes the tweaks back.
 
-7. **数值类型按 registry 默认值决定。** JSON 里 `1` 与 `1.0` 分不出来（`JSONSerialization` 会把
-   `1.0` 写成 `1`），所以导入时用 **registry 默认值的数字类型**决定写 int 还是 real——plist 里
-   这是两种类型，framework 读到的不一样。
+**Deliberately absent**
 
-8. **主页面那个 footnote 输入框**只服务 app-container PoC（`runPoC`）。tweak 列表里的
-   `LockScreenFootnote` 是同一 tweak 的正式入口；两条路径不会同时生效（`applyTweaks` 传
-   `footnote: nil`，`runPoC` 传 `tweakPayloads: []`）。
+- **No Status Bar page.** This port has no `statusBarOverrides` writer (see the Status Bar
+  row in §1.2), so the first entry of `get_resettable_pages` is not offered.
+- **`Internal` also clears Liquid Glass**: those 98 tweaks are written into
+  `globalPreferences`. The reference behaves the same way — its resettable-page list has no
+  Liquid Glass entry either. The UI follows the reference rather than inventing a split.
+
+Code: `Nugget/Core/TweakReset.swift` (page table + payload plan),
+`GoldenNuggetEngine.resetPages` (the chain), `Nugget/Views/ResetPagesSheet.swift` (the
+sheet).
+
+**Verified mechanically**, not by hand: `scripts/reset-port-diff.py` re-derives both sides
+— the reference with `ast` (no PySide6 needed) and this port from the Swift source — and
+compares the per-page file lists and their order, the one non-null file, the stock dict
+(keys, values *and* bool/int types), the null bytes per branch, the skip-setup gate, and
+where the skip-setup files land in the payload list. It is what caught the two
+skip-setup divergences above, and it fails on any of the three ways that is checked
+(verified by mutating this port and confirming the non-zero exit). The null bytes were
+additionally compared byte for byte against `plistlib.dumps({})` — 181 bytes, identical.
+Not covered by the script: the Manifest.db/MBDB fork, the backup pull, the prune set and
+the no-psysbackup decision.
+
+## 3. Compatibility limits (read this first)
+
+1. **The injector is unverified on a real device.** Apart from `AppDomain-*` /
+   `SysSharedContainerDomain-*` (which have production evidence), the row shapes of 4
+   domains are measured from a backup and are a reasonable inference, but **no restore has
+   been run**. The log prints one line per unverified domain: `note: the <domain> row shape
+   is measured ... but has not been confirmed by a run yet`. For the first real-device
+   verification, turn on **one tweak only** (e.g. `SBBuildNumber` under Internal), confirm it
+   took, then widen.
+   **Added 2026-09-25:** the first real-device apply returned
+   `MBErrorDomain/205 — "Manifest references files not in backup"`. One mismatch with the
+   device's contract was found and fixed — these 4 domains' file rows must carry a
+   `Digest` (AppDomain/SysSharedContainer happen not to, which is why the old implementation
+   did not show it), see §2.2. A known deviation remains in `Mode` (the device writes 0755
+   in `ManagedPreferencesDomain` and mostly 0600 in `HomeDomain`; this port writes 0644
+   throughout): it is per-row rather than per-domain, so it is left alone for now.
+
+2. **Two deliberate compiler divergences** (both explicitly modelled in the differential
+   test, so they are not "undetected differences"):
+   - **Incompatible tweaks are dropped at compile time.** The reference's apply stage does
+     not do this check (only the GUI hides them), so a shared preset can enable a tweak that
+     is inapplicable on this device without it being visible. This port would rather write
+     less than write more.
+   - **The HomeDomain `.GlobalPreferences.plist` mirror is written only when the GP dict
+     really has keys.** The reference writes it unconditionally, so a run that touches no GP
+     key writes `plistlib.dumps({})` over the device's real HomeDomain
+     `.GlobalPreferences.plist`. The stated intent is preserved ("also write it to
+     HomeDomain so tweaks that depend on it survive"), but an empty dict is never used to
+     overwrite a live file.
+
+3. **`skip_setup` is ported, but off by default and with two known divergences.** The
+   reference's `_apply_tweak_pass` appends the two skip-setup files
+   (`SysSharedContainerDomain-…/CloudConfigurationDetails.plist` and
+   `ManagedPreferencesDomain/mobile/com.apple.purplebuddy.plist`), driven by
+   `pref_manager.skip_setup`. Here it is a **switch in the Apply section of the Settings
+   page** (`SkipSetupSettings.skipSetupEnabled` → `SkipSetup.build` → the engine splices it
+   into the same array **before** the tweak payloads, see §2.3).
+
+   - **Off by default**: upstream defaults to **on** (`preference_manager.py:19`). It is off
+     here because `SkipSetup` has not had a real-device run yet — on by default would
+     silently add two files to every apply. Once it works, changing that one literal to
+     `true` makes the file set identical to the reference's.
+   - **Divergence one: it does not merge the device's existing cloud config.** Upstream's
+     `build_cloud_config(existing, …)` first calls
+     `MobileConfigService.get_cloud_configuration()`; this port has no such service, so
+     only the 7 fixed keys are written and the device's other existing keys are **not
+     preserved** (every run logs this).
+   - **Divergence two: it writes only the un-supervised form, no
+     `SupervisorHostCertificates`.** Upstream generates an x509 with
+     `pymobiledevice3.ca.create_keybag_file` when "supervised + has an organisation name";
+     this port has no keybag generator. Rather than keep a switch that cannot install
+     supervision — which is exactly what the old Supervision page was: writing
+     `IsSupervised`, never writing the certificate, and leaving the device "trusting its own
+     supervision with the profile uninstallable" — the `supervised` / `organization_name`
+     pair was removed with the page. The supervised form of
+     `SkipSetup.build(supervised:organizationName:)` is still in `SkipSetup.swift` and
+     `scripts/skipsetup-check.swift` still checks both forms, but the engine always passes
+     `false` / `""`.
+
+   Verification (no device): `scripts/skipsetup-check.swift` diffs the two generated plists
+   against the reference's two files for the same device **key by key** (parsed, not
+   byte-compared — plist dicts are unordered), and checks that the domain/path/order match
+   upstream's `add_skip_setup`; the panel list is generated by
+   `scripts/gen-skipsetup-from-goldennugget.py` from the reference's `SKIP_ALL_PANES` in
+   `skip_setup27.py` (with `--check`), never hand-copied.
+
+4. **Encrypted backups are not supported.** The reference explicitly skips injection into an
+   encrypted backup ("a locally-injected plaintext payload has no matching wrapped key —
+   the Phase 3 restore agent fails to decrypt it (MBErrorDomain/205)"). This project's
+   `Diagnostics.preflightBackupEncryption()` blocks the run beforehand; the tweak path has
+   **no** extra handling.
+
+5. **HotLoad is not ported.** The reference has a `hotload_rules.json` kill switch (hide or
+   disable tweaks by app version / iOS version / model). Of the rules as read on 2026-09-24,
+   the only effective one targets `Daemons` (excluded), so it has no effect on the 133
+   ported tweaks today — but **the rules are updatable remotely**, and if upstream adds a
+   rule for another tweak this port will not follow it.
+
+6. **An import does not enable a tweak that is incompatible with this device.** See
+   divergence two in item 2 above. (Numbering note: this is the constraint referred to as
+   "§3.6" elsewhere in this document.)
+
+7. **A number's plist type is decided by the registry default.** JSON cannot distinguish
+   `1` from `1.0` (`JSONSerialization` writes `1.0` as `1`), so on import the **numeric type
+   of the registry's default value** decides whether an int or a real is written — in a plist
+   those are two different types and frameworks read them differently.
+
+8. **The footnote input on the home page** serves the app-container PoC only (`runPoC`).
+   `LockScreenFootnote` in the tweak list is the same tweak's official entry point; the two
+   paths are never live at once (`applyTweaks` passes `footnote: nil`, `runPoC` passes
+   `tweakPayloads: []`).
 
 ---
 
-## 4. 使用方式
+## 4. Usage
 
 ### 4.1 UI
 
-主页面 → **Tweaks** → *GoldenNugget tweaks*：
+Home page → **Tweaks** → *GoldenNugget tweaks*:
 
-- 顶部一行显示机型与 iOS 版本（lockdown `ProductType` / `ProductVersion`），
-  `n of m applicable tweak(s) enabled`。**不适用的 tweak 直接不显示**——与参照的
-  `is_tweak_compatible` 一致；一个永远点不动的开关比不存在的开关更糟。
-- 三个分节按 registry 顺序列出，每个 tweak 带标题、id、参照的 `description` 说明。
-  数值项显示 `min–max, step`，输入即按 registry 的上下界**钳制**。
-- **Clear all tweaks** 清空选择。
-- **Apply N tweak(s)** 跑完整链路；结束后页面底部给最近 30 行日志，主页面日志区有全量。
-  **应用后需重启设备**注入的偏好才生效。
+- A top line shows the model and iOS version (lockdown `ProductType` / `ProductVersion`) and
+  `n of m applicable tweak(s) enabled`. **An inapplicable tweak is not shown at all** —
+  matching the reference's `is_tweak_compatible`; a switch that can never be pressed is
+  worse than a switch that does not exist.
+- The three sections are listed in registry order, each tweak with its title, id and the
+  reference's `description`. Number items show `min–max, step`, and input is **clamped** to
+  the registry's bounds as you type.
+- **Clear all tweaks** clears the selection (this app only, **the device is not touched**).
+- **Apply N tweak(s)** runs the whole chain; afterwards the page shows the last 30 log lines
+  at the bottom, and the home page's log area has the full log. **Reboot the device** after
+  applying for the injected preferences to take effect.
 
-### 4.2 导入 `autosave.json`
+Home page **Reset Tweaks** → a sheet to pick pages → resets the **device**
+(Springboard / Internal / Daemons); semantics, the file set and the per-branch null are in
+§2.4. The reference does nothing when OK is pressed with no page ticked, so this sheet's
+confirm button is disabled until something is. It runs on **iOS 27 as well as iOS 26**, with
+no original-value capture on either — the sheet states that on screen.
 
-GoldenNugget 每次改动都会把当前状态写进 **AutoSave 预设**
-（`Presets/AutoSave.json`，`cli/common.py:autosave_preset`），那就是这里说的 autosave.json；
-任何**导出的预设**（`exported: true`，部分导出另有 `metadata.partial` + `metadata.included`）
-同样是合法输入。格式为预设 v2 JSON：
+### 4.2 Importing `autosave.json`
+
+GoldenNugget writes its current state to an **AutoSave preset** on every change
+(`Presets/AutoSave.json`, `cli/common.py:autosave_preset`), which is what "autosave.json"
+means here; any **exported preset** (`exported: true`; a partial export also carries
+`metadata.partial` + `metadata.included`) is equally valid input. The format is preset v2
+JSON:
 
 ```json
 {
@@ -261,47 +446,75 @@ GoldenNugget 每次改动都会把当前状态写进 **AutoSave 预设**
 }
 ```
 
-点 **Import autosave.json** 选文件即可。结果分四类列出并写进运行日志：
+Tap **Import autosave.json** and pick the file. The result is reported in four categories,
+each also written to the run log:
 
-- `applied` —— 名字匹配上受支持的 tweak，按 `enabled` + `value` 还原（**enabled 与 value 分别
-  取值**，不会因为"设了值"就把本来 `false` 的条目打开；这与 `Tweak.set_value` 的隐式启用不同）；
-- `not part of this port` —— 5 个未移植 feature，逐条给原因；
-- `switched off — not compatible` —— 本机/本版本不适用，**不启用**（见 §3.6）；
-- `unknown tweak ids` —— 参照自己也是直接 `continue` 掉。
+- `applied` — the name matched a supported tweak, restored from `enabled` + `value` (**enabled
+  and value are read separately**, so an entry that had a value but was `false` is not
+  switched on; this differs from `Tweak.set_value`'s implicit enabling);
+- `not part of this port` — the 5 unported features, each with its reason;
+- `switched off — not compatible` — inapplicable on this device or iOS version, **not
+  enabled** (see §3.6);
+- `unknown tweak ids` — which the reference also just `continue`s past.
 
-角色为 `Daemons` 的条目会在 `not part of this port` 里出现，属于预期。
+Entries whose role is `Daemons` show up under `not part of this port`; that is expected for
+presets exported before the Daemons page existed.
 
-### 4.3 脚本
+### 4.3 Scripts
 
 ```bash
-# 从参照 registry 重新生成 TweakCatalog.swift（上游加 tweak 后跑这个）
+# Regenerate TweakCatalog.swift from the reference registry (run after upstream adds a tweak)
 scripts/gen-tweaks-from-goldennugget.py [--goldennugget ~/GoldenNugget] [--check]
 
-# 从参照 skip_setup27.py 重新生成 SkipSetupCatalog.swift（上游加/改名 setup 面板后跑这个）
+# Regenerate SkipSetupCatalog.swift from the reference's skip_setup27.py (after upstream adds/renames a setup panel)
 scripts/gen-skipsetup-from-goldennugget.py [--goldennugget ~/GoldenNugget] [--check]
 
-# 编译段与参照的差分对拍（无设备，宿主上跑）
+# Differential test of the compile stage against the reference (no device, runs on the host)
 scripts/tweak-port-diff.py [--goldennugget ~/GoldenNugget] [-v]
 
-# skip_setup 两个 plist 与参照产出的逐键对拍（无设备；不给参数就用这台机器上那两份）
-#   编译方式见 scripts/skipsetup-check.swift 头部注释（拼成 main.swift 后 xcrun swiftc）
+# Differential test of the page-reset payload plan against the reference (no device, no PySide6)
+scripts/reset-port-diff.py [--goldennugget ~/GoldenNugget] [-v]
+
+# Regenerate the PosterBoard embedded assets / the caml templates from the reference
+#   (the templates script also fails if upstream grows a placeholder it does not know)
+scripts/gen-pb-resources-from-goldennugget.py [--goldennugget ~/GoldenNugget] [--check]
+scripts/gen-pb-templates-from-goldennugget.py [--goldennugget ~/GoldenNugget] [--check]
+
+# Key-by-key diff of the two skip_setup plists against the reference's output (no device;
+#   with no arguments it uses the two files on this machine)
+#   How to compile it: see the header comment of scripts/skipsetup-check.swift (concatenate into main.swift, then xcrun swiftc)
 /local/path/to/skipsetup-check [CloudConfigurationDetails.plist] [com.apple.purplebuddy.plist]
 
-# 常规门禁
-scripts/typecheck.sh                 # 0 error 才算过
-scripts/sync-pbxproj-sources.py      # 增删 Nugget/ 下文件后必须跑
+# Routine gates
+scripts/typecheck.sh                 # passes only at 0 errors
+scripts/sync-pbxproj-sources.py      # must be run after adding/removing files under Nugget/
 ```
 
-`tweak-port-diff.py` 依赖 `packaging`（参照用它做版本比较）。宿主默认解释器没有时，用
-`~/.workbuddy/binaries/python/envs/default/bin/python3`。
+`tweak-port-diff.py` depends on `packaging` (the reference uses it for version comparison).
+When the host's default interpreter lacks it, use
+`~/.workbuddy/binaries/python/envs/default/bin/python3`.
+
+`sync-pbxproj-sources.py` reconciles **sources only**. A SwiftPM *product* the app depends
+on (`.product(name:package:)` in `Package.swift`) has to be mirrored by hand in
+`project.yml` **and** in `project.pbxproj` (`packageProductDependencies` plus an
+`XCSwiftPackageProductDependency` object) — XcodeGen is not installed here, so
+`project.pbxproj` cannot be regenerated from `project.yml` and the three files have to
+agree by hand. The app depends on two products of the vendored package today: `Minimuxer`
+and `ZIPFoundation` (the latter for `.tendies` packs, which are ZIPs).
 
 ---
 
-## 5. 证据
+## 5. Evidence
 
-- **编译段差分对拍**：142 个选择（每个 tweak 单独一例 + 分节整体 + 全开 + 文本/数值/小数/
-  `false` 默认值/多键字典）+ 3 种设备档（27.0 iPhone、26.5 iPad、27.0 iPad）= **426 例逐字段一致**。
-  对拍同时校验 plist 的**类型**（`bool` / `int` / `real` / `str`）——这一条抓出过一个真实缺陷：
-  最初用 JSON 中转比较，`1.0` 与 `1` 被压成同一个值，测试会漏掉类型不一致。
-- **类型检查**：`scripts/typecheck.sh` → `0 error`（8 warnings，Nugget/ 占 3，与移植前基线一致）。
-- **生成器可复核**：`gen-tweaks-from-goldennugget.py --check` 幂等。
+- **Compile-stage differential test**: 142 selections (each tweak alone + each section
+  wholesale + everything on + text/number/decimal/`false`-default/multi-key dicts) × 3
+  device profiles (27.0 iPhone, 26.5 iPad, 27.0 iPad) = **426 cases, every field
+  identical**. The diff also checks the plist **types** (`bool` / `int` / `real` / `str`) —
+  that check caught a real defect: comparing through JSON first collapsed `1.0` and `1` into
+  the same value, so the test would have missed a type mismatch.
+- **Type check**: `scripts/typecheck.sh` → `0 errors` (8 warnings, 3 of them in `Nugget/`,
+  the same as the pre-port baseline).
+- **Generators are re-checkable**: `gen-tweaks-from-goldennugget.py --check` is idempotent.
+- **Reset differential test**: `scripts/reset-port-diff.py` — 12 checks over the reset's
+  file lists, order, stock dict, null bytes and skip-setup gate. Fails on mutation
+  (checked).

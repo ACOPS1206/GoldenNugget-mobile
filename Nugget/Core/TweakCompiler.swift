@@ -209,7 +209,7 @@ enum TweakCompiler {
             }
             payloads.append(TweakPayload(domain: dest.domain,
                                          relativePath: dest.relativePath,
-                                         contents: serialise(plist)))
+                                         contents: serialisePlist(plist)))
             emitted.append(location)
         }
 
@@ -229,7 +229,7 @@ enum TweakCompiler {
            let dest = TweakDomainMap.split(path: TweakFileLocation.globalPreferencesHomeDomain.rawValue) {
             payloads.append(TweakPayload(domain: dest.domain,
                                          relativePath: dest.relativePath,
-                                         contents: serialise(gp)))
+                                         contents: serialisePlist(gp)))
             emitted.append(.globalPreferencesHomeDomain)
         }
 
@@ -237,7 +237,12 @@ enum TweakCompiler {
     }
 
     /// `plistlib.dumps(plist)` — XML, the reference's default format.
-    private static func serialise(_ plist: [String: Any]) -> Data {
+    ///
+    /// Not private: the page reset writes plists too (`TweakReset`), and one
+    /// writer for the port is the point of `docs/tweak-port.md` — two of these
+    /// drifting apart is how a reset would start writing a format the apply
+    /// path never produces.
+    static func serialisePlist(_ plist: [String: Any]) -> Data {
         (try? PropertyListSerialization.data(fromPropertyList: plist,
                                              format: .xml, options: 0)) ?? Data()
     }

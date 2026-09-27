@@ -1,77 +1,87 @@
-# 恢复链路审计：变慢与丢任务
+# Restore Path Audit: Slowdowns and Dropped Tasks
 
-> **状态：全部已落地（2026-09-19）。** 6 条主问题 + 次要项都已改；`scripts/typecheck.sh`
-> **0 error，且未新增 warning**。
+> **Status: all landed (2026-09-19).** The 6 main issues + the minor items are all
+> changed; `scripts/typecheck.sh` reports **0 errors, and no new warnings**.
 >
-> 一处**待你本地验证**：`Vendor/` 改了三个文件（`IdeviceGateway.swift`、`MinimuxerApi.swift`、
-> `MobileBackup2Delegate.swift`），但 `typecheck.sh` 读的是已构建的 `.swiftmodule`，所以两个
-> 调用点（`ProtectiveBackup.swift:115`、`RestoreRunner.swift:69`）会报
-> `extra argument 'cancellationRequested' in call` —— 这是**幻影错误**，Xcode 重建一次即消失。
-> 我用「临时注释掉这两个实参 → 0 error → 恢复」的方式验证了**其余所有改动都是干净的**。
-> 真机构建仍需要你本地跑 `scripts/build-ipa.sh`（我这边 SwiftPM manifest 求值被沙箱挡住）。
+> One thing **left for you to verify locally**: three files under `Vendor/` were
+> changed (`IdeviceGateway.swift`, `MinimuxerApi.swift`, `MobileBackup2Delegate.swift`),
+> but `typecheck.sh` reads the already-built `.swiftmodule`, so the two call sites
+> (`ProtectiveBackup.swift:115`, `RestoreRunner.swift:69`) report
+> `extra argument 'cancellationRequested' in call` — this is a **phantom error**; one
+> Xcode rebuild makes it disappear. I verified that **every other change is clean**
+> by "temporarily commenting out those two arguments → 0 errors → restore".
+> A real device build still needs you to run `scripts/build-ipa.sh` locally (SwiftPM
+> manifest evaluation is blocked by the sandbox on my side).
 >
-> 顺带修了一个**工具链 bug**：`scripts/relink-core-sources.py` 之前**不可重复执行**。它在第一次
-> 成功运行时把组名从 `Sparserestore` 改成 `Core`，而 `rewrite_group()` 只认旧名，所以**第二次跑
-> 直接 `ValueError: substring not found`**。后果很隐蔽：`Package.swift` 与 `project.pbxproj`
-> 两条构建路径会分叉（SPM 编得过、xcodebuild 少一个文件）。现已接受两种拼写，并验证连跑两次输出
-> 一致。
+> Along the way I also fixed a **toolchain bug**: `scripts/relink-core-sources.py` was
+> previously **not repeatable**. On its first successful run it renamed the group from
+> `Sparserestore` to `Core`, while `rewrite_group()` only recognised the old name, so
+> **the second run died outright with `ValueError: substring not found`**. The
+> consequences are subtle: the two build paths `Package.swift` and `project.pbxproj`
+> diverge (SPM compiles, xcodebuild is missing one file). It now accepts both
+> spellings, and running it twice is verified to produce identical output.
 
-审计范围：`Nugget/Core/*`（自家代码）与 `Vendor/MinimuxerGateway/idevice/*`（SideStore fork，
-改动需付上游合并成本）。**`Vendor/MinimuxerSources/` 是转发层——改签名必须两层一起改**
-（`MinimuxerApi.swift:298/320` ↔ `IdeviceGateway.swift:2864/2896`）。
+Audit scope: `Nugget/Core/*` (our own code) and `Vendor/MinimuxerGateway/idevice/*`
+(a SideStore fork, so changes cost upstream merge effort). **`Vendor/MinimuxerSources/`
+is a forwarding layer — changing a signature means changing both layers**
+(`MinimuxerApi.swift:298/320` ↔ `IdeviceGateway.swift:2864/2896`).
 
-结论：**6 个问题里 3 个是"丢任务/丢数据"级别，不是慢**。变慢的大头只有 2 个，
-其余是可靠性。逐条如下。
+Conclusion: **of the 6 issues, 3 are of the "dropped task / lost data" class, not
+slowness**. Only 2 are actual slowdowns; the rest are reliability. Item by item below.
 
 ---
 
-## 落地清单
+## Landed List
 
-| # | 问题 | 改动位置 |
+| # | Issue | Changed in |
 |---|---|---|
-| 1 | 取消标志从未接线 | 新增 `Nugget/Core/InFlightCall.swift`；`MobileBackup2Delegate.swift`（注入 `cancellationRequested`）；`IdeviceGateway.swift` + `MinimuxerApi.swift`（两层加参数）；`ProtectiveBackup.swift`、`RestoreRunner.swift`（传 `CancelFlag`） |
-| 2 | 被放弃调用没有回收闸门 | `StallGuard.swift`（enter/leave/noteAbandoned）；`ChannelRecovery.swift`（有界等排空才重试）；`PoCEngine.swift`（入口闸门，且**在 `clearCancel()` 之前**） |
-| 3 | 诊断拆自己的会话 | `Diagnostics.swift`（有在飞调用时整段跳过会话探针；单次快照替代两次全量读） |
-| 4 | 握手静默每 5 s 全文重读 | `WireCensus.swift`（两个计数器 + `handshakeSilent`）；`RustLog.swift`（`deviceSilentAtHandshake()` 缩成一行，删除 `since:` 参数） |
-| 5 | 修剪逐行 `stat` + 扫到 `Snapshot/` | `ManifestStore.swift`（`isShardName`、单次遍历分片树、`removeOrphanPayloads(shards:keepIDs:)`、`PruneReport.stagingKept`） |
-| 6 | `_keep` 无索引 | `ManifestStore.swift`（`createKeepTable` 带 `PRIMARY KEY`） |
-| 7 | 次要项 | `RestoreRunner.swift`（defer 阶段计时器）、`MobileBackup2Delegate.swift`（`open_file_read` 单次复制、`setvbuf` 1 MiB）、`Logging.swift`（批量异步 sink + `flush()` + `print` 只在 DEBUG）、`PoCView.swift`（稳定日志 id + 批量裁剪） |
+| 1 | The cancellation flag was never wired up | New `Nugget/Core/InFlightCall.swift`; `MobileBackup2Delegate.swift` (inject `cancellationRequested`); `IdeviceGateway.swift` + `MinimuxerApi.swift` (add the parameter in both layers); `ProtectiveBackup.swift`, `RestoreRunner.swift` (pass `CancelFlag`) |
+| 2 | Abandoned calls had no reaping gate | `StallGuard.swift` (enter/leave/noteAbandoned); `ChannelRecovery.swift` (bounded wait for drain before retrying); `PoCEngine.swift` (entry gate, and **before `clearCancel()`**) |
+| 3 | Diagnostics tears down its own session | `Diagnostics.swift` (skip the session probes entirely when a call is in flight; a single snapshot replaces two full reads) |
+| 4 | Handshake-silence detection re-read the whole log every 5 s | `WireCensus.swift` (two counters + `handshakeSilent`); `RustLog.swift` (`deviceSilentAtHandshake()` shrinks to one line, the `since:` parameter is deleted) |
+| 5 | Pruning did a row-by-row `stat` + scanned into `Snapshot/` | `ManifestStore.swift` (`isShardName`, one walk of the shard tree, `removeOrphanPayloads(shards:keepIDs:)`, `PruneReport.stagingKept`) |
+| 6 | `_keep` has no index | `ManifestStore.swift` (`createKeepTable` with a `PRIMARY KEY`) |
+| 7 | Minor items | `RestoreRunner.swift` (defer-block timer), `MobileBackup2Delegate.swift` (`open_file_read` single copy, `setvbuf` 1 MiB), `Logging.swift` (batched async sink + `flush()` + `print` only under DEBUG), `GoldenNuggetView.swift` (stable log ids + batch trimming) |
 
 ---
 
-## 总览
+## Overview
 
-| # | 问题 | 类别 | 严重度 | 位置 |
+| # | Issue | Category | Severity | Location |
 |---|---|---|---|---|
-| 1 | 取消标志从未接线，Stop 只停住了等待 | 丢任务 + 并发写坏 | P0 | `MobileBackup2Delegate.swift:57` |
-| 2 | 被放弃的调用没有回收闸门就重试 | 丢任务 + use-after-free | P0 | `StallGuard.swift:267` → `ChannelRecovery.swift:73` |
-| 3 | 诊断块在放弃路径上调用会 `invalidateConnection()` 的读 | 同上（自我拆台） | P0 | `Diagnostics.swift:34` |
-| 4 | 握手静默检测每 5 s 全文重读+解码日志 | 拖慢 | P1 | `RustLog.swift:248` |
-| 5 | 修剪 manifest 逐行 `stat`；且把 `Snapshot/` 当分片扫 | 拖慢 + 静默删数据 | P1 | `ManifestStore.swift:204/271` |
-| 6 | `_keep` 无索引 + `NOT IN` 子查询 | 拖慢 | P2 | `ManifestStore.swift:222/245` |
+| 1 | The cancellation flag was never wired up, so Stop only stopped the waiting | Dropped task + concurrent write corruption | P0 | `MobileBackup2Delegate.swift:57` |
+| 2 | Retrying an abandoned call with no reaping gate | Dropped task + use-after-free | P0 | `StallGuard.swift:267` → `ChannelRecovery.swift:73` |
+| 3 | The diagnostics block calls a read that `invalidateConnection()`s, on the abandon path | Same (sabotaging itself) | P0 | `Diagnostics.swift:34` |
+| 4 | Handshake-silence detection re-reads + decodes the whole log every 5 s | Slowdown | P1 | `RustLog.swift:248` |
+| 5 | Prune does a row-by-row manifest `stat`; and it treats `Snapshot/` as a shard to scan | Slowdown + silent data deletion | P1 | `ManifestStore.swift:204/271` |
+| 6 | `_keep` has no index + a `NOT IN` subquery | Slowdown | P2 | `ManifestStore.swift:222/245` |
 
-次要项（§7）：恢复阶段计时器在抛错路径不落盘、`open_file_read` 整文件驻留内存、
-`RotatingFileSink` 逐行 open/stat/seek/write/close。
+Minor items (§7): the restore stage timer is not flushed on the throwing path,
+`open_file_read` keeps the whole file resident in memory, `RotatingFileSink` does
+open/stat/seek/write/close per line.
 
 ---
 
-## 1. 取消标志从未接线：`Stop` 只停住了"等待"，没停住设备侧操作
+## 1. The cancellation flag was never wired up: `Stop` only stopped the "waiting", not the device-side operation
 
-### 症状
+### Symptom
 
-点 Stop 之后：日志显示 `⏹ stop requested`、`⏹ <label>: cancelled by the user — abandoning the call`，
-但**设备侧的 backup/restore 还在跑**。随后 `PoCView` 把 `running` 置回 false，
-用户以为结束了；如果紧接着再点一次 Run，`runPoC` / `runPartialRestore` 开头的
+After pressing Stop: the log shows `⏹ stop requested`,
+`⏹ <label>: cancelled by the user — abandoning the call`, but **the device-side
+backup/restore is still running**. `GoldenNuggetView` then sets `running` back to false and the
+user thinks it is over; if Run is clicked again right after, the
 
 ```swift
 try? FileManager.default.removeItem(at: backupRoot)   // PoCEngine.swift:156 / 245
 ```
 
-会在一个**仍在被 Rust 写盘**的目录上执行 `rm -rf`。
+at the top of `runPoC` / `runPartialRestore` runs `rm -rf` on a directory that **Rust is
+still writing to**.
 
-### 根因
+### Root cause
 
-`MobileBackup2BackupContext.isCancelled` 是 Rust `is_cancelled` 钩子唯一的取值来源：
+`MobileBackup2BackupContext.isCancelled` is the only source of the value that Rust's
+`is_cancelled` hook sees:
 
 ```swift
 // MobileBackup2Delegate.swift:677
@@ -80,21 +90,25 @@ private func mb2_is_cancelled(_ ctx: UnsafeMutableRawPointer?) -> Bool {
 }
 ```
 
-而全仓 grep 的结果是 **`isCancelled` 只有一处声明、一处读取，没有任何写入**：
+And a repo-wide grep shows that **`isCancelled` has exactly one declaration, one read,
+and no writes at all**:
 
 ```
 $ grep -rn "isCancelled" Vendor/MinimuxerGateway/ Vendor/MinimuxerSources/ Nugget/
-MobileBackup2Delegate.swift:57:    var isCancelled = false          ← 声明
-MobileBackup2Delegate.swift:680:    context(ctx)?.isCancelled ?? false ← 读取
+MobileBackup2Delegate.swift:57:    var isCancelled = false          ← declaration
+MobileBackup2Delegate.swift:680:    context(ctx)?.isCancelled ?? false ← read
 ```
 
-`CancelFlag.shared.request()` 只被 `StallGuard` 的轮询循环读到（`StallGuard.swift:134`），
-它的作用止于"放弃等待"。`MobileBackup2BackupContext` 根本不知道 `CancelFlag` 存在
-（gateway 不依赖 app 层，这个分层是对的——所以要在构造时注入，而不是去读全局）。
+`CancelFlag.shared.request()` is read only by `StallGuard`'s poll loop
+(`StallGuard.swift:134`), and all it does is "give up waiting".
+`MobileBackup2BackupContext` does not even know `CancelFlag` exists (the gateway does
+not depend on the app layer, and that layering is right — which is why it has to be
+injected at construction time rather than read from a global).
 
-### 修复
+### Fix
 
-**(a) 把取消做成注入的闭包**（`Vendor/MinimuxerGateway/idevice/MobileBackup2Delegate.swift`）：
+**(a) Make cancellation an injected closure**
+(`Vendor/MinimuxerGateway/idevice/MobileBackup2Delegate.swift`):
 
 ```swift
 public final class MobileBackup2BackupContext: @unchecked Sendable {
@@ -124,7 +138,7 @@ public final class MobileBackup2BackupContext: @unchecked Sendable {
 }
 ```
 
-三个构造点都要传（`IdeviceGateway.swift:2553`、`2621`）：
+All three construction sites have to pass it (`IdeviceGateway.swift:2553`, `2621`):
 
 ```swift
 let ctx = MobileBackup2BackupContext(
@@ -135,7 +149,8 @@ let ctx = MobileBackup2BackupContext(
 )
 ```
 
-**(b) 两层 API 一起改**（否则调用点报 `extra argument 'cancellationRequested' in call`）：
+**(b) Change both layers of the API together** (otherwise the call sites report
+`extra argument 'cancellationRequested' in call`):
 
 ```swift
 // IdeviceGateway.swift — restoreBackup / backupBackup / syncRestoreBackup / syncBackupBackup
@@ -149,7 +164,7 @@ public func restoreBackup(
     cancellationRequested: @escaping @Sendable () -> Bool = { false }
 ) async throws { ... }
 
-// MinimuxerApi.swift:298 / 320 — 同参数、同转发
+// MinimuxerApi.swift:298 / 320 — same parameter, same forwarding
 func restoreBackup(
     backupRoot: String,
     sourceIdentifier: String,
@@ -163,7 +178,8 @@ func restoreBackup(
 }
 ```
 
-**(c) 调用点传入真实标志**（`RestoreRunner.swift:40`、`ProtectiveBackup.swift:87`）：
+**(c) Pass the real flag at the call sites** (`RestoreRunner.swift:40`,
+`ProtectiveBackup.swift:87`):
 
 ```swift
 try await minimuxer.restoreBackup(
@@ -177,58 +193,64 @@ try await minimuxer.restoreBackup(
 )
 ```
 
-**(d) 不要在取消后继续跑后续阶段。** `PoCView.run()` 已经能识别 `.cancelled`，
-但 `PoCEngine` 的两个 run 方法在 `ChannelRecovery.retry` 抛出取消后直接向上冒——
-这是对的。要补的是**入口闸门**：`runPoC` / `runPartialRestore` 开头
-`guard !CancelFlag.shared.isRequested`（在 `clearCancel()` 之后自然成立），
-以及 `clearCancel()` 之后不要立刻 `removeItem(at: backupRoot)`——见 §2 的 `InFlightCall`。
+**(d) Do not keep running later stages after a cancel.** `GoldenNuggetView.run()` already
+recognises `.cancelled`, but `PoCEngine`'s two run methods simply let the cancellation
+thrown by `ChannelRecovery.retry` propagate upward — which is correct. What is missing
+is an **entry gate**: `guard !CancelFlag.shared.isRequested` at the top of `runPoC` /
+`runPartialRestore` (naturally satisfied after `clearCancel()`), plus not doing
+`removeItem(at: backupRoot)` immediately after `clearCancel()` — see `InFlightCall` in
+§2.
 
-### 预期改善
+### Expected improvement
 
-| 项 | 修复前 | 修复后 |
+| Item | Before | After |
 |---|---|---|
-| Stop 后设备侧状态 | 继续写，直到自己跑完（分钟级） | Rust 下一次 `is_cancelled` 轮询即停（通常 <1 s） |
-| Stop → 再 Run 的窗口 | 新 run 的 `rm -rf` 与旧 run 的写并发 → 备份树损坏 / 载荷丢失 | 不可能发生 |
-| 诊断可信度 | 「已停止」的日志与设备实际行为不符 | 一致 |
+| Device-side state after Stop | keeps writing until it finishes on its own (minutes) | stops on Rust's next `is_cancelled` poll (usually <1 s) |
+| The Stop → Run again window | the new run's `rm -rf` races the old run's writes → corrupted backup tree / lost payloads | cannot happen |
+| Diagnostic trustworthiness | the "stopped" log does not match what the device actually did | consistent |
 
-这条的主要收益是**正确性**，不是速度；它同时是 §2、§3 的前置条件——
-取消如果真的生效了，"被放弃的调用"就少了一大类。
+The main payoff here is **correctness**, not speed; it is also a prerequisite for §2
+and §3 — if cancellation really takes effect, one large class of "abandoned calls"
+disappears.
 
 ---
 
-## 2. 被放弃的调用没有回收闸门：重试会在旧调用仍在飞行时开第二个操作
+## 2. Abandoned calls had no reaping gate: a retry starts a second operation while the old call is still in flight
 
-### 症状
+### Symptom
 
-一模一样的失败重试 3 次（`stale-connection-retry-audit` 里最经典的签名），
-并且日志里偶尔出现**两套握手**（两段 `attemptPairVerify` / `createListener` 相隔几十毫秒）。
-更糟的形态：第一次 restore 其实在设备侧成功了，App 却已判失败并起了第二次。
+Exactly the same failure, retried 3 times (the most classic signature in
+`stale-connection-retry-audit`), and the log occasionally shows **two handshakes**
+(two stretches of `attemptPairVerify` / `createListener` tens of milliseconds apart).
+Worse variant: the first restore actually succeeded on the device side, but the app
+already declared failure and started a second one.
 
-### 根因
+### Root cause
 
-`StallGuard` 的"放弃"是**单方面的**：它只 `once.resume(.failure(...))`，让 Swift 侧返回，
-而 `body()` 跑在 `withFFIDispatch { ... }` 里——`DispatchQueue.global()` 上的一个**不可中断的
-阻塞 FFI 调用**，还会继续跑到底（`FFIDispatch.swift:15`）。
+`StallGuard`'s "abandon" is **one-sided**: it only does `once.resume(.failure(...))`
+to return on the Swift side, while `body()` runs inside `withFFIDispatch { ... }` — an
+**uninterruptible blocking FFI call** on `DispatchQueue.global()` that keeps running to
+completion (`FFIDispatch.swift:15`).
 
-紧接着 `ChannelRecovery.retry` 做两件危险的事：
+Immediately afterwards `ChannelRecovery.retry` does two dangerous things:
 
 ```swift
 // ChannelRecovery.swift:60-77
 case .retry(let floor, let why):
     ...
-    await recover(level: level)          // ← 里面第一句就是 invalidateConnection()
-    try await Task.sleep(...)            // ← 然后立刻重开一次 body()
+    await recover(level: level)          // ← its first statement is invalidateConnection()
+    try await Task.sleep(...)            // ← then immediately reopens body() once
 ```
 
-而 `recover(level:)` 的第一句（`ChannelRecovery.swift:93`）：
+And the first statement of `recover(level:)` (`ChannelRecovery.swift:93`):
 
 ```swift
 minimuxer.ideviceGateway?.invalidateConnection()
 ```
 
-`invalidateConnection()` 释放的是**共享的** adapter 与 handshake
-（`IdeviceGateway.swift:134-144`：`rsd_handshake_free` + `adapter_free`）。
-本仓库自己的注释已经把这个 hazard 写清楚了：
+`invalidateConnection()` frees the **shared** adapter and handshake
+(`IdeviceGateway.swift:134-144`: `rsd_handshake_free` + `adapter_free`). This repo's
+own comment already spells the hazard out:
 
 ```swift
 // IdeviceGateway.swift:694-703
@@ -241,12 +263,13 @@ minimuxer.ideviceGateway?.invalidateConnection()
 /// would defeat the purpose.
 ```
 
-于是 `.streamStalled` / `.tunnelCrawl` / `.cancelled` 这三条**恰恰是"调用仍在飞行"才产生**的
-失败类型，走的正是这条恢复梯子——**在飞行中的调用下面把 adapter 释放掉**。
+So `.streamStalled` / `.tunnelCrawl` / `.cancelled` — the three failure kinds that
+**arise precisely only when a call is still in flight** — go through exactly this
+recovery ladder: **freeing the adapter out from under an in-flight call**.
 
-### 修复
+### Fix
 
-**(a) 加一个飞行中闸门**（新文件 `Nugget/Core/InFlightCall.swift`）：
+**(a) Add an in-flight gate** (new file `Nugget/Core/InFlightCall.swift`):
 
 ```swift
 import Foundation
@@ -288,8 +311,9 @@ final class InFlightCall: @unchecked Sendable {
 }
 ```
 
-**(b) `StallGuard.run` 记账**（`StallGuard.swift:102-108`），四处 `once.resume(.failure(...))`
-之前都要 `InFlightCall.shared.noteAbandoned()`：
+**(b) `StallGuard.run` keeps the books** (`StallGuard.swift:102-108`): all four
+`once.resume(.failure(...))` sites need `InFlightCall.shared.noteAbandoned()` before
+them:
 
 ```swift
 let once = OnceResumer<T>()
@@ -297,14 +321,14 @@ return try await withCheckedThrowingContinuation { cont in
     once.attach(cont)
     Task {
         InFlightCall.shared.enter()
-        defer { InFlightCall.shared.leave() }      // ← 只有真正返回了才清
+        defer { InFlightCall.shared.leave() }      // ← only cleared when it really returns
         do { once.resume(.success(try await body())) }
         catch { once.resume(.failure(error)) }
     }
     Task {
         ...
         if CancelFlag.shared.isRequested {
-            InFlightCall.shared.noteAbandoned()    // ← 我们放弃了，但它还在跑
+            InFlightCall.shared.noteAbandoned()    // ← we walked away, but it is still running
             once.resume(.failure(TransportFailure.cancelled(label: label)))
             return
         }
@@ -312,9 +336,11 @@ return try await withCheckedThrowingContinuation { cont in
     }
 }
 ```
-（`handshakeSilent` / `tunnelCrawl` / `streamStalled` 三处 resume 同样加一句。）
+(Add the same line to the three resumes for `handshakeSilent` / `tunnelCrawl` /
+`streamStalled`.)
 
-**(c) `ChannelRecovery.retry` 在重试前等它排空，排不空就不重试**：
+**(c) `ChannelRecovery.retry` waits for it to drain before retrying, and does not retry
+if it does not drain**:
 
 ```swift
 case .retry(let floor, let why):
@@ -347,7 +373,8 @@ case .retry(let floor, let why):
     try await Task.sleep(nanoseconds: delay * 1_000_000_000)
 ```
 
-**(d) 同理，`PoCEngine` 两个 run 入口在动手前先看闸门**：
+**(d) Likewise, both `PoCEngine` run entry points check the gate before touching
+anything**:
 
 ```swift
 guard !InFlightCall.shared.isBusy else {
@@ -356,62 +383,68 @@ guard !InFlightCall.shared.isBusy else {
 }
 ```
 
-### 预期改善
+### Expected improvement
 
-| 项 | 修复前 | 修复后 |
+| Item | Before | After |
 |---|---|---|
-| 重试时的并发操作数 | 2（旧的 + 新的） | 1 |
-| `invalidateConnection()` 与在飞调用 | 必然重叠 | 排空后才释放 |
-| 双握手 / 双会话 | 会出现 | 不会 |
-| "重试永远一模一样失败" | 可能是双会话互踩 | 不再由本因造成 |
-| 最坏情况耗时 | 3 次 ×3 s 退避 + 3 次无效重试 | 20 s 有界等待后**明确失败并说明**，不再假装重试 |
+| Concurrent operations during a retry | 2 (old + new) | 1 |
+| `invalidateConnection()` vs an in-flight call | always overlaps | only freed after draining |
+| Double handshake / double session | happens | does not happen |
+| "the retry always fails exactly the same way" | possibly two sessions stepping on each other | no longer caused by this |
+| Worst-case elapsed time | 3 × 3 s backoff + 3 useless retries | bounded 20 s wait, then **fail explicitly with an explanation** instead of pretending to retry |
 
-这是"重试但症状完全一样"这一类的**代码级根因**之一：不是缓存陈旧，是我们在旧调用还在用
-adapter 的时候把它释放了。
+This is one of the **code-level root causes** of the "retries with exactly the same
+symptom" class: it is not a stale cache, it is that we freed the adapter while the old
+call was still using it.
 
 ---
 
-## 3. 诊断块在放弃路径上调用会 `invalidateConnection()` 的读
+## 3. The diagnostics block calls a read that `invalidateConnection()`s, on the abandon path
 
-### 症状
+### Symptom
 
-放弃一次长调用之后，日志里紧跟一份 diagnostics 块，然后**下一次尝试的失败模式和上一次逐字节相同**；
-或者设备侧出现一次莫名其妙的会话失效。
+After abandoning a long call, a diagnostics block follows immediately in the log, and
+then **the next attempt's failure mode is byte-for-byte identical to the previous
+one**; or an inexplicable session invalidation appears on the device side.
 
-### 根因
+### Root cause
 
 ```swift
 // Diagnostics.swift:34
 let udid = try? await minimuxer.core.fetchUDID()
 ```
 
-而 `fetchUDID` 在 connect 失败时会释放共享 adapter（`IdeviceGateway.swift:759-761`）：
+And `fetchUDID` frees the shared adapter when the connect fails
+(`IdeviceGateway.swift:759-761`):
 
 ```swift
 if let firstErr = connectErr {
     idevice_error_free(firstErr)
-    invalidateConnection()          // ← 同一个 hazard
+    invalidateConnection()          // ← the same hazard
 ```
 
-`Diagnostics.report()` 的调用点正是"刚放弃一个还在飞的调用"：
+The call sites of `Diagnostics.report()` are exactly "just abandoned a call that is
+still in flight":
 
 ```swift
-// ChannelRecovery.swift:57（.failFast：取消、握手静默）
+// ChannelRecovery.swift:57 (.failFast: cancelled, handshake silent)
 if let diagnostics { AppLog.write(await diagnostics()) }
-// ChannelRecovery.swift:63（重试用尽：停滞、隧道爬行）
+// ChannelRecovery.swift:63 (retries exhausted: stalled, tunnel crawl)
 if let diagnostics { AppLog.write(await diagnostics()) }
 ```
 
-也就是说：**§2 的整改对象里，诊断块自己也在做同样的事**——用一次探测把在飞调用的 adapter 拆掉。
-`probeLockdownAlive()` 的注释（`IdeviceGateway.swift:696-703`）已经说明了正确做法，
-而 `Diagnostics.report()` 却没照做（它调 `fetchUDID()`，而文件里另外那个
-`deviceLivenessProbe()` 才是只读的）。
+In other words: **among the things §2 fixes, the diagnostics block itself was doing the
+same thing** — tearing down the in-flight call's adapter with one probe. The comment on
+`probeLockdownAlive()` (`IdeviceGateway.swift:696-703`) already states the correct
+approach, yet `Diagnostics.report()` does not follow it (it calls `fetchUDID()`, while
+the other probe in that file, `deviceLivenessProbe()`, is the read-only one).
 
-附带问题：`report()` 对**整个** `minimuxer.log` 走三遍——
-`excerpt()` 一遍（`Data(contentsOf:)` + 全量 UTF-8 解码 + 40 个关键字 contains + 全部行的
-DL 直方图）、`tail()` 又一遍全量读、`transportLine(lines)` 再把所有行扫一遍。
+Side problem: `report()` walks the **whole** `minimuxer.log` three times — once for
+`excerpt()` (`Data(contentsOf:)` + a full UTF-8 decode + 40 keyword `contains` + a DL
+histogram over all the lines), another full read for `tail()`, and then
+`transportLine(lines)` scans all the lines once more.
 
-### 修复
+### Fix
 
 ```swift
 static func report() async -> String {
@@ -457,11 +490,12 @@ static func report() async -> String {
 }
 ```
 
-注：`isReady(withNetworkCheck: true)` 也要按同样标准核一遍内部是否走 `fetchUDID`；
-若是，则一并换成只读探针。
+Note: `isReady(withNetworkCheck: true)` also has to be checked against the same standard
+for whether it goes through `fetchUDID` internally; if it does, swap it for the
+read-only probe as well.
 
-**顺手去掉一次全量读**：`excerpt()` 与 `tail()` 各自 `Data(contentsOf:)` +
-`String(data:)`。改成读一次、两个视图共用：
+**Drop one full read while we are at it**: `excerpt()` and `tail()` each do
+`Data(contentsOf:)` + `String(data:)`. Read once and share two views:
 
 ```swift
 static func evidence(maxLines: Int = 90, tailCount: Int = 30) -> (excerpt: String, tail: String) {
@@ -473,29 +507,32 @@ static func evidence(maxLines: Int = 90, tailCount: Int = 30) -> (excerpt: Strin
 }
 ```
 
-### 预期改善
+### Expected improvement
 
-| 项 | 修复前 | 修复后 |
+| Item | Before | After |
 |---|---|---|
-| 诊断时是否可能拆掉在飞调用的 adapter | 会 | 不会（有在飞调用时完全跳过探针） |
-| 诊断对日志文件的读取次数 | 2 次全量读 + 2 次 UTF-8 解码 | 1 次 |
-| 放弃路径的总代价 | 全量读 ×2 + RSD 往返 ×2 + 一次 `invalidateConnection()` | 一次全量读 |
+| Can diagnostics tear down an in-flight call's adapter | yes | no (probes are skipped entirely when a call is in flight) |
+| Number of reads of the log file by diagnostics | 2 full reads + 2 UTF-8 decodes | 1 |
+| Total cost of the abandon path | 2 full reads + 2 RSD round trips + one `invalidateConnection()` | one full read |
 
 ---
 
-## 4. 握手静默检测每 5 s 重读并解码**整个** `minimuxer.log`
+## 4. Handshake-silence detection re-reads and decodes the **entire** `minimuxer.log` every 5 s
 
-### 症状
+### Symptom
 
-"卡住"和"只是慢"分不清的时间变长；设备越慢/日志越大，App 自己越慢。
-在不丢包的运行里表现为整体吞吐比预期低；在丢包运行里恰好与其他问题叠加。
+The window in which "stuck" and "just slow" cannot be told apart grows; the slower the
+device / the larger the log, the slower the app itself. In runs without packet loss it
+shows up as overall throughput below expectation; in lossy runs it happens to stack on
+top of the other issues.
 
-### 根因
+### Root cause
 
-`StallGuard` 的轮询循环**每一轮**都调用 `handshakeSilent()`（默认 `pollSeconds = 5`）：
+`StallGuard`'s poll loop calls `handshakeSilent()` on **every** round (default
+`pollSeconds = 5`):
 
 ```swift
-// StallGuard.swift:143-159（每 5 s 无条件执行）
+// StallGuard.swift:143-159 (runs unconditionally every 5 s)
 if let handshakeSilent {
     if handshakeSilent() { ... }
 }
@@ -510,30 +547,34 @@ handshakeSilent: { RustLog.deviceSilentAtHandshake() }
 // RustLog.swift:248
 static func deviceSilentAtHandshake(since offset: UInt64? = nil) -> Bool {
     let from = offset ?? mark
-    guard let whole = try? Data(contentsOf: url) else { return false }   // ← 全文读
+    guard let whole = try? Data(contentsOf: url) else { return false }   // ← whole-file read
     let start = Int(min(from ?? 0, UInt64(whole.count)))
-    guard let text = String(data: whole.dropFirst(start), encoding: .utf8) else { return false } // ← 全文解码
+    guard let text = String(data: whole.dropFirst(start), encoding: .utf8) else { return false } // ← whole-file decode
     guard let lastStart = text.range(of: "Starting DeviceLink version exchange",
                                      options: .backwards) else { return false }
     return !text[lastStart.upperBound...].contains("Received DL message")
 }
 ```
 
-没有 `maxChunk` 上限（`WireCensus` 有 4 MB 上限），而且多做一次全量 UTF-8 解码。
-**这正是 `WireCensus` 已经被修过的那个反模式**——`WireCensus.swift:56-67` 的注释原话：
+There is no `maxChunk` cap (`WireCensus` has a 4 MB cap), and it does one extra full
+UTF-8 decode. **This is exactly the anti-pattern `WireCensus` was already fixed for** —
+the comment at `WireCensus.swift:56-67` says verbatim:
 
 > Re-reading and re-scanning a 2 MB window per poll — millions of byte comparisons,
 > on the same device that is trying to drain a UDP tunnel — is load added precisely
 > when the tunnel is least able to absorb it.
 
-同类负载在 `deviceSilentAtHandshake` 里被漏掉了，而且比当初的 `WireCensus` 更重
-（全文无上限 + 解码，而不只是字节比较）。触发条件是**必然**的：每一轮都跑，与是否停滞无关。
+The same kind of load was missed in `deviceSilentAtHandshake`, and it is heavier than
+the original `WireCensus` was (whole file with no cap + a decode, not just byte
+comparison). The trigger condition is **guaranteed**: it runs on every round, whether or
+not anything has stalled.
 
-### 修复
+### Fix
 
-把手势判定折进已经存在的增量 tailer——**一次扫描同时服务心跳、停滞判定和握手判定**。
+Fold the handshake verdict into the incremental tailer that already exists — **one
+scan serving the heartbeat, the stall verdict and the handshake verdict at once**.
 
-**(a) `WireCensus.swift`：给样本加两个计数器**
+**(a) `WireCensus.swift`: add two counters to the sample**
 
 ```swift
 struct RustWireSample: Sendable {
@@ -557,7 +598,7 @@ struct RustWireSample: Sendable {
 }
 ```
 
-**(b) `absorb` 里维护它们**（`WireCensus.swift:136`）：
+**(b) Maintain them in `absorb`** (`WireCensus.swift:136`):
 
 ```swift
 static func absorb(_ lines: [Substring], into sample: inout RustWireSample) {
@@ -579,10 +620,11 @@ static func absorb(_ lines: [Substring], into sample: inout RustWireSample) {
 }
 ```
 
-（注意 `wireMarkers` 原来是一个数组 + `contains(where:)`；上面的写法保留了语义，
-但把 `"Received DL message"` 单独拿出来是因为它必须同时喂第二个计数器。）
+(Note that `wireMarkers` was originally an array + `contains(where:)`; the version above
+preserves the semantics, but `"Received DL message"` is pulled out on its own because it
+has to feed the second counter as well.)
 
-**(c) `RustLog.deviceSilentAtHandshake()` 变成两行**：
+**(c) `RustLog.deviceSilentAtHandshake()` becomes two lines**:
 
 ```swift
 /// True when the mobilebackup2 client is parked in `dl_version_exchange()`
@@ -603,31 +645,34 @@ static func deviceSilentAtHandshake() -> Bool {
 }
 ```
 
-`since offset:` 参数可以直接删掉——grep 确认两个调用点都传的是默认值。
+The `since offset:` parameter can simply be deleted — grep confirms both call sites pass
+the default.
 
-**(d) 顺手把两处 `Data(contentsOf:)` 常量集中一下**：`WireCensus.maxChunk` 的 4 MB 上限
-已经是这个项目里"最多读多少"的口径，让所有增量读取都用它。
+**(d) While we are at it, centralise the constant for the two `Data(contentsOf:)`
+sites**: the 4 MB cap `WireCensus.maxChunk` is already this project's definition of
+"how much to read at most", so make every incremental read use it.
 
-### 预期改善
+### Expected improvement
 
-| 项 | 修复前 | 修复后 |
+| Item | Before | After |
 |---|---|---|
-| 每 5 s 的日志 I/O | 全文读（无上限） | 只读新增字节，通常几十 KB |
-| UTF-8 解码 | 每次轮询全文一次 | 只解码新行 |
-| 内存抖动 | 每次轮询分配/释放文件大小级别的两块缓冲 | 只有新行缓冲 |
-| 随日志增长 | 线性变差（长跑越跑越慢） | 基本持平 |
-| 判定延迟 | 45 s（`silentHandshakeSeconds`） | 不变（可安全下调，因为检查变免费了） |
+| Log I/O every 5 s | whole-file read (no cap) | only the newly appended bytes, usually tens of KB |
+| UTF-8 decoding | the whole file on every poll | only the new lines |
+| Memory churn | allocates/frees two file-sized buffers on every poll | only the new-line buffer |
+| As the log grows | degrades linearly (long runs get slower and slower) | roughly flat |
+| Detection latency | 45 s (`silentHandshakeSeconds`) | unchanged (safe to lower, because the check is now free) |
 
-这一条同时也是**诊断准确性**的收益：轮询不再与传输抢同一台设备的 CPU/IO 时，
-"到底是谁慢"这个问题才有答案。
+This one is also a **diagnostic accuracy** win: only once polling no longer competes
+with the transfer for the same device's CPU/IO does the question "who is actually
+slow" have an answer.
 
 ---
 
-## 5. 修剪 manifest：逐行 `stat` + 把 `Snapshot/` 当分片扫（并静默删掉暂存载荷）
+## 5. Pruning the manifest: row-by-row `stat` + treating `Snapshot/` as a shard to scan (and silently deleting staged payloads)
 
-`ManifestStore.pruneToDiskState()` 有两个独立的问题。
+`ManifestStore.pruneToDiskState()` has two independent problems.
 
-### 5a. Phase 1 每个文件行一次 `fileExists`，并且每次现拼两个 `URL`
+### 5a. Phase 1 does one `fileExists` per Files row, and builds two fresh `URL`s each time
 
 ```swift
 // ManifestStore.swift:204-218
@@ -636,12 +681,15 @@ while sqlite3_step(stmt) == SQLITE_ROW {
     } else if FileManager.default.fileExists(atPath: payloadURL(forFileID: fileID).path) {
 ```
 
-`payloadURL(forFileID:)`（`:59`）内部是两次 `appendingPathComponent`，即两次 URL 分配。
-所以每一行 = 2 次分配 + 1 次 `stat`。整机过滤备份的 manifest 规模按仓库自己的注释
-（`MobileBackup2Delegate.swift:217` 提到 `filtered payloads: 28490`）是 **1e5 量级**的行数
-→ 十几次万系统调用 + 二十几万次分配，全部同步、串行。
+`payloadURL(forFileID:)` (`:59`) is internally two `appendingPathComponent` calls, i.e.
+two URL allocations. So each row = 2 allocations + 1 `stat`. By the repo's own comment
+(`MobileBackup2Delegate.swift:217` mentions `filtered payloads: 28490`), a
+whole-device filtered backup's manifest is on the order of **1e5** rows → a few hundred
+thousand syscalls + a couple of hundred thousand allocations, all synchronous and
+serial.
 
-**修复：把方向倒过来——遍历一次分片树，得到"盘上有哪些 fileID"，再和行比对。**
+**Fix: invert the direction — walk the shard tree once to get "which fileIDs are on
+disk", then compare against the rows.**
 
 ```swift
 // Phase 1: collect the payload tree ONCE instead of stat()ing per row.
@@ -669,7 +717,8 @@ while sqlite3_step(stmt) == SQLITE_ROW {
 }
 ```
 
-加一个**精确**的分片判据（`ManifestSchema`，也就是唯一放 schema 规则的地方）：
+Add an **exact** shard predicate (`ManifestSchema`, i.e. the one place schema rules
+live):
 
 ```swift
 /// A payload shard is exactly two lowercase hex characters — that is what
@@ -683,7 +732,7 @@ static func isShardName(_ name: String) -> Bool {
 }
 ```
 
-### 5b. `removeOrphanPayloads` 把任何顶层目录都当成分片——包括 `Snapshot/`
+### 5b. `removeOrphanPayloads` treats every top-level directory as a shard — including `Snapshot/`
 
 ```swift
 // ManifestStore.swift:271-293
@@ -694,23 +743,27 @@ for shard in shards {
     guard fm.fileExists(atPath: shardDir.path, isDirectory: &isDir), isDir.boolValue else { continue }
     if let payloads = try? fm.contentsOfDirectory(atPath: shardDir.path) {
         for payload in payloads where !keepIDs.contains(payload) {
-            try? fm.removeItem(at: shardDir.appendingPathComponent(payload))   // ← 递归删
+            try? fm.removeItem(at: shardDir.appendingPathComponent(payload))   // ← recursive delete
 ```
 
-`Snapshot/` 就在 `deviceDir` 下（`ProtectiveBackup.swift:163-164` 明确写了
-`AppPaths.deviceDir(...).appendingPathComponent("Snapshot")`），它是目录、内容名不是 fileID，
-于是**暂存树里所有未被提交的载荷会被静默递归删除**，连 `Snapshot/` 目录本身一起
-（`if remaining.isEmpty { removeItem(at: shardDir) }`）。
+`Snapshot/` sits right under `deviceDir` (`ProtectiveBackup.swift:163-164` spells out
+`AppPaths.deviceDir(...).appendingPathComponent("Snapshot")`); it is a directory whose
+entry names are not fileIDs, so **every uncommitted payload in the staging tree gets
+silently deleted recursively**, together with the `Snapshot/` directory itself
+(`if remaining.isEmpty { removeItem(at: shardDir) }`).
 
-后果：
+Consequences:
 
-1. `reportStagingLeftovers()`（`ProtectiveBackup.swift:162`，就在 prune 之前几行）刚刚
-   打出的 "⚠️ N file(s) left under Snapshot/ — staged but never committed"
-   **在下一个阶段被自己删掉**——证据在同一个 run 里消失。
-2. 该注释自己说 "if the prune does not account for them the restore will fail"，
-   而 prune 的做法是让它们物理消失，于是失败原因更难反查。
+1. The "⚠️ N file(s) left under Snapshot/ — staged but never committed" that
+   `reportStagingLeftovers()` (`ProtectiveBackup.swift:162`, just a few lines before the
+   prune) had just printed is **deleted by the next stage** — the evidence disappears
+   within the same run.
+2. That comment itself says "if the prune does not account for them the restore will
+   fail", yet what prune does is make them physically vanish, so the cause of the
+   failure becomes even harder to trace back.
 
-**修复：分片判据 + 只删分片，`Snapshot/` 留给 `reportStagingLeftovers` 说话。**
+**Fix: shard predicate + only sweep shards; leave `Snapshot/` for
+`reportStagingLeftovers` to speak.**
 
 ```swift
 /// Phase 3: remove payload files that no keep row references.
@@ -741,7 +794,8 @@ private func removeOrphanPayloads(shardNames: [String], keepIDs: Set<String>) ->
 }
 ```
 
-并把 `reportStagingLeftovers` 的结论也带进诊断块（现在只在 `ProtectiveBackup` 的日志里）：
+And carry the conclusion of `reportStagingLeftovers` into the diagnostics block too
+(right now it only shows up in `ProtectiveBackup`'s log):
 
 ```swift
 let leftover = stagingLeftoverCount(backupRoot: backupRoot, udid: udid)
@@ -751,22 +805,23 @@ if leftover > 0 {
 }
 ```
 
-### 预期改善
+### Expected improvement
 
-| 项 | 修复前 | 修复后 |
+| Item | Before | After |
 |---|---|---|
-| Phase 1 系统调用 | ~1e5 × `stat` + ~2e5 次 URL 分配 | ~256 次 `readdir` |
-| Phase 1 量级 | O(manifest 行数) | O(分片数 + 载荷数) |
-| 暂存未提交载荷 | 被静默递归删除 | 保留，且明确计数上报 |
-| 关闭时的重复开销 | 孤儿遍历 + 空目录清理各一遍 | 与 Phase 1 共用同一次遍历的结果 |
+| Phase 1 syscalls | ~1e5 × `stat` + ~2e5 URL allocations | ~256 `readdir` calls |
+| Phase 1 magnitude | O(manifest row count) | O(shard count + payload count) |
+| Staged uncommitted payloads | silently deleted recursively | kept, and reported with an explicit count |
+| Duplicate cost on close | one orphan walk + one empty-directory sweep | shares the single walk already done in Phase 1 |
 
-（这个阶段在 `runPartialRestore` 里是**默认路径**上的一步，所以它省下的时间是每次运行都付的。
-在 1e5 行量级的 manifest 上，从"十几次万次系统调用"降到"几百次"，是这条链路里最直接的
-一轮纯耗时削减。）
+(This stage is a step on the **default path** in `runPartialRestore`, so the time it
+saves is paid on every run. On a manifest of the 1e5-row magnitude, going from "a few
+hundred thousand syscalls" to "a few hundred" is the most direct pure time reduction in
+this whole path.)
 
 ---
 
-## 6. `_keep` 临时表没有索引，`NOT IN` 子查询没有保证
+## 6. The `_keep` temp table has no index, and the `NOT IN` subquery is not guaranteed
 
 ```swift
 // ManifestStore.swift:221-250
@@ -775,63 +830,77 @@ sqlite3_exec(db, "CREATE TEMP TABLE IF NOT EXISTS _keep (fileID TEXT)", nil, nil
 guard sqlite3_exec(db, "DELETE FROM Files WHERE fileID NOT IN (SELECT fileID FROM _keep)", ...)
 ```
 
-`_keep` 声明为普通表，`Files.fileID` 是 `PRIMARY KEY`（于是有隐式索引），
-但反过来的成员判定没有索引可供使用。SQLite 通常会为 `IN` 子查询物化一个临时索引，
-所以这**不是必然**的 O(N·M)——但这是依赖规划器的行为，不是 schema 保证的；
-一旦退化成 nested loop，1e5 × 1e5 就是整条流程里最大的单项。
+`_keep` is declared as an ordinary table, and `Files.fileID` is a `PRIMARY KEY` (so it
+has an implicit index), but the membership test in the other direction has no index to
+use. SQLite normally materialises a temporary index for an `IN` subquery, so this is
+**not necessarily** O(N·M) — but that is relying on the planner's behaviour, not on a
+schema guarantee; once it degenerates into a nested loop, 1e5 × 1e5 is the single
+largest item in the whole flow.
 
-**修复：声明主键（顺带 `DELETE` 之前不需要额外的 `DROP` 保护）**
+**Fix: declare the primary key (which incidentally removes the need for a separate
+`DROP` guard before the `DELETE`)**
 
 ```swift
 static let createKeepTable =
     "CREATE TEMP TABLE IF NOT EXISTS _keep (fileID TEXT PRIMARY KEY)"
 ```
 
-这样成员判定走 B-tree，代价从"取决于规划器"变成确定的 O(N log M)；
-`INSERT INTO _keep` 的循环（已经在外层事务里、语句已经 prepare 一次）也不受影响。
+That makes the membership test go through a B-tree, turning the cost from "depends on
+the planner" into a certain O(N log M); the `INSERT INTO _keep` loop (already inside the
+outer transaction, statement already prepared once) is unaffected.
 
-### 预期改善
+### Expected improvement
 
-| 项 | 修复前 | 修复后 |
+| Item | Before | After |
 |---|---|---|
-| `DELETE ... NOT IN` 复杂度 | 依赖规划器，最坏 O(N·M) | 确定 O(N log M) |
-| 最坏情况 | 大 manifest 上单步耗时不可预测 | 与 manifest 规模近线性 |
+| `DELETE ... NOT IN` complexity | planner-dependent, worst case O(N·M) | certain O(N log M) |
+| Worst case | unpredictable single-step time on a large manifest | near-linear in manifest size |
 
 ---
 
-## 7. 次要项（低风险，顺手修）
+## 7. Minor items (low risk, fixed while we were at it)
 
-| 项 | 位置 | 问题 | 修法 |
+| Item | Location | Problem | Fix |
 |---|---|---|---|
-| 恢复阶段计时器在失败路径不落盘 | `RestoreRunner.swift:59-60` | `beat.stop()` / `stage.done()` 在 `try await` 之后，抛错即跳过。本仓库在 `ProtectiveBackup.swift:117-124` 明确说过"缺失的阶段行让最宽的窗口无法解释" | 包成 `defer { beat.stop(); stage.done(failure ? "FAILED" : "") }`，或用 do/catch（`ProtectiveBackup` 就是这个形状，照抄） |
-| `open_file_read` 让整个文件驻留内存并复制两次 | `MobileBackup2Delegate.swift:448-461` | `FileManager.contents(atPath:)` 先 alloc+read，再 `malloc` + `copyBytes` → 峰值内存 = 文件大小，且每个文件多一次全量 memcpy。恢复大载荷（视频/大容器）时是 jetsam 风险，不是吞吐问题 | 用 `open`/`fstat`/`read` 直接读进 `malloc` 的缓冲：一次复制、峰值不变但少一块中间 `Data`（避免 2× 瞬时占用） |
-| `RotatingFileSink` 每行 open+stat+seek+write+close，且持全局锁 | `Logging.swift:32-53` | 每行 ~6 次系统调用，在 `AppLog` 的进程级锁内。当前调用点已被限流（delegate 的 `reportEvent` 每 50/200 条一次、心跳 10 s），所以不是热点；但超过 2 MB 时的轮转会在锁内 `Data(contentsOf:)` 全量读 + 写回一半 | 持有长开的 `FileHandle` + 内存里记 size；轮转改为分段截断；`print` 用 `#if DEBUG` 包住（设备上 console 不可达，等于丢弃） |
-| UI 日志行身份不稳定 | `PoCView.swift:176-181` / `344-352` | `ForEach(Array(logs.enumerated()), id: \.offset)`：`logs.removeFirst(...)` 之后所有行 identity 平移，SwiftUI 每行都重建 | 单调递增 id（`struct LogLine: Identifiable { let id: Int; let text: String }`），并按批裁剪（一次裁掉 100 行）而不是每行裁 1 |
+| The restore stage timer is not flushed on the failure path | `RestoreRunner.swift:59-60` | `beat.stop()` / `stage.done()` come after `try await`, so a throw skips them. This repo said it explicitly at `ProtectiveBackup.swift:117-124`: "a missing stage line makes the widest window unexplainable" | Wrap it in `defer { beat.stop(); stage.done(failure ? "FAILED" : "") }`, or use do/catch (`ProtectiveBackup` is already this shape, copy it) |
+| `open_file_read` keeps the whole file resident in memory and copies it twice | `MobileBackup2Delegate.swift:448-461` | `FileManager.contents(atPath:)` first allocs + reads, then `malloc` + `copyBytes` → peak memory = file size, plus one extra full memcpy per file. When restoring large payloads (video / large containers) that is a jetsam risk, not a throughput problem | Read straight into the `malloc`ed buffer with `open`/`fstat`/`read`: one copy, same peak but one fewer intermediate `Data` (avoids 2× transient residency) |
+| `RotatingFileSink` does open+stat+seek+write+close per line, and holds a global lock | `Logging.swift:32-53` | ~6 syscalls per line, inside `AppLog`'s process-wide lock. The current call sites are already rate-limited (the delegate's `reportEvent` fires every 50/200 entries, the heartbeat every 10 s), so it is not a hotspot; but the rotation past 2 MB does a full `Data(contentsOf:)` read + writes half back, inside the lock | Hold a long-open `FileHandle` + keep the size in memory; make the rotation a segmented truncation; wrap `print` in `#if DEBUG` (on device the console is unreachable, so it is equivalent to dropping it) |
+| UI log row identity is unstable | `GoldenNuggetView.swift:176-181` / `344-352` | `ForEach(Array(logs.enumerated()), id: \.offset)`: after `logs.removeFirst(...)` every row's identity shifts, so SwiftUI rebuilds every row | A monotonically increasing id (`struct LogLine: Identifiable { let id: Int; let text: String }`), and trim in batches (100 rows at a time) instead of 1 row per time |
 
 ---
 
-## 8. 建议的落地顺序
+## 8. Suggested order of implementation
 
-1. **§1 + §2 + §3 一起做**（同一件事的三个面：让取消真的生效、让重试不在在飞调用上叠加、
-   让诊断不再拆自己的会话）。这三条不做，后面所有"重试策略"的调整都建在沙子上。
-2. **§4**（纯收益、风险最低：删掉一次全文读+解码，判定改读现成计数器）。
-3. **§5a + §6**（修剪阶段的一次性耗时削减）。
-4. **§5b**（保留暂存证据；与 §5a 共用同一次遍历，所以一起改最省）。
-5. §7 按需。
+1. **§1 + §2 + §3 together** (three faces of the same thing: make cancellation actually
+   take effect, make the retry not stack on top of an in-flight call, make diagnostics
+   stop tearing down its own session). Without these three, every later "retry strategy"
+   adjustment is built on sand.
+2. **§4** (pure win, lowest risk: drop one whole-file read + decode, and the verdict
+   reads an already-existing counter).
+3. **§5a + §6** (a one-off time reduction in the prune stage).
+4. **§5b** (preserve the staging evidence; it shares the single walk with §5a, so
+   changing them together is cheapest).
+5. §7 as needed.
 
-## 9. 验证
+## 9. Verification
 
-- `scripts/typecheck.sh` —— **0 error 才算过**。注意它按 mtime 挑最新的
-  `Products/{Debug,Release}-iphoneos`，改了 `Vendor/` 必须重新构建，否则报假阳性；
-  必须 `-disable-dependency-sandbox`，且**不要用 `| head` 看日志**（SIGPIPE 截断 = 假绿灯）。
-- §5a 的验收：在一份真实 manifest 上对比 `fileExists` 调用次数——
-  修前应该约等于行数，修后应该约等于载荷数，且 `Pruned Manifest.db: …` 那行
-  `kept` 数字保持一致（行为不变是硬要求）。
-- §4 的验收：在同一次运行里对比 `handshakeSilent()` 前后 `minimuxer.log` 的读取字节数
-  （可以用 `fs_usage` 或临时计数），应该从"每次 ≈ 文件大小"降到"每次 ≈ 新增字节"。
-- §2 的验收：故意触发一次停滞/取消，日志里应该出现
-  `the abandoned call drained after Ns` 或
-  `refusing to start a second one on the same session`，而**不应该**出现两次
-  `Starting DeviceLink version exchange` 相隔几十毫秒的成对握手。
-- §1 的验收：点 Stop，然后在设备侧观察 backup daemon 是否在下一次轮询内停止推进
-  （`minimuxer.log` 的 DL 消息计数应在 1 s 内停止增长），而不是继续跑到底。
+- `scripts/typecheck.sh` — **it only passes with 0 errors**. Note that it picks the
+  newest `Products/{Debug,Release}-iphoneos` by mtime, so after changing `Vendor/` you
+  must rebuild, otherwise it reports a false positive; it needs
+  `-disable-dependency-sandbox`, and **do not read the log through `| head`**
+  (SIGPIPE truncation = a false green light).
+- Acceptance for §5a: on a real manifest, compare the number of `fileExists` calls —
+  before the fix it should be roughly equal to the row count, after the fix roughly
+  equal to the payload count, and the `kept` number on the `Pruned Manifest.db: …` line
+  must stay the same (unchanged behaviour is a hard requirement).
+- Acceptance for §4: within the same run, compare the number of bytes of `minimuxer.log`
+  read before/after `handshakeSilent()` (you can use `fs_usage` or a temporary counter);
+  it should go from "≈ the file size each time" to "≈ the new bytes each time".
+- Acceptance for §2: deliberately trigger a stall/cancel; the log should show
+  `the abandoned call drained after Ns` or
+  `refusing to start a second one on the same session`, and **should not** show a
+  paired handshake of two `Starting DeviceLink version exchange` tens of milliseconds
+  apart.
+- Acceptance for §1: press Stop, then observe on the device side whether the backup
+  daemon stops making progress within the next poll (the DL message count in
+  `minimuxer.log` should stop growing within 1 s) instead of running to completion.
