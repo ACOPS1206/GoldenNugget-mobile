@@ -74,11 +74,27 @@ struct RootView: View {
     /// selection change, and the selection would have gone with it.
     @State private var tweakSelection = TweakSelection()
     /// Launch auto-start bookkeeping, hoisted for the same reason as the
-    /// selection: the two flags guard a process-wide singleton
-    /// (`startMinimuxer`'s lock rejects *concurrent* attempts only), so they
-    /// have to outlive the view that reads them.  See `GoldenNuggetView`.
+    /// selection: `didAutoStart` guards a process-wide singleton
+    /// (`startMinimuxer`'s lock rejects *concurrent* attempts only), so it has
+    /// to outlive the view that reads it.  See `GoldenNuggetView`.
     @State private var didAutoStart = false
-    @State private var autoImportDisabled = false
+    /// "Reset pairing file" saying no, and **persisted on purpose**.
+    ///
+    /// It used to be `@State` alongside `didAutoStart`, which made the reset
+    /// only half-work: `resetPairing()` cleared the record in memory and in
+    /// `UserDefaults` but left `Documents/pairingfile.mobiledevicepairing` in
+    /// place, and the restore path reads that file *first*.  So the next launch
+    /// — which started again from "the user has not said no" — picked the
+    /// record straight back up and re-paired a device the user had just
+    /// unpaired, with nothing in the log to say why.
+    ///
+    /// Persisting the flag makes the reset stick without **deleting** anything:
+    /// the record stays on disk untouched, and only the automatic load of it is
+    /// suppressed.  That is deliberate — the pairing file may be the user's only
+    /// copy, and a button labelled "Reset pairing file" must not destroy it.
+    /// A successful import clears the flag again (see `loadPairingFile`), so
+    /// importing after a reset restores the normal launch behaviour.
+    @AppStorage("PairingFileAutoImportDisabled") private var autoImportDisabled = false
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {

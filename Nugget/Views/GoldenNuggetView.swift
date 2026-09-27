@@ -32,12 +32,14 @@ struct GoldenNuggetView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     /// Launch auto-start bookkeeping for `reimportPairingFile()`, **owned by
     /// `RootView`**: `startMinimuxer`'s lock only rejects *concurrent* attempts,
-    /// so these two have to outlive the view that reads them even though what
-    /// they guard is process-wide.  `didAutoStart` keeps a second `.task` pass
-    /// from starting the core twice; `autoImportDisabled` is the user's "Reset
-    /// pairing file" saying no — without it the next `.task` pass would fall
-    /// straight back to the `ALTPairingFile` the installer embedded and re-pair
-    /// a device the user just unpaired.
+    /// so these have to outlive the view that reads them even though what they
+    /// guard is process-wide.  `didAutoStart` keeps a second `.task` pass from
+    /// starting the core twice.
+    ///
+    /// `autoImportDisabled` is the user's "Reset pairing file" saying no — and
+    /// unlike `didAutoStart` it is **persisted** (`@AppStorage` in `RootView`),
+    /// because an in-memory reset was undone by the very next launch.  Cleared
+    /// again by a successful import; see `loadPairingFile`.
     @Binding var didAutoStart: Bool
     @Binding var autoImportDisabled: Bool
     @State private var running = false
@@ -158,6 +160,9 @@ struct GoldenNuggetView: View {
             // setLogging()/start(): the Rust side latches the first
             // idevice_init_logger call and would otherwise keep file logging off.
             GoldenNuggetEngine.shared.enableRustFileLogging()
+            // The first term is the *persisted* "the user said no to this
+            // record" flag, so a reset survives the relaunch that used to undo
+            // it; a successful import clears it again.
             if !autoImportDisabled, reimportPairingFile(), !didAutoStart {
                 didAutoStart = true
                 startMinimuxer()
@@ -165,13 +170,8 @@ struct GoldenNuggetView: View {
             await readDevice()
         }
         .onOpenURL { url in
-            if ["mobiledevicepairing", "mobiledevicepair", "mobiledeviceconfig"].contains(url.pathExtension.lowercased()) {
-                do {
-                    try loadPairingFile(from: url)
-                } catch {
-                    errorText = error.localizedDescription
-                }
-            }
+            guard Self.isPairingFileExtension(url.pathExtension) else { return }
+            importPairingFile(from: url)
         }
         .alert("Error", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
             Button("OK") {}
@@ -382,11 +382,7 @@ struct GoldenNuggetView: View {
                       allowedContentTypes: Self.pairingFileTypes) { result in
             switch result {
             case .success(let url):
-                do {
-                    try loadPairingFile(from: url)
-                } catch {
-                    errorText = error.localizedDescription
-                }
+                importPairingFile(from: url)
             case .failure(let error):
                 errorText = error.localizedDescription
             }
@@ -550,39 +546,86 @@ struct GoldenNuggetView: View {
 
     // MARK: - Behaviour
 
+    /// Forget the pairing record — in memory, and from `UserDefaults`.
+    ///
+    /// **The file in Documents is deliberately left alone.**  The restore path
+    /// reads it first, so a reset that only cleared the two in-memory values was
+    /// undone by the next launch; the persisted `autoImportDisabled` flag is
+    /// what makes it stick instead of deleting the file.  That is the right
+    /// trade for a button that just says "reset": the pairing file may be the
+    /// user's only copy, and re-obtaining one costs a re-pair.
+    ///
+    /// A later import clears the flag again, so this is "stop using it", not
+    /// "never use it".
     func resetPairing() {
         pairingFileRaw = nil
         pairingFileURL = nil
-        // Also stop the launch auto-import for the rest of this session, or the
-        // installer's embedded record would undo this on the next `.task` pass.
         autoImportDisabled = true
         didAutoStart = false
         RunLog.shared.clear()
+        // Logged *after* the clear, or this would be the line the clear removes.
+        // The reset used to leave no trace anywhere, which is why "the record
+        // came back after a restart" was invisible in the one place it could
+        // have been seen.
+        GoldenNuggetEngine.shared.log("pairing reset: record cleared from memory and UserDefaults; "
+            + "\(AppPaths.pairingFile.lastPathComponent) kept on disk, automatic import "
+            + "disabled until the next import")
     }
 
-    // Extensions accepted by the pairing-file picker and onOpenURL handler.
-    static let pairingFileTypes: [UTType] = ["mobiledevicepairing", "mobiledevicepair", "mobiledeviceconfig"].compactMap {
+    /// Extensions accepted by the pairing-file picker and the `onOpenURL`
+    /// handler.  **One list**: the picker built its array from these names and
+    /// the URL handler hard-coded the same three again, so adding a fourth
+    /// would have worked in one path and silently not in the other.
+    static let pairingFileExtensions = ["mobiledevicepairing", "mobiledevicepair", "mobiledeviceconfig"]
+
+    static let pairingFileTypes: [UTType] = pairingFileExtensions.compactMap {
         UTType(filenameExtension: $0, conformingTo: .data)
     }
 
-    /// A pairing record is usable only if it is a plist with a non-empty
-    /// top-level `UDID` — that key is what minimuxer's `start()` reads first
-    /// and it logs "Couldn't get UDID" and stops when it is missing.
+    static func isPairingFileExtension(_ ext: String) -> Bool {
+        pairingFileExtensions.contains(ext.lowercased())
+    }
+
+    /// Whether the app is willing to hand these bytes to minimuxer.
+    ///
+    /// Deliberately **format-agnostic**: the pairing format belongs to the
+    /// library, not to this file.  A pairing record is one of two shapes —
+    /// `.rppairing` (`identifier`, `private_key`, `public_key`; iOS 17+
+    /// RemotePairing) or `.lockdown` (`UDID`, `SystemBUID`, `EscrowBag`, the
+    /// certificates) — and **only the second carries a `UDID`**.
+    ///
+    /// This used to require a non-empty top-level `UDID` outright, which is a
+    /// lockdown-only fact.  On an iOS 17+ device, where the pairing file is an
+    /// `.rppairing` record, that check rejected **every file the user could
+    /// possibly import**: the import (which checked nothing) accepted it and the
+    /// device paired fine, and then the restore path refused the very same bytes
+    /// on the next launch and reported "no pairing record" — the pairing file
+    /// "disappearing after a restart".  Exactly backwards, and invisible.
+    ///
+    /// So the app asserts only what it can assert alone: non-empty, a plist, a
+    /// non-empty top-level dictionary.  Whether it is a *recognised* record is
+    /// `PairingFileParser`'s answer, and the library gives it — naming the
+    /// missing keys — from `start()`, whose error this app already surfaces
+    /// (see `startMinimuxer`).  Do not reintroduce a key list here: a second
+    /// copy of the format's rules is what went wrong the first time.
     static func usablePairingRecord(_ raw: String) -> Bool {
         guard let data = raw.data(using: .utf8),
               let obj = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
               let dict = obj as? [String: Any]
         else { return false }
-        return (dict["UDID"] as? String)?.isEmpty == false
+        return !dict.isEmpty
     }
 
     /// What a candidate record actually contains, for the log line — a rejected
     /// record has to be diagnosable from the log alone, because the alternative
     /// on a phone is "minimuxer did not start" with nothing to go on.
+    ///
+    /// Keys only, no verdict: this used to append `[UDID]` / `[no UDID]`, which
+    /// reads as a judgement about validity and is not one — an `.rppairing`
+    /// record is valid *without* a `UDID`.
     private static func pairingSourceLabel(_ raw: String) -> String {
         guard let keys = pairingFileTopLevelKeys(raw) else { return "not a parseable plist" }
-        let listed = keys.isEmpty ? "(no keys)" : keys.sorted().joined(separator: ", ")
-        return "keys: \(listed)\(keys.contains("UDID") ? " [UDID]" : " [no UDID]")"
+        return keys.isEmpty ? "(no keys)" : "keys: \(keys.sorted().joined(separator: ", "))"
     }
 
     /// Make sure a usable pairing record exists on disk, and report whether one
@@ -602,7 +645,13 @@ struct GoldenNuggetView: View {
     ///   * `alt.count > 5000` was the only test applied to it.  A real pairing
     ///     record is a few KB, so the threshold silently rejected a perfectly
     ///     good one and accepted a truncated multi-KB blob.  It is replaced by
-    ///     `usablePairingRecord`, which checks what actually matters.
+    ///     `usablePairingRecord`, which checks the shape instead of the size.
+    ///
+    /// And the validator it uses is **not** a format rule: see
+    /// `usablePairingRecord`.  A `UDID`-must-be-present test lived here and
+    /// rejected every `.rppairing` record, i.e. every pairing file an iOS 17+
+    /// device can use — which is the whole of "the pairing file disappears
+    /// after a restart", because the import had accepted it minutes earlier.
     ///
     /// Precedence is deliberate: a pairing file the user imported wins over the
     /// one the installer embedded, because re-pairs are per-device and an
@@ -655,19 +704,102 @@ struct GoldenNuggetView: View {
         return false
     }
 
-    // Document-picker URLs are security-scoped: reading them without
-    // startAccessingSecurityScopedResource fails with "you don't have
-    // permission to view it". Copy the file into Documents and use that
-    // stable path afterwards (minimuxer reads from Documents too).
+    /// Import a pairing record the user picked.
+    ///
+    /// The contract is **validate → write → read back → only then claim it**,
+    /// and each step is here for a way the previous version failed.
+    ///
+    /// It read the file, wrote it out, and set `pairingFileRaw` /
+    /// `pairingFileURL` from whatever it happened to hold — without looking at
+    /// the content and without checking that the write landed.  Nothing threw
+    /// for content the *restore* path then refused, so a record that came back
+    /// empty or truncated (a document-picker URL that is an iCloud/other-app
+    /// placeholder read before it was materialised is the common one) was
+    /// written as a 0-byte file, reported as a success — the alert only fires on
+    /// a thrown error, and `write` does not throw for empty content — and read
+    /// back as "no pairing record" on the next launch.
+    ///
+    /// What it validates **with** matters as much as that it validates: see
+    /// `usablePairingRecord`.  Checking the format's rules here is what turned
+    /// a working import into a rejected one, so this defers the format verdict
+    /// to minimuxer.
     func loadPairingFile(from url: URL) throws {
+        // Document-picker URLs are security-scoped: reading one without
+        // `startAccessingSecurityScopedResource` fails with "you don't have
+        // permission to view it".
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        let raw = try String(contentsOf: url)
+
+        // Read bytes, not a string: an empty or missing file has to be
+        // distinguishable from a decode failure, and both have to be reported
+        // in words rather than as a bare Cocoa error.  minimuxer's parser takes
+        // text, so anything that is not UTF-8 (a binary plist, say) is refused
+        // here instead of being silently mangled on the way to disk.
+        let data = try Data(contentsOf: url)
+        guard let raw = String(data: data, encoding: .utf8) else {
+            throw GoldenNuggetError("\(url.lastPathComponent) is not UTF-8 text "
+                + "(\(data.count) bytes). A pairing file has to be an XML plist, which is what "
+                + "minimuxer parses — a binary plist has to be converted first.")
+        }
+
+        let record = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !record.isEmpty else {
+            throw GoldenNuggetError("\(url.lastPathComponent) is empty — nothing to import. "
+                + "If it lives in iCloud Drive, open it in Files once so it is downloaded, "
+                + "then import it again.")
+        }
+        guard Self.usablePairingRecord(record) else {
+            throw GoldenNuggetError("\(url.lastPathComponent) is not a property list "
+                + "(\(Self.pairingSourceLabel(record))). A pairing file has to be an XML plist — "
+                + "minimuxer parses nothing else.")
+        }
+
+        // Store the **normalised** form: it is what `reimportPairingFile()`
+        // compares against on the way back in and what minimuxer is handed, so
+        // keeping the untrimmed original would only ever differ by whitespace
+        // the restore path silently strips.
         let dest = AppPaths.pairingFile
-        try raw.write(to: dest, atomically: true, encoding: .utf8)
-        pairingFileRaw = raw
+        try record.write(to: dest, atomically: true, encoding: .utf8)
+
+        // Read it back.  A write that did not land is indistinguishable from one
+        // that did until the next launch reads it — which is exactly the delay
+        // that made this look like data loss instead of a failed import.
+        let onDisk = try String(contentsOf: dest, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard onDisk == record else {
+            throw GoldenNuggetError("The pairing file did not survive being written to "
+                + "\(dest.lastPathComponent): \(onDisk.count) of \(record.count) bytes came "
+                + "back. Import it again.")
+        }
+
+        // A successful import is the user's answer to an earlier reset, so the
+        // persisted flag goes back down.  Leaving it up would import the record
+        // and work *now*, then have every later launch skip the automatic load
+        // and come up "unpaired" — the failure the reset fix was about, pointing
+        // the other way.
+        autoImportDisabled = false
+        pairingFileRaw = record
         pairingFileURL = dest.path
+        GoldenNuggetEngine.shared.log("pairing file imported: \(Self.pairingSourceLabel(record)) "
+            + "→ \(dest.lastPathComponent), \(record.count) bytes, read back OK")
         startMinimuxer()
+    }
+
+    /// Run an import from one of the two entry points, reporting a failure the
+    /// same way from both.
+    ///
+    /// The two call sites had their own `do`/`catch` and differed in nothing but
+    /// the file name in the alert.  The reason is **also** logged: on a phone
+    /// the alert is the only surface a rejected record ever reaches, and it is
+    /// gone as soon as it is dismissed.
+    func importPairingFile(from url: URL) {
+        do {
+            try loadPairingFile(from: url)
+        } catch {
+            errorText = error.localizedDescription
+            GoldenNuggetEngine.shared.log("pairing file import failed (\(url.lastPathComponent)): "
+                + "\(error.localizedDescription)")
+        }
     }
 
     /// Re-read the device line.  Called on entry and by the header's refresh
@@ -885,14 +1017,21 @@ struct GoldenNuggetView: View {
                         setOverrideTunnelPeerReachable: { _ in },
                         getConnectionMode: { .localVPN }
                     ))
-                    // Diagnostic: minimuxer's start() requires a top-level "UDID"
-                    // string key in the pairing-file plist. Show the real keys so
-                    // a wrong pairing file is obvious instead of a bare error.
+                    // Diagnostic: show the record's real keys, so a wrong or
+                    // unrecognised pairing file is obvious instead of a bare
+                    // error.  **No verdict is attached.**  This used to print
+                    // "[UDID OK]" / "[NO UDID — start() will fail]", which is a
+                    // lockdown-only rule and reads as a failure for the
+                    // perfectly valid `.rppairing` record an iOS 17+ device
+                    // uses.  The authoritative verdict comes from `start()` on
+                    // the next line, which names whatever keys are missing.
+                    // `await` is load-bearing, not decorative: this runs on a
+                    // `DispatchQueue.global` task while `View` is `@MainActor`,
+                    // so it is the hop that keeps the call legal.
                     if let keys = await Self.pairingFileTopLevelKeys(pairingFileRaw) {
-                        let hasUDID = keys.contains("UDID")
-                        GoldenNuggetEngine.shared.log("pairing file top-level keys: \(keys.isEmpty ? "(empty)" : keys.sorted().joined(separator: ", ")) \(hasUDID ? "[UDID OK]" : "[NO UDID — start() will fail]")")
+                        GoldenNuggetEngine.shared.log("pairing file top-level keys: \(keys.isEmpty ? "(empty)" : keys.sorted().joined(separator: ", "))")
                     } else {
-                        GoldenNuggetEngine.shared.log("pairing file: NOT a parseable XML/JSON plist")
+                        GoldenNuggetEngine.shared.log("pairing file: NOT a parseable plist")
                     }
                     try await minimuxer.core.start(pairingFile: pairingFileRaw, mountPath: docs)
                     // Readiness wait, deadline-bounded.  This used to be
@@ -934,9 +1073,14 @@ struct GoldenNuggetView: View {
         }
     }
 
-    // Parse the pairing file plist and return its top-level keys. minimuxer's
-    // start() demands a top-level "UDID" string; if it's absent the lib logs
-    // "Couldn't get UDID" and fails before any device/tunnel work.
+    /// The record's top-level keys, for the import and start diagnostics.
+    ///
+    /// Keys only — deliberately no judgement about which of them *should* be
+    /// there.  The required set differs per protocol (`.rppairing` needs
+    /// `identifier`/`private_key`/`public_key` and no `UDID`; `.lockdown` needs
+    /// `UDID` and the certificates), that rule lives in `PairingFileParser`, and
+    /// the copy of it that used to be here — "a top-level UDID string is
+    /// mandatory" — is exactly what rejected every valid iOS 17+ pairing file.
     static func pairingFileTopLevelKeys(_ raw: String) -> [String]? {
         guard let data = raw.data(using: .utf8) else { return nil }
         guard let obj = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) else {
