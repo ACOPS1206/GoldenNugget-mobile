@@ -117,10 +117,21 @@ record into a boolean.
 
 ### 3.2 Fetching and merging the database (`PosterBoardBackup`)
 
-- **Matched by file name**, not by path: iOS 26 uploads it as
-  `AppDomain-com.apple.PosterBoard/…`, iOS 27 under the raw file tree
-  (`/.b/<n>/Containers/…`), where the store directory's name does not always appear. The
-  **highest** matching path wins (the structure version sorts), i.e. the newest layout.
+- **Matched by file name**, not by path. The **highest** matching path wins (the structure
+  version sorts), i.e. the newest layout — the reference's own rule
+  (`extract_posterboard_db` sorts its candidates by path, descending).
+
+  The two path shapes seen so far are **not the same backup flow**, so neither can be
+  assumed for the other:
+
+  | Source | Shape |
+  |---|---|
+  | iTunes/MobileSync **full** backup, iPad16,2 iOS 27.0 (24A5424a) | `AppDomain-com.apple.PosterBoard` + `Library/Application Support/PRBPosterExtensionDataStore/61/<name>.sqlite3` — **no** `Containers/`, and no path in that backup starts with `/` |
+  | mobilebackup2 **targeted** backup (what this app does) | the shape the reference's diagnostics are written for: it counts rows `LIKE '%Containers/%'` |
+
+  What this app's targeted fetch actually produces has **not** been captured yet, which is
+  why `extract` also carries a lookup that ignores the manifest entirely and identifies the
+  store by content (a SQLite file with the store's `poster` table).
 - **The WAL must be merged**: the store runs in WAL mode, so recent wallpaper data can live
   in the `-wal`, and copying the bare main file would lose it. SQLite's online-backup API
   does the fold (the reference's `src.backup(merged)`), and the `-shm` is deliberately
@@ -131,6 +142,21 @@ record into a boolean.
   falling back to 61 only when the path does not name the store directory — the reference's
   own fallback. The wrong version lands the injected database in a directory the device
   never reads.
+
+Every premise the extraction depends on has been checked against **the device's own
+database**, taken from that iPad's iTunes backup (`sha1("<domain>-<relativePath>")` →
+`5d/5d32a1d1…`, 49152 bytes):
+
+| Premise | Result |
+|---|---|
+| the fileID rule + shard layout resolve the payload | ✅ the file is at the computed path |
+| the store has a `poster` table (the marker the content lookup matches on) | ✅ |
+| `PRAGMA integrity_check` | ✅ `ok` |
+| `requiredTables` — `poster`, `posterAttributes`, `posterRoleMembership`, `sqlite_sequence` | ✅ all present (so even `strict` validation passes) |
+| structure version out of the path | ✅ `…/PRBPosterExtensionDataStore/61/` → 61 |
+
+The manifest of that backup carries **no `-wal` sibling row** for the store, so "found the
+database, no WAL companion" is the normal case rather than a symptom.
 
 ### 3.3 Stitching (`PosterBoardStore`)
 

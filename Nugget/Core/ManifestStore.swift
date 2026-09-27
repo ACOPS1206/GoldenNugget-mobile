@@ -107,6 +107,110 @@ struct ManifestStore {
         }
     }
 
+    // MARK: - Reading rows
+
+    /// One row of the manifest, for a caller that needs to find a file in the backup.
+    struct Row {
+        let fileID: String
+        let domain: String
+        let relativePath: String
+        /// Where the payload lives — nil when the file is not on disk, which is a
+        /// state the device answers with `MBErrorDomain/205`.
+        let payload: URL?
+    }
+
+    /// The tables this manifest actually has.
+    ///
+    /// Here because the file at `Manifest.db` is **not always** the schema a reader
+    /// expects.  On iOS 27 the *host* writes a libimobiledevice-shaped placeholder for
+    /// the device to read (`ManifestEntry` + `Properties`, see `HostManifests
+    /// .writeSQLiteManifest`), and the device's own `Files`-shaped database replaces it
+    /// only if the device uploads one.  A reader that fails with "no such table: Files"
+    /// and nothing else leaves the operator guessing which of the two they are holding —
+    /// which is exactly what happened the first time `PosterBoardBackup` ran.
+    var tableNames: [String] {
+        guard let db = try? open() else { return [] }
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "SELECT name FROM sqlite_master WHERE type = 'table'",
+                                 -1, &stmt, nil) == SQLITE_OK else { return [] }
+        var names: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let text = sqlite3_column_text(stmt, 0) { names.append(String(cString: text)) }
+        }
+        return names.sorted()
+    }
+
+    /// Rows whose `relativePath` matches a SQL `LIKE` pattern, longest path first.
+    ///
+    /// Longest-first because the reference resolves the PosterBoard store by taking the
+    /// highest matching path: the store directory carries a numeric structure version, so
+    /// ordering by path picks the newest layout when a device somehow has more than one.
+    func rows(relativePathLike pattern: String) throws -> [Row] {
+        let db = try open()
+        defer { sqlite3_close(db) }
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT fileID, domain, relativePath FROM Files "
+                                     + "WHERE relativePath LIKE ? ORDER BY relativePath DESC",
+                                 -1, &stmt, nil) == SQLITE_OK, let stmt else {
+            throw GoldenNuggetError("Manifest.db has no readable Files table "
+                + "(tables present: \(tableNames.isEmpty ? "none" : tableNames.joined(separator: ", "))). "
+                + "That is the host-written placeholder, not the database the device uploads.")
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, pattern, -1, ManifestSchema.transient)
+
+        var rows: [Row] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let idText = sqlite3_column_text(stmt, 0),
+                  let domainText = sqlite3_column_text(stmt, 1),
+                  let pathText = sqlite3_column_text(stmt, 2) else { continue }
+            let fileID = String(cString: idText)
+            let url = payloadURL(forFileID: fileID)
+            rows.append(Row(fileID: fileID,
+                            domain: String(cString: domainText),
+                            relativePath: String(cString: pathText),
+                            payload: FileManager.default.fileExists(atPath: url.path) ? url : nil))
+        }
+        return rows
+    }
+
+    /// Every payload in the backup, whatever the manifest says.
+    ///
+    /// Both layouts, because the two manifest formats ship payloads differently: the
+    /// sqlite one (iOS 27) uses the `fileID` shard tree —
+    /// `<deviceDir>/<fileID.prefix(2)>/<fileID>` — while the legacy MBDB one (iOS 26)
+    /// leaves them flat in `deviceDir`.  A *filtered* backup can also hold payloads the
+    /// manifest no longer accounts for, and the manifest itself can be the host's
+    /// placeholder, so this is the inventory that survives all of it.
+    ///
+    /// The three host-written metadata files are skipped: they sit in the same directory
+    /// and are not payloads.
+    func payloadFiles() -> [URL] {
+        let fm = FileManager.default
+        let metadata = Set(["Info.plist", "Manifest.plist", "Manifest.db", "Manifest.db-shm",
+                            "Manifest.db-wal", "Status.plist", "Manifest.mbdb"])
+        guard let entries = try? fm.contentsOfDirectory(at: deviceDir,
+                                                        includingPropertiesForKeys: [.isDirectoryKey])
+        else { return [] }
+        var files: [URL] = []
+        for entry in entries {
+            let name = entry.lastPathComponent
+            if entry.hasDirectoryPath {
+                if name.count == 2 {
+                    let contents = (try? fm.contentsOfDirectory(
+                        at: entry, includingPropertiesForKeys: nil)) ?? []
+                    files.append(contentsOf: contents.filter { !$0.hasDirectoryPath })
+                }
+            } else if !metadata.contains(name) {
+                files.append(entry)
+            }
+        }
+        return files.sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
     // MARK: - Pruning
     /// What `pruneToDiskState()` did, for the log line and for callers that want
     /// to react to a shortfall.

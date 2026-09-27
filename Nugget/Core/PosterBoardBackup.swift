@@ -24,18 +24,33 @@ import SQLite3
 ///      photos, no other app's data, nothing but the database is ever written.
 ///
 /// The database is then pulled out of the backup's own `Manifest.db` — matched
-/// by **file name**, not by path. iOS 26 uploads it as
-/// `AppDomain-com.apple.PosterBoard/…`, iOS 27 under the raw file tree
-/// (`/.b/<n>/Containers/…`) where the store directory's name does not always
-/// appear; only the file's own name is common to both.
+/// by **file name**, not by path, which is the reference's own rule
+/// (`extract_posterboard_db` sorts the matching rows by path and takes the
+/// highest, i.e. the newest store layout).
+///
+/// Matching by name rather than by shape is not defensive padding: the path the
+/// store arrives under really does vary, and the two shapes observed so far are
+/// not the same backup flow, so neither can be assumed for the other:
+///
+///   * an **iTunes/MobileSync full backup** of this iPad (iPad16,2, iOS 27.0
+///     24A5424a) carries it as `AppDomain-com.apple.PosterBoard` +
+///     `Library/Application Support/PRBPosterExtensionDataStore/61/<name>.sqlite3`
+///     — no `Containers/`, and not one path in that backup starts with `/`;
+///   * the reference's own diagnostics count rows LIKE `'%Containers/%'`,
+///     which is the shape a **mobilebackup2 targeted backup** (what this app
+///     does) is written for.
+///
+/// What this app's targeted fetch actually produces has not been captured yet,
+/// which is why `extract` also has a lookup that ignores the manifest entirely
+/// and reads the payloads by content.
 enum PosterBoardBackup {
     struct Result {
         /// The consolidated database, cached under `Documents/PosterBoard/`.
         let database: URL
         /// The store directory version parsed out of the database's own path.
         let structureVersion: Int
-        /// The manifest path it was found at, for the log.
-        let manifestPath: String
+        /// How it was found — a manifest row, or a scan of the shard tree.
+        let locatedBy: String
     }
 
     /// Where a fetched database is kept between runs.
@@ -44,8 +59,15 @@ enum PosterBoardBackup {
     }
 
     /// Run the targeted backup and return the consolidated database.
+    ///
+    /// - Parameter ios27: the device speaks the sqlite `Manifest.db` (iOS 27+) or the
+    ///   legacy MBDB format (iOS 26).  It decides what the *host* writes: a sqlite
+    ///   manifest the device reads, or nothing at all.  It does **not** decide how the
+    ///   store is found — that lookup goes through the payloads themselves when the
+    ///   manifest cannot answer (see `extract`), so the flat MBDB layout is covered too.
     static func fetch(backupRoot: URL,
                       udid: String,
+                      ios27: Bool = true,
                       onProgress: ((Double) -> Void)? = nil,
                       log: @escaping @Sendable (String) -> Void) async throws -> Result {
         let fm = FileManager.default
@@ -65,9 +87,14 @@ enum PosterBoardBackup {
         // 2. Host-side metadata. `isFullBackup: true` is the same marker the
         //    protective pull uses and for the same reason: a sparse marker asks
         //    the device to send whatever the manifest lists, which is nothing.
-        try HostManifests.ensure(deviceDir: deviceDir, udid: udid, isFullBackup: true,
+        // `ios27` goes to both halves. It is one fork, and the two files it
+        // decides are read as a pair by the device: give `ensure` the 3.3/10.0
+        // metadata while the manifest is the legacy shape and the run is
+        // incoherent before it starts.
+        try HostManifests.ensure(deviceDir: deviceDir, udid: udid, ios27: ios27,
+                                 isFullBackup: true,
                                  applications: [PosterBoard.bundleID: entry])
-        try HostManifests.writeSQLiteManifest(deviceDir: deviceDir, ios27: true)
+        try HostManifests.writeSQLiteManifest(deviceDir: deviceDir, ios27: ios27)
 
         // 3. The backup itself. The filter keeps the database and its WAL
         //    companions — `…sqlite3-wal` contains the name too — plus the backup
@@ -79,9 +106,9 @@ enum PosterBoardBackup {
             sourceIdentifier: udid,
             applications: [PosterBoard.bundleID: entry],
             shouldPreserve: { _, file in
-                let keep = ProtectiveBackup.isMetadataFile(file)
-                    || file.contains(PosterBoard.databaseFileName)
-                counter.note(file: file, keep: keep)
+                let mentionsStore = file.contains(PosterBoard.databaseFileName)
+                let keep = ProtectiveBackup.isMetadataFile(file) || mentionsStore
+                counter.note(file: file, keep: keep, isStore: mentionsStore)
                 return keep
             },
             onProgress: { overall in
@@ -93,18 +120,25 @@ enum PosterBoardBackup {
             delegateLog: { line in AppLog.write(line) }
         )
         log("PosterBoard: backup done — \(counter.summary)")
-        guard counter.kept > 0 else {
+        // The store itself has to have come through — metadata alone is not a result.
+        // The first version accepted any kept file at all, so a run that carried nothing
+        // but `Status.plist` went on to fail several stages later, deep in the manifest
+        // reader, with a message about a table. The device's own names are the evidence,
+        // and they are right here.
+        guard counter.posterBoardKept > 0 else {
             throw GoldenNuggetError(
-                "The device uploaded nothing for \(PosterBoard.bundleID) (\(counter.total) file(s) "
-                + "offered, 0 kept). Names it did offer: \(counter.sample()) — a container the "
-                + "device refuses to upload is answered this way, and it is the one failure the "
-                + "reference's own docstring describes: the device decides what to send, from the "
-                + "factory info it was given.")
+                "The device uploaded nothing for \(PosterBoard.bundleID): \(counter.kept) of "
+                + "\(counter.total) offered file(s) went through the keep-filter and not one of "
+                + "them was \(PosterBoard.databaseFileName). Either the container was never "
+                + "offered — the factory info it was handed did not name it, or the device "
+                + "declined — or it was offered under a name the filter did not recognise; the "
+                + "names below tell the two apart. Names the device offered: \(counter.sample())")
         }
 
         // 4. Pull it out, merge the WAL, and hand back the version it was found
         //    at so the restored copy lands in the same store directory.
-        let extracted = try extract(backupRoot: backupRoot, udid: udid, log: log)
+        let extracted = try extract(backupRoot: backupRoot, udid: udid,
+                                    deviceName: counter.posterBoardName, log: log)
         let destination = cachedDatabase(udid: udid)
         try fm.createDirectory(at: destination.deletingLastPathComponent(),
                                withIntermediateDirectories: true)
@@ -116,12 +150,12 @@ enum PosterBoardBackup {
             throw GoldenNuggetError("The PosterBoard database fetched from the device did not "
                 + "validate (\(PosterBoardStore.describeTables(consolidated))). Fetch it again.")
         }
-        log("PosterBoard: database ready — \(extracted.manifestPath), structure version "
+        log("PosterBoard: database ready — \(extracted.locatedBy), structure version "
             + "\(extracted.structureVersion), "
             + ByteCountFormatter.string(fromByteCount: fileSize(consolidated), countStyle: .file))
         return Result(database: consolidated,
                       structureVersion: extracted.structureVersion,
-                      manifestPath: extracted.manifestPath)
+                      locatedBy: extracted.locatedBy)
     }
 
     // MARK: - Extraction
@@ -129,74 +163,131 @@ enum PosterBoardBackup {
     private struct Extracted {
         let main: URL
         let wal: URL?
-        let manifestPath: String
+        let locatedBy: String
         let structureVersion: Int
     }
 
-    /// `extract_posterboard_db`: find the database's row, then its payload.
-    private static func extract(backupRoot: URL, udid: String,
+    /// `extract_posterboard_db`: find the database out of the fetched backup.
+    ///
+    /// Two ways, in this order, and the second one exists because the first one's premise
+    /// is not guaranteed:
+    ///
+    ///  1. **The device's own manifest row.**  This is what the reference does
+    ///     (`SELECT fileID, relativePath FROM Files WHERE relativePath LIKE
+    ///     '%PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3%'`, highest path first, and
+    ///     the `-wal` sibling for a WAL merge).  It goes through `ManifestStore` rather
+    ///     than a second copy of that query, because on this engine `Manifest.db` is not
+    ///     always the schema a reader expects: the host writes a libimobiledevice-shaped
+    ///     placeholder (`ManifestEntry` + `Properties`) for the *device* to read, and the
+    ///     device's own `Files`-shaped database replaces it only when it uploads one.
+    ///
+    ///  2. **A scan of the shard tree**, matching on content: a SQLite database that has
+    ///     the store's `poster` table, and beside it the (single) SQLite WAL.  A filtered
+    ///     backup keeps so few files that this is cheap, and it does not care what the
+    ///     manifest says at all — which matters, because the first real run of this fetch
+    ///     died on exactly that: the run carried metadata only, the manifest left on disk
+    ///     was the host's placeholder, and the failure surfaced several steps later as
+    ///     "could not query the backup's Manifest.db" with nothing about why.
+    ///
+    /// - Parameter deviceName: the device's own name for the store, captured by the
+    ///   keep-filter.  It is the best source for the structure version: it is the path the
+    ///   *device* uses, so it is right even when the manifest is unreadable.
+    private static func extract(backupRoot: URL, udid: String, deviceName: String?,
                                 log: @escaping @Sendable (String) -> Void) throws -> Extracted {
         let deviceDir = AppPaths.deviceDir(backupRoot: backupRoot, udid: udid)
-        let manifest = deviceDir.appendingPathComponent("Manifest.db")
-        guard FileManager.default.fileExists(atPath: manifest.path) else {
-            throw GoldenNuggetError("The PosterBoard backup produced no Manifest.db — the device "
-                + "did not commit a backup, so there is nothing to read the database out of.")
+        let store = ManifestStore(deviceDir: deviceDir)
+
+        // ① the rule the device itself reports, via the single owner of Manifest.db
+        var manifestTrouble: String?
+        do {
+            let rows = try store.rows(relativePathLike: "%\(PosterBoard.databaseFileName)%")
+            if let candidate = rows.first(where: {
+                $0.relativePath.hasSuffix(PosterBoard.databaseFileName)
+            }) {
+                guard let payload = candidate.payload else {
+                    throw GoldenNuggetError("The manifest lists \(candidate.relativePath) but its "
+                        + "payload is not on disk — the mid-stream filter dropped it.")
+                }
+                let wal = rows.first { $0.relativePath == candidate.relativePath + "-wal" }?.payload
+                log("PosterBoard: found \(candidate.relativePath) "
+                    + "(fileID \(candidate.fileID.prefix(12))…"
+                    + (wal == nil ? ", no WAL companion)" : ", with a WAL companion)"))
+                return Extracted(main: payload, wal: wal,
+                                 locatedBy: "manifest row \(candidate.relativePath)",
+                                 structureVersion: structureVersion(of: deviceName
+                                                                    ?? candidate.relativePath))
+            }
+            manifestTrouble = rows.isEmpty
+                ? "the manifest carries no row mentioning \(PosterBoard.databaseFileName)"
+                : "the manifest has \(rows.count) matching row(s) but none is the store itself"
+        } catch {
+            manifestTrouble = error.localizedDescription
         }
 
+        // ② the fallback: whatever is actually in the shard tree
+        log("PosterBoard: the manifest did not resolve the store (\(manifestTrouble ?? "unknown") "
+            + "— scanning the \(store.payloadFiles().count) payload(s) on disk by content")
+        if let scanned = scanForStore(in: store) {
+            log("PosterBoard: found the store by content \(scanned.locatedBy)")
+            return Extracted(main: scanned.main, wal: scanned.wal,
+                             locatedBy: scanned.locatedBy,
+                             structureVersion: structureVersion(of: deviceName ?? scanned.locatedBy))
+        }
+
+        throw GoldenNuggetError(
+            "The fetched backup does not hold the PosterBoard store. \(manifestTrouble ?? "") "
+            + "Manifest.db tables: \(store.tableNames.isEmpty ? "none" : store.tableNames.joined(separator: ", ")). "
+            + "Payloads on disk: \(store.payloadFiles().map(\.lastPathComponent).prefix(10).joined(separator: ", ")). "
+            + (store.tableNames.contains("ManifestEntry")
+               ? "Those tables are the host-written placeholder — the device never uploaded its "
+                 + "own Manifest.db, which happens when it does not take the container it was "
+                 + "asked for."
+               : "No payload is a PosterBoard database."))
+    }
+
+    /// The store found by reading the payloads, with the WAL paired only when exactly one
+    /// candidate of each kind exists: a mismatched WAL would do nothing (SQLite checks its
+    /// salt against the database and discards what does not belong), but guessing pairs is
+    /// still worse than saying "no WAL".
+    private static func scanForStore(in store: ManifestStore)
+        -> (main: URL, wal: URL?, locatedBy: String)? {
+        let payloads = store.payloadFiles()
+        let stores = payloads.filter(isPosterBoardDatabase)
+        guard let main = stores.first else { return nil }
+        let wals = payloads.filter(isSQLiteWAL)
+        let wal = stores.count == 1 && wals.count == 1 ? wals[0] : nil
+        return (main, wal, "shard scan (fileID \(main.lastPathComponent.prefix(12))…, "
+                + "\(stores.count) store(s) and \(wals.count) WAL candidate(s) found)")
+    }
+
+    /// Whether a payload is a SQLite database carrying the store's own marker table.
+    ///
+    /// `poster` and not "any sqlite": the backup may hold more than one database, and the
+    /// store's schema is the one thing that identifies it without consulting a manifest.
+    private static func isPosterBoardDatabase(_ url: URL) -> Bool {
         var db: OpaquePointer?
-        guard sqlite3_open_v2(manifest.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
+        guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
               let db else {
             sqlite3_close(db)
-            throw GoldenNuggetError("The backup's Manifest.db could not be opened.")
+            return false
         }
         defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'poster' LIMIT 1"
+        return sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK
+            && sqlite3_step(stmt) == SQLITE_ROW
+    }
 
-        // Match on the file name, and take the **highest** path that ends with
-        // it: the store directory's numeric version sorts, so this picks the
-        // newest layout when a device somehow carries more than one.
-        let sql = "SELECT fileID, relativePath FROM Files WHERE relativePath LIKE ? "
-            + "ORDER BY relativePath DESC"
-        var statement: OpaquePointer?
-        defer { sqlite3_finalize(statement) }
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw GoldenNuggetError("Could not query the backup's Manifest.db.")
-        }
-        let pattern = "%\(PosterBoard.databaseFileName)%"
-        sqlite3_bind_text(statement, 1, pattern, -1,
-                          unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-
-        var rows: [(fileID: String, path: String)] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            guard let idText = sqlite3_column_text(statement, 0),
-                  let pathText = sqlite3_column_text(statement, 1) else { continue }
-            rows.append((String(cString: idText), String(cString: pathText)))
-        }
-
-        guard let candidate = rows.first(where: { $0.path.hasSuffix(PosterBoard.databaseFileName) }) else {
-            let sample = rows.prefix(5).map(\.path).joined(separator: ", ")
-            throw GoldenNuggetError("The backup carries no \(PosterBoard.databaseFileName)"
-                + (rows.isEmpty
-                   ? " — and no PosterBoard rows at all. The device uploaded the container but "
-                     + "not the store, which is what a factory-info it did not accept looks like."
-                   : ". PosterBoard-ish rows it does carry: \(sample)"))
-        }
-        let payload = deviceDir.appendingPathComponent(String(candidate.fileID.prefix(2)))
-            .appendingPathComponent(candidate.fileID)
-        guard FileManager.default.fileExists(atPath: payload.path) else {
-            throw GoldenNuggetError("The manifest lists \(candidate.path) but its payload is not "
-                + "on disk — the mid-stream filter dropped it.")
-        }
-        let walID = rows.first { $0.path == candidate.path + "-wal" }
-        let wal = walID.map {
-            deviceDir.appendingPathComponent(String($0.fileID.prefix(2)))
-                .appendingPathComponent($0.fileID)
-        }
-        let walOnDisk = wal.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
-        log("PosterBoard: found \(candidate.path) (fileID \(candidate.fileID.prefix(12))…"
-            + (walOnDisk == nil ? ", no WAL companion)" : ", with a WAL companion)"))
-        return Extracted(main: payload, wal: walOnDisk,
-                         manifestPath: candidate.path,
-                         structureVersion: structureVersion(of: candidate.path))
+    /// Whether a payload begins with the SQLite WAL magic.  It has no tables to query, so
+    /// the header is the only thing to match on.
+    private static func isSQLiteWAL(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let header = try? handle.read(upToCount: 4), header.count == 4 else { return false }
+        // 0x377f0682 / 0x377f0683, big-endian, checksum-order dependent.
+        return header[0] == 0x37 && header[1] == 0x7f && header[2] == 0x06
+            && (header[3] == 0x82 || header[3] == 0x83)
     }
 
     /// `posterboard_structure_version`: the digits right after the store
@@ -205,12 +296,12 @@ enum PosterBoardBackup {
     /// 61 is the oldest supported layout, and it is the reference's own fallback
     /// — it is only reachable from a path that omits the store directory, which
     /// some iOS 27 upload paths do.
-    static func structureVersion(of manifestPath: String) -> Int {
+    static func structureVersion(of path: String) -> Int {
         let marker = "\(PosterBoard.storeDirectoryName)/"
-        guard let range = manifestPath.range(of: marker) else {
+        guard let range = path.range(of: marker) else {
             return PosterBoard.fallbackStructureVersion
         }
-        let digits = manifestPath[range.upperBound...].prefix { $0.isNumber }
+        let digits = path[range.upperBound...].prefix { $0.isNumber }
         return Int(digits) ?? PosterBoard.fallbackStructureVersion
     }
 
@@ -294,15 +385,24 @@ private final class Counter: @unchecked Sendable {
     private let lock = NSLock()
     private var _total = 0
     private var _kept = 0
+    private var _posterBoardKept = 0
+    private var _posterBoardName: String?
     private var _samples: [String] = []
     private var _lastStep = -1
     private var _posterBoardOffers: [String] = []
 
-    func note(file: String, keep: Bool) {
+    func note(file: String, keep: Bool, isStore: Bool) {
         lock.lock()
         defer { lock.unlock() }
         _total += 1
         if keep { _kept += 1 }
+        // The store *itself*, not its `-wal`/`-shm` siblings — those contain the name too.
+        // Its device-side path is the best source for the structure version, and its
+        // presence is what decides whether this fetch produced anything at all.
+        if keep, isStore, !file.hasSuffix("-wal"), !file.hasSuffix("-shm") {
+            _posterBoardKept += 1
+            if _posterBoardName == nil { _posterBoardName = file }
+        }
         if _samples.count < 20 { _samples.append(keep ? "+ \(file)" : "- \(file)") }
         // The names that mention PosterBoard at all are the ones worth seeing
         // when nothing matched: they say whether the container was uploaded
@@ -325,6 +425,10 @@ private final class Counter: @unchecked Sendable {
 
     var total: Int { lock.lock(); defer { lock.unlock() }; return _total }
     var kept: Int { lock.lock(); defer { lock.unlock() }; return _kept }
+    var posterBoardKept: Int { lock.lock(); defer { lock.unlock() }; return _posterBoardKept }
+    /// The device's own name for the store file, e.g.
+    /// `/.b/1/Containers/…/PRBPosterExtensionDataStore/62/PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3`.
+    var posterBoardName: String? { lock.lock(); defer { lock.unlock() }; return _posterBoardName }
 
     var summary: String {
         lock.lock()

@@ -257,6 +257,8 @@ class GoldenNuggetEngine {
             } else {
                 let fetched = try await PosterBoardBackup.fetch(
                     backupRoot: AppPaths.posterBoardFetchRoot, udid: udid,
+                    // The same fork `deliver` is about to take, from the same number.
+                    ios27: major >= 27 && !DevSettings.effective.forcePartialRestore,
                     onProgress: { overall in
                         self.logProgress("posterboard backup progress", overall)
                     },
