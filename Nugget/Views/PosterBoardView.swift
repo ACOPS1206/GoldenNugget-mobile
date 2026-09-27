@@ -69,6 +69,10 @@ struct PosterBoardView: View {
         // and does not touch the options: `RootView` already ran it at launch, and this
         // pass is what picks up a pack imported from somewhere else meanwhile.
         .task {
+            // The device line is read here and not in `body`, like every other page: it is
+            // a lockdown call.  It used to be declared and never set, so the card said
+            // "unknown device" for the whole life of this page.
+            identity = await DeviceIdentity.read()
             selection.loadFromDisk()
             refreshDatabaseSummary()
         }
