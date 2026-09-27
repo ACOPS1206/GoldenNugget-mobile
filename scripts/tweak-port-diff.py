@@ -46,6 +46,7 @@ DEFAULT_SOURCE = os.path.expanduser("~/GoldenNugget")
 # The compiler's own closure — and nothing else, so the harness needs no device
 # stack (no UIKit, no Minimuxer, no SQLite).
 HARNESS_SOURCES = ["TweakModel.swift", "TweakCatalog.swift",
+                   "TweakCatalogDaemons.swift",
                    "TweakDomainMap.swift", "TweakCompiler.swift"]
 
 

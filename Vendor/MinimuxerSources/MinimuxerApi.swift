@@ -295,6 +295,20 @@ public extension Minimuxer {
         )
     }
 
+    /// The device's own `installation_proxy` record for one app.
+    ///
+    /// What a backup's `FactoryInfo` needs in order to be told to upload that
+    /// app's **container** — the only way to get, for instance, PosterBoard's
+    /// sqlite database, which no other service the tunnel exposes can read.
+    /// The record is forwarded as the device gave it: see
+    /// `IdeviceGateway.syncAppFactoryEntry`.
+    func appFactoryEntry(bundleId: String) async throws -> [String: Any] {
+        guard let gw = ideviceGateway else {
+            throw MinimuxerError.noDevice("gateway is not IdeviceGateway")
+        }
+        return try await gw.appFactoryEntry(bundleId: bundleId)
+    }
+
     func restoreBackup(
         backupRoot: String,
         sourceIdentifier: String,
@@ -321,6 +335,7 @@ public extension Minimuxer {
         backupRoot: String,
         sourceIdentifier: String,
         skipAppContainers: Bool = false,
+        applications: [String: [String: Any]]? = nil,
         shouldPreserve: ((String, String) -> Bool)? = nil,
         onProgress: ((Double) -> Void)? = nil,
         delegateLog: ((String) -> Void)? = nil
@@ -332,6 +347,7 @@ public extension Minimuxer {
             backupRoot: backupRoot,
             sourceIdentifier: sourceIdentifier,
             skipAppContainers: skipAppContainers,
+            applications: applications,
             shouldPreserve: shouldPreserve,
             onProgress: onProgress,
             delegateLog: delegateLog

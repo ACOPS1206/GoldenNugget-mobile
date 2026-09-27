@@ -36,10 +36,18 @@ enum HostManifests {
     ///
     /// So this is a parameter rather than a constant. Getting it wrong is
     /// silent: the transfer completes, having moved nothing.
+    ///
+    /// - Parameter applications: App records to list under `Applications`, which
+    ///   is what makes the device upload those apps' containers at all.  `nil`
+    ///   leaves the empty dictionary the protective backup wants (no app
+    ///   container is uploaded); a non-nil value always rewrites `Info.plist`,
+    ///   so a second call with a different app list cannot be served the first
+    ///   one's file.
     static func ensure(deviceDir: URL,
                        udid: String,
                        ios27: Bool = true,
-                       isFullBackup: Bool = false) throws {
+                       isFullBackup: Bool = false,
+                       applications: [String: [String: Any]]? = nil) throws {
         let fm = FileManager.default
         try fm.createDirectory(at: deviceDir, withIntermediateDirectories: true)
 
@@ -80,10 +88,13 @@ enum HostManifests {
                 .write(to: manifestURL)
         }
 
-        // Info.plist — minimal identity, only used for display.
+        // Info.plist — device identity, and the `Applications` map that decides
+        // which app containers the device uploads. The reference's
+        // `init_mobile_backup_factory_info` writes the same dictionary here and
+        // sends it as the message's `FactoryInfo`; both are set by the caller.
         let infoURL = deviceDir.appendingPathComponent("Info.plist")
-        if !fm.fileExists(atPath: infoURL.path) {
-            let info: [String: Any] = [
+        if !fm.fileExists(atPath: infoURL.path) || applications != nil {
+            var info: [String: Any] = [
                 "Unique Identifier": udid.uppercased(),
                 "Target Type": "Device",
                 "Target Identifier": udid,
@@ -93,6 +104,10 @@ enum HostManifests {
                 "Serial Number": "",
                 "Applications": [:],
             ]
+            if let applications, !applications.isEmpty {
+                info["Applications"] = applications
+                info["Installed Applications"] = applications.keys.sorted()
+            }
             if let data = try? PropertyListSerialization.data(fromPropertyList: info,
                                                               format: .xml, options: 0) {
                 try? data.write(to: infoURL)

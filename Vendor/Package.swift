@@ -12,6 +12,15 @@ let package = Package(
         .library(
             name: "Minimuxer",
             targets: ["Minimuxer"]
+        ),
+        // Exposed as a product, not only as Minimuxer's dependency, because the
+        // app unpacks `.tendies` wallpaper packs itself (ZIPFoundation already
+        // ships in this package — its upstream manifest evaluates
+        // `canImport(Compression)` on the build host, which would pull the
+        // pkg-config CZLib path instead of Apple's Compression framework).
+        .library(
+            name: "ZIPFoundation",
+            targets: ["ZIPFoundation"]
         )
     ],
     dependencies: [

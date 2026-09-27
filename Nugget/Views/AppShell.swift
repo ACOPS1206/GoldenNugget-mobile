@@ -20,6 +20,7 @@ import UIKit
 enum AppDestination: String, CaseIterable, Identifiable, Hashable {
     case home
     case tweaks
+    case posterBoard
     case daemons
     case media
     case files
@@ -31,6 +32,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home: "GoldenNugget"
         case .tweaks: "Tweaks"
+        case .posterBoard: "PosterBoard"
         case .daemons: "Daemons"
         case .media: "Media"
         case .files: "Files"
@@ -42,6 +44,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home: "house"
         case .tweaks: "slider.horizontal.3"
+        case .posterBoard: "photo.artframe"
         case .daemons: "server.rack"
         case .media: "photo.on.rectangle"
         case .files: "folder"
@@ -67,7 +70,7 @@ struct RootView: View {
     /// and there is no second variable to keep in sync.
     @State private var path: [AppDestination] = []
     /// Regular widths only.  See `regular`.
-    @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
+    @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
     /// The compact shell's menu, presented as a sheet.
     @State private var menuPresented = false
 
@@ -77,6 +80,11 @@ struct RootView: View {
     /// thing in the hierarchy — a split view replaces the detail on every selection
     /// change, and the selection would have gone with it.
     @State private var tweakSelection = TweakSelection()
+    /// The PosterBoard page's selection, hoisted for exactly the same reason and with a
+    /// sharper edge: the wallpapers and the reset choice are edited on one page and
+    /// delivered by the **Apply on the home page**, so as page state they would be
+    /// destroyed by the very act of walking over to press it.
+    @State private var posterBoardSelection = PosterBoardSelection()
     /// Launch auto-start bookkeeping, hoisted for the same reason as the
     /// selection: the flags guard a process-wide singleton
     /// (`startMinimuxer`'s lock rejects *concurrent* attempts only), so they
@@ -125,6 +133,11 @@ struct RootView: View {
             }
             DeviceIdentityMonitor.shared.start()
         }
+        // The imported packs and the two picked files come back at launch, not when the
+        // PosterBoard page is first opened: the Apply that delivers them is on the home
+        // page, and a selection that is only loaded by *visiting* its editor is a
+        // selection that can be missing while the button is pressed.
+        .task { posterBoardSelection.loadFromDisk() }
     }
 
     // MARK: - Compact (iPhone)
@@ -201,6 +214,7 @@ struct RootView: View {
     @ViewBuilder
     private var detail: some View {
         GoldenNuggetView(tweakSelection: $tweakSelection,
+                         posterBoardSelection: $posterBoardSelection,
                          didAutoStart: $didAutoStart,
                          autoImportDisabled: $autoImportDisabled)
             .navigationDestination(for: AppDestination.self) { destination in
@@ -211,6 +225,8 @@ struct RootView: View {
                     EmptyView()
                 case .tweaks:
                     TweaksView(selection: $tweakSelection)
+                case .posterBoard:
+                    PosterBoardView(selection: $posterBoardSelection)
                 case .daemons:
                     DaemonsView(selection: $tweakSelection)
                 case .media:

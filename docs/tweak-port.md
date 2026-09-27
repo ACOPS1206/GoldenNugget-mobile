@@ -31,6 +31,14 @@
 > it in these domains consistently and never writes it in AppDomain/SysSharedContainer).
 > Fixed — see §2.2.
 >
+> **2026-09-27:** PosterBoard is a line of its own now — see `docs/posterboard-port.md`.
+> This file is about the registry's 133 plist tweaks; wallpaper packs, video wallpapers
+> and the store resets go through the **same** delivery channel
+> (`TweakPayload → TweakInjector`, domain `AppDomain-com.apple.PosterBoard`) but have
+> their own compile stage, their own database stage and their own page. It is also why
+> `TweakPayload` can now carry a payload **on disk** as well as in memory — §2 of that
+> document.
+>
 > A real-device build still needs `scripts/build-ipa.sh` run locally.
 
 Ported from: `~/GoldenNugget` (Python / PySide6, `src/tweaks/` and `src/controllers/`).
@@ -71,7 +79,11 @@ they can be checked one by one):
 | `src/controllers/preset_manager.py` (preset v2 JSON) | `GoldenNuggetPreset` / `GoldenNuggetPresetImport` | see §4.2 |
 | `tweak_loader._build_spec` | the generator folds `factory()`'s dict into `multiValues` | `WatchOSCompatibility`'s multi-key write |
 
-### 1.2 Not ported (5 features)
+### 1.2 Not ported (three features today)
+
+As of 2026-09-27 what is still not carried is **Templates**, **Status Bar** and
+**Icon Themes**. The table is the 2026-09-24 statement, kept for the record — the two
+amendments below it say what has moved since.
 
 Absent from the UI; on preset import each one is **reported with its reason**, never
 silently dropped.
@@ -88,6 +100,13 @@ silently dropped.
 > (generated) plus `Nugget/Views/DaemonsView.swift`, the ScreenTime nullify included — so
 > the last row records the state as of 2026-09-24, not today. It is also the page a reset
 > can act on (§2.4).
+>
+> **Amended 2026-09-27:** so has **PosterBoard** — wallpaper packs, video wallpapers and
+> the store resets, Templates still excluded; see `docs/posterboard-port.md`. Its row
+> stays for the same reason, and it is still reported by a preset import: the reference
+> **itself** refuses to serialise wallpapers ("device-specific and heavy, so they must
+> not travel with a preset"), so there is nothing in a preset to carry. The reason text
+> now points at the PosterBoard page rather than at a missing port.
 
 ---
 
@@ -398,9 +417,11 @@ Home page → **Tweaks** → *GoldenNugget tweaks*:
   reference's `description`. Number items show `min–max, step`, and input is **clamped** to
   the registry's bounds as you type.
 - **Clear all tweaks** clears the selection (this app only, **the device is not touched**).
-- **Apply N tweak(s)** runs the whole chain; afterwards the page shows the last 30 log lines
-  at the bottom, and the home page's log area has the full log. **Reboot the device** after
-  applying for the injected preferences to take effect.
+- **Apply N tweak(s)** — the home page's single Apply — runs the whole chain; afterwards the
+  page shows the last 30 log lines at the bottom, and the home page's log area has the full
+  log. It also carries whatever the PosterBoard page has selected, in the same run (see
+  `docs/posterboard-port.md` §2); with no wallpapers selected it is a tweak-only run, exactly
+  as before. **Reboot the device** after applying for the injected preferences to take effect.
 
 Home page **Reset Tweaks** → a sheet to pick pages → resets the **device**
 (Springboard / Internal / Daemons); semantics, the file set and the per-branch null are in
@@ -456,6 +477,11 @@ scripts/tweak-port-diff.py [--goldennugget ~/GoldenNugget] [-v]
 # Differential test of the page-reset payload plan against the reference (no device, no PySide6)
 scripts/reset-port-diff.py [--goldennugget ~/GoldenNugget] [-v]
 
+# Regenerate the PosterBoard embedded assets / the caml templates from the reference
+#   (the templates script also fails if upstream grows a placeholder it does not know)
+scripts/gen-pb-resources-from-goldennugget.py [--goldennugget ~/GoldenNugget] [--check]
+scripts/gen-pb-templates-from-goldennugget.py [--goldennugget ~/GoldenNugget] [--check]
+
 # Key-by-key diff of the two skip_setup plists against the reference's output (no device;
 #   with no arguments it uses the two files on this machine)
 #   How to compile it: see the header comment of scripts/skipsetup-check.swift (concatenate into main.swift, then xcrun swiftc)
@@ -464,11 +490,20 @@ scripts/reset-port-diff.py [--goldennugget ~/GoldenNugget] [-v]
 # Routine gates
 scripts/typecheck.sh                 # passes only at 0 errors
 scripts/sync-pbxproj-sources.py      # must be run after adding/removing files under Nugget/
+scripts/check-linked-symbols.py      # every C symbol the gateway calls must be in the archive that is linked
 ```
 
 `tweak-port-diff.py` depends on `packaging` (the reference uses it for version comparison).
 When the host's default interpreter lacks it, use
 `~/.workbuddy/binaries/python/envs/default/bin/python3`.
+
+`sync-pbxproj-sources.py` reconciles **sources only**. A SwiftPM *product* the app depends
+on (`.product(name:package:)` in `Package.swift`) has to be mirrored by hand in
+`project.yml` **and** in `project.pbxproj` (`packageProductDependencies` plus an
+`XCSwiftPackageProductDependency` object) — XcodeGen is not installed here, so
+`project.pbxproj` cannot be regenerated from `project.yml` and the three files have to
+agree by hand. The app depends on two products of the vendored package today: `Minimuxer`
+and `ZIPFoundation` (the latter for `.tendies` packs, which are ZIPs).
 
 ---
 

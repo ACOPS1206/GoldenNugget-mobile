@@ -117,7 +117,7 @@ enum MBDBManifest {
     /// directory rows to exist: dropping them makes the agent fail with
     /// `renameatx` ENOENT — the reason `clean_backup_for_restore` keeps
     /// `flags == 2` rows even with no payload.
-    static func rows(for payloads: [TweakPayload]) -> [Row] {
+    static func rows(for payloads: [TweakPayload]) throws -> [Row] {
         var rows: [Row] = []
         var seen: Set<String> = []
 
@@ -139,7 +139,7 @@ enum MBDBManifest {
         }
 
         for payload in payloads {
-            let contents = payload.contents
+            let contents = try payload.bytes()
             rows.append(Row(domain: payload.domain, path: payload.relativePath,
                             isDirectory: false,
                             owner: rowOwner(for: payload.domain),

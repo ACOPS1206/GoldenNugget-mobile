@@ -2,10 +2,19 @@ import Foundation
 
 /// One file to deliver into the backup: the payload and where it belongs.
 ///
-/// The Swift counterpart of the reference's `FileToRestore`, narrowed to the
-/// plist-tweak subset this port covers (GoldenNugget also builds
-/// `FileToRestore` for posterboard/icon/status-bar assets — those features are
-/// not ported).
+/// The Swift counterpart of the reference's `FileToRestore`.  That type carries
+/// `contents` **or** `contents_path` — a `FileToRestore` is either bytes in
+/// memory or a path to read — and the plist tweaks this port started with only
+/// ever used the first half.  The second half is not optional any more:
+/// GoldenNugget also builds `FileToRestore` for posterboard assets, where one
+/// video wallpaper is a few hundred extracted JPEG frames plus the video
+/// itself, and a container pack is a whole data-store snapshot.  Holding that
+/// as `Data` would put all of it on the app heap, and the injector reads a
+/// payload three times (write, size, digest).
+///
+/// So a payload is **either** in memory **or** on disk, never both, and every
+/// consumer goes through `bytes()`/`byteCount` rather than touching `contents`
+/// directly.
 ///
 /// Owner/group are deliberately **not** carried here.  The reference stamps
 /// every plist tweak with `Tweak.__init__`'s default `owner=501, group=501`,
@@ -16,9 +25,70 @@ import Foundation
 struct TweakPayload: Equatable {
     let domain: String
     let relativePath: String
+    /// The bytes, for a payload that fits in memory.  Empty when `source` is set.
     let contents: Data
+    /// A file whose bytes are the payload, for one that does not.  Nil when
+    /// `contents` is set.  The file has to still exist when the injector runs —
+    /// the caller owns it, and this type never deletes it.
+    let source: URL?
+
+    init(domain: String, relativePath: String, contents: Data) {
+        self.domain = domain
+        self.relativePath = relativePath
+        self.contents = contents
+        self.source = nil
+    }
+
+    init(domain: String, relativePath: String, source: URL) {
+        self.domain = domain
+        self.relativePath = relativePath
+        self.contents = Data()
+        self.source = source
+    }
 
     var label: String { "\(domain)/\(relativePath)" }
+
+    /// Where the bytes come from, for a log line.
+    var origin: String { source?.lastPathComponent ?? "\(contents.count) B in memory" }
+
+    /// The bytes, mapped rather than copied when they are on disk.
+    ///
+    /// `.mappedIfSafe` and not a plain read: the frames of a video wallpaper are
+    /// written straight back out, and mapping lets the kernel hand the same
+    /// pages over instead of the app holding a second copy of every one.
+    func bytes() throws -> Data {
+        guard let source else { return contents }
+        do {
+            return try Data(contentsOf: source, options: .mappedIfSafe)
+        } catch {
+            throw TweakPayloadUnavailable(payload: label,
+                                          file: source.lastPathComponent,
+                                          reason: error.localizedDescription)
+        }
+    }
+
+    /// The payload's size without reading it.
+    var byteCount: Int {
+        guard let source else { return contents.count }
+        let size = (try? source.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        return size
+    }
+}
+
+/// A payload whose bytes are on disk and are no longer there.
+///
+/// Its own type rather than `GoldenNuggetError`, which lives in the engine: this
+/// file is one of the five `scripts/tweak-port-diff.py` compiles for the host,
+/// and the engine pulls in Minimuxer and SwiftUI, which that harness has no use
+/// for.  The message is spelled the way the app's status line reads.
+struct TweakPayloadUnavailable: Error, LocalizedError {
+    let payload: String
+    let file: String
+    let reason: String
+
+    var errorDescription: String? {
+        "The payload for \(payload) is gone from disk (\(file)): \(reason)"
+    }
 }
 
 /// Turns a tweak selection into the files a restore should carry.

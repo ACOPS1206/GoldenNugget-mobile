@@ -57,6 +57,10 @@ struct GoldenNuggetView: View {
     /// replaces its detail view on every sidebar selection: as page state it
     /// would have been discarded the moment another destination was picked.
     @Binding var tweakSelection: TweakSelection
+    /// What the PosterBoard page has assembled, hoisted for the same reason and read
+    /// here because **this is the one Apply**: the wallpapers ride the same pass as the
+    /// tweaks, exactly as the reference's single `_apply_tweak_pass` carries them.
+    @Binding var posterBoardSelection: PosterBoardSelection
     /// The pending debounced autosave, cancelled and replaced on every change.
     @State private var autosaveTask: Task<Void, Never>?
     /// The device line's data, from the shared monitor rather than as page state.
@@ -118,9 +122,11 @@ struct GoldenNuggetView: View {
     /// these — which surfaced as "return from initializer without initializing
     /// all stored properties".
     init(tweakSelection: Binding<TweakSelection>,
+         posterBoardSelection: Binding<PosterBoardSelection>,
          didAutoStart: Binding<Bool>,
          autoImportDisabled: Binding<Bool>) {
         _tweakSelection = tweakSelection
+        _posterBoardSelection = posterBoardSelection
         _didAutoStart = didAutoStart
         _autoImportDisabled = autoImportDisabled
     }
@@ -259,9 +265,8 @@ struct GoldenNuggetView: View {
     /// under the status line, which is where the cards used to sit.
     private var applyCard: some View {
         GoldenCard {
-            GoldenMutedNote(text: "Applies every enabled tweak to the device. "
-                + "Reboot it when this is done — the injected preferences are read at boot.")
-            GoldenPrimaryButton(title: running ? "Applying…" : "Apply Tweaks",
+            GoldenMutedNote(text: applyNote)
+            GoldenPrimaryButton(title: running ? "Applying…" : applyTitle,
                                 running: running,
                                 disabled: !canApply) {
                 applyTweaks()
@@ -520,7 +525,39 @@ struct GoldenNuggetView: View {
 
     private var paired: Bool { pairingFileURL != nil }
 
-    private var canApply: Bool { paired && tweakSelection.enabledCount > 0 && !running }
+    /// Either source of work is enough: a run is worth starting when there are tweaks,
+    /// when there are wallpapers, or both.
+    private var canApply: Bool {
+        paired && !running && (tweakSelection.enabledCount > 0 || posterBoardSelection.isActive)
+    }
+
+    /// The button is named for what it will actually carry.  "Apply Tweaks" was the
+    /// whole truth while the tweaks were the only thing an apply had; the PosterBoard
+    /// selection now rides the same pass, and a button that under-reports its own
+    /// payload is how a user ends up surprised by a wallpaper they forgot they picked.
+    private var applyTitle: String {
+        switch (tweakSelection.enabledCount > 0, posterBoardSelection.isActive) {
+        case (true, true): return "Apply Tweaks & Wallpapers"
+        case (false, true): return "Apply Wallpapers"
+        case (true, false): return "Apply Tweaks"
+        case (false, false): return "Apply"
+        }
+    }
+
+    private var applyNote: String {
+        var lines = ["Applies every enabled tweak to the device."
+            + " Reboot it when this is done — the injected preferences are read at boot."]
+        if posterBoardSelection.isActive {
+            lines.append("This run also delivers the PosterBoard page's selection "
+                + "(\(posterBoardSelection.describe)) — one backup, one restore, the same "
+                + "channel. That stage fetches the store's database from the device first, "
+                + "so it takes one extra exchange.")
+        } else {
+            lines.append("Nothing is selected on the PosterBoard page, so this run carries "
+                + "only the tweaks.")
+        }
+        return lines.joined(separator: "\n\n")
+    }
 
     private var hasDiagnostics: Bool {
         FileManager.default.fileExists(atPath: GoldenNuggetEngine.diagnosticsURL.path)
@@ -866,8 +903,9 @@ struct GoldenNuggetView: View {
         running = true
         runStarted = Date()
         RunLog.shared.clear()
-        showStatus("Applying tweaks…", .accent, autoHide: false)
+        showStatus("Applying…", .accent, autoHide: false)
         let snapshot = tweakSelection
+        let wallpapers = posterBoardSelection
         let device = identity
         Task {
             var text = ""
@@ -875,6 +913,7 @@ struct GoldenNuggetView: View {
             var succeeded = false
             do {
                 try await GoldenNuggetEngine.shared.applyTweaks(selection: snapshot,
+                                                                posterBoard: wallpapers,
                                                                 deviceVersion: device.version,
                                                                 isIPhone: device.isIPhone)
                 text = "Applied. Reboot the device."
@@ -894,6 +933,14 @@ struct GoldenNuggetView: View {
                 runStarted = nil
                 showStatus(text, tone)
                 showRebootNotice = succeeded
+                // The reset is spent. It is deliberately not persisted, and it must not
+                // survive its own delivery either — the next run would clear the store
+                // again. (The page that used to apply it did this; the Apply lives here
+                // now, so the clearing does too.)
+                if succeeded {
+                    posterBoardSelection.resetModes = []
+                    posterBoardSelection.fullReset = false
+                }
             }
         }
     }
