@@ -21,6 +21,16 @@ let package = Package(
         .library(
             name: "ZIPFoundation",
             targets: ["ZIPFoundation"]
+        ),
+        // The AirTraffic sandbox escape (AirLift), as a C FFI the app calls
+        // directly.  A product rather than a Minimuxer dependency on purpose:
+        // Minimuxer has its own idea of the device connection, and the exploit
+        // is given a *pairing file path* and opens its own tunnel — folding it
+        // into Minimuxer would make the two connections contend for the same
+        // lockdownd session.  MIT; see Vendor/AirliftFFI.xcframework/README.md.
+        .library(
+            name: "AirliftFFI",
+            targets: ["AirliftFFI"]
         )
     ],
     dependencies: [
@@ -43,6 +53,16 @@ let package = Package(
             name: "ZIPFoundation",
             path: "ZIPFoundation",
             exclude: ["Sources/Resources"]
+        ),
+
+        // AirLift's AirTraffic sandbox escape as a C FFI, prebuilt by
+        // AirCard-iOS (MIT) against the iOS 27 SDK.  The simulator slice is
+        // dropped: this package ships a sideloaded .ipa and nothing links it
+        // for the simulator, so keeping it would double the vendored size for
+        // a library that can never be reached.
+        .binaryTarget(
+            name: "AirliftFFI",
+            path: "AirliftFFI.xcframework"
         ),
 
         // Main SPM target

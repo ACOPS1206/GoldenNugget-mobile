@@ -24,13 +24,24 @@ final class SkipSetupSettings: ObservableObject {
     /// → `SkipSetup.build`).
     ///
     /// **Upstream defaults this to `True`** (`preference_manager.py:19`, and its
-    /// GUI reads `settings.value("skip_setup", True)`).  This port defaults it to
-    /// `False` on purpose: `SkipSetup` has not been through a device run yet, and
-    /// defaulting it on would silently add two files to every apply — including
-    /// the first run that has to prove the rest of the pipeline.  Once a run has
-    /// confirmed it, flipping this one literal restores the reference's file set
-    /// exactly.
-    @AppStorage("SkipSetupEnabled") private var skipSetup: Bool = false
+    /// Nugget GUI reads `settings.value("skip_setup", True)`), and so does this
+    /// now. It used to default to `False` here on purpose: the feature had not
+    /// been through a device run, and defaulting it on would have added two
+    /// files to every apply — including the first run that had to prove the rest
+    /// of the pipeline. That is no longer the reason to hold it back, and the
+    /// file set now matches the reference's without anyone having to remember
+    /// a switch.
+    ///
+    /// What it costs, and it is a real cost, not a caveat to be filed: the files
+    /// only ride an apply that restores through a backup. The AirLift path
+    /// returns before the payload stage, so with skip setup on and no tweaks
+    /// ticked, a wallpapers-only run delivers no files at all — which
+    /// `GoldenNuggetEngine` reports as "nothing to apply" rather than passing for
+    /// a run that did something.
+    ///
+    /// As with any `@AppStorage` default, this only decides the value where
+    /// there is no stored one. A device that had the switch off keeps it off.
+    @AppStorage("SkipSetupEnabled") private var skipSetup: Bool = true
 
     private init() {}
 

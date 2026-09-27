@@ -22,6 +22,61 @@ import ZIPFoundation
 /// quirks in it — `__MACOSX` is matched on the lowercased name, the database
 /// file name on the raw one.  Both are reproduced rather than tidied, because
 /// either could be load-bearing for a pack in the wild.
+/// Which PosterBoard extension a descriptor pack belongs to.
+///
+/// A pack that ships a bare `descriptors/<UUID>` tree does not say which
+/// extension owns it — the path on the device does, and the pack has no copy of
+/// that path. The reference asks the user at import time and remembers the
+/// answer (`TendieItem.posterType`, `TendiesModel.swift`), because the injection
+/// target is built from it:
+/// `…/PRBPosterExtensionDataStore/<version>/Extensions/<extensionBundleId>/descriptors`.
+///
+/// Getting this wrong does not fail loudly. A descriptor injected under the
+/// wrong extension id lands in a folder PosterBoard's provider never reads, so
+/// the wallpaper simply does not appear.
+enum PosterBoardPosterType: String, CaseIterable, Identifiable, Codable {
+    case collections
+    case suggestedPhotos
+    case mercury
+    case container
+
+    var id: String { rawValue }
+
+    /// The reference's `TendiePosterType.extensionBundleId`.
+    var extensionBundleID: String {
+        switch self {
+        case .collections: return "com.apple.WallpaperKit.CollectionsPoster"
+        case .suggestedPhotos: return "com.apple.PhotosUIPrivate.PhotosPosterProvider"
+        case .mercury: return "com.apple.MercuryPoster"
+        case .container: return "com.apple.PosterBoard"
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .collections: return "Collections"
+        case .suggestedPhotos: return "Suggested Photos"
+        case .mercury: return "Mercury"
+        case .container: return "App Container"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .collections: return "paintpalette.fill"
+        case .suggestedPhotos: return "photo.fill"
+        case .mercury: return "sparkles"
+        case .container: return "shippingbox.fill"
+        }
+    }
+
+    /// A `container/` snapshot is its own kind of pack, so it defaults to the
+    /// type named after it rather than to Collections.
+    static func defaultForContainer(_ isContainer: Bool) -> PosterBoardPosterType {
+        isContainer ? .container : .collections
+    }
+}
+
 struct PosterBoardTendie: Identifiable, Hashable {
     let id = UUID()
     /// Where the pack lives in this app's container, so it survives a launch.
@@ -31,6 +86,9 @@ struct PosterBoardTendie: Identifiable, Hashable {
     let descriptorCount: Int
     let isContainer: Bool
     let isUnsafeContainer: Bool
+    /// Which extension this pack's descriptors are injected under. User-chosen,
+    /// because the pack does not carry it; see `PosterBoardPosterType`.
+    var posterType: PosterBoardPosterType
 
     /// The exact name `TendieFile` looks for inside a `container/` pack.
     static let databaseEntryName = "PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3"
@@ -50,6 +108,14 @@ struct PosterBoardTendie: Identifiable, Hashable {
         var descriptors = 0
         var container = false
         var unsafeContainer = false
+        // The provider this pack is *for*, read off its own paths, and nil when
+        // nothing said. The reference does this in the same walk
+        // (`TendiesEngine.swift`: a `/container/` path sets `.container`, then a
+        // descriptor path overrides it with mercury or photos). Order matters
+        // there and it is preserved here: the container rule runs on the way down
+        // and the descriptor rule on the way into the payload, so a snapshot
+        // ends up as the provider it snapshots rather than as `.container`.
+        var detected: PosterBoardPosterType?
         for entry in archive {
             let path = entry.path
             let lower = path.lowercased()
@@ -60,13 +126,24 @@ struct PosterBoardTendie: Identifiable, Hashable {
                 // spelled exactly this way inside a container dump.
                 if path.contains(Self.databaseEntryName) { unsafeContainer = true }
             }
+            if lower.contains("/container/") || lower.hasSuffix("/container") {
+                detected = .container
+            }
             // `descriptor/` and `descriptors/` are mutually exclusive as
             // substrings (`"descriptor/"` is not in `"descriptors/…"`), and the
             // reference tests them in that order — so the second is only reached
             // by the plural spelling.
             let marker = lower.contains("descriptor/") ? "descriptor/"
                 : (lower.contains("descriptors/") ? "descriptors/" : nil)
-            if let marker, let tail = lower.components(separatedBy: marker).dropFirst().first {
+            guard let marker else { continue }
+            if lower.contains("video") || lower.contains("photos") {
+                detected = .suggestedPhotos
+            } else if lower.contains("mercury") {
+                detected = .mercury
+            } else if detected != .container {
+                detected = .collections
+            }
+            if let tail = lower.components(separatedBy: marker).dropFirst().first {
                 // One level under the marker, and a directory: `UUID/`.
                 if tail.filter({ $0 == "/" }).count == 1 && tail.hasSuffix("/") {
                     descriptors += 1
@@ -81,6 +158,24 @@ struct PosterBoardTendie: Identifiable, Hashable {
         self.descriptorCount = descriptors
         self.isContainer = container
         self.isUnsafeContainer = unsafeContainer
+        self.posterType = PosterBoardPreferences.posterTypes[url.lastPathComponent]
+            ?? detected ?? .defaultForContainer(container)
+    }
+
+    /// Remember a poster type for this pack, and return the pack with it set.
+    ///
+    /// The pack is re-read from its archive on every launch, so the answer cannot
+    /// live in the pack — it goes to the one store that outlives a launch, keyed
+    /// by file name. Losing it is not catastrophic: the type falls back to
+    /// Collections. A wallpaper that silently stops appearing is, so it is written
+    /// the moment it changes rather than at Apply time.
+    func settingPosterType(_ type: PosterBoardPosterType) -> PosterBoardTendie {
+        var copy = self
+        copy.posterType = type
+        var types = PosterBoardPreferences.posterTypes
+        types[url.lastPathComponent] = type
+        PosterBoardPreferences.posterTypes = types
+        return copy
     }
 
     /// A one-line description for the row, including the reference's warning.

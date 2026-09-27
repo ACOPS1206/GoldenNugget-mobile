@@ -161,7 +161,18 @@ targets:
       # by hand — hence the comment.
       - package: Minimuxer
         product: ZIPFoundation
+      # The AirTraffic sandbox escape, same package, third product. `import
+      # AirliftFFI` needs this line as well as the one in Package.swift, for the
+      # same reason ZIPFoundation does. Deliberately NOT embedded by hand the
+      # way EMProxy is: that slice is a static .a, so there is no framework to
+      # copy into Frameworks/ and nothing to re-sign.
+      - package: Minimuxer
+        product: AirliftFFI
       - sdk: libsqlite3.tbd
+      # NeoSpring resprings by loading a payload into a WKWebView
+      # (Nugget/Core/NeoSpring.swift), so WebKit has to be linked. It is a
+      # system framework, so it is linked, not embedded.
+      - sdk: WebKit.framework
       # EMProxy is deliberately NOT listed here.  It reaches the app through the
       # `Minimuxer` package (`.binaryTarget(name: "EMProxy", …)` in
       # Vendor/Package.swift) and SwiftPM embeds the dynamic slice itself; listing

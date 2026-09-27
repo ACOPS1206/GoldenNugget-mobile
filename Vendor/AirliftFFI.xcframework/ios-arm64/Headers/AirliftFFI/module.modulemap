@@ -1,0 +1,4 @@
+module AirliftFFI {
+    header "airlift.h"
+    export *
+}

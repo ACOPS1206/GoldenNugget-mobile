@@ -222,6 +222,37 @@ struct GoldenCard<Content: View>: View {
     }
 }
 
+/// The run's percentage, as a bar and a number.
+///
+/// The engine has always reported whole-percent progress and the reference's
+/// home page prints the same number in its process-status line, but nothing drew
+/// it: `GoldenNuggetView` bound `onProgress` into `@State` and stopped there, so
+/// a multi-minute AirLift injection looked identical to a stalled one. The
+/// elapsed-time line beside it only says the process is alive, not how far along
+/// it is.
+///
+/// `value` is nil when nothing has reported yet, which is not the same as zero —
+/// an unknown start is shown as an indeterminate bar rather than an empty one
+/// claiming no work has been done.
+struct GoldenProgressBar: View {
+    let value: Double?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ProgressView(value: value ?? 0, total: 100)
+                .progressViewStyle(.linear)
+                .tint(GoldenTheme.accent)
+                .opacity(value == nil ? 0.35 : 1)
+            GoldenStatusText(text: label, tone: .secondary)
+        }
+    }
+
+    private var label: String {
+        guard let value else { return "working…" }
+        return String(format: "%.0f%%", value)
+    }
+}
+
 /// The hairline the reference draws between rows of one card.
 struct GoldenDivider: View {
     var body: some View {

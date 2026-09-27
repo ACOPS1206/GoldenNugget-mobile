@@ -221,8 +221,7 @@ struct SettingsView: View {
     /// switch therefore writes the unsupervised shape and only that.
     private var skipSetupNote: String {
         [
-            "Off: an apply carries only the tweaks (upstream defaults this to on; this "
-                + "port leaves it off until a run has confirmed the files land).",
+            "On by default, as upstream does. Off: an apply carries only the tweaks.",
             "On: an apply adds two files ahead of the tweaks, in this order —",
             "1. SysSharedContainerDomain-systemgroup.com.apple.configurationprofiles/"
                 + "Library/ConfigurationProfiles/CloudConfigurationDetails.plist, "

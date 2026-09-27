@@ -276,6 +276,11 @@ struct GoldenNuggetView: View {
                     let secs = Int(ctx.date.timeIntervalSince(runStarted ?? ctx.date))
                     GoldenStatusText(text: elapsedText(secs), tone: .secondary)
                 }
+                // The engine has reported whole-percent progress all along and
+                // this view has been storing it in `progress` without ever
+                // showing it, which left a multi-minute AirLift injection
+                // looking exactly like a hung one.
+                GoldenProgressBar(value: progress)
                 // A stall guard that waits minutes for a device that may be
                 // wedged is only safe if it can be stopped by hand. A blocked
                 // Rust read cannot be interrupted, so this abandons the call

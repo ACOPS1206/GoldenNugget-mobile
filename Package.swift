@@ -33,11 +33,17 @@ let package = Package(
             name: "GoldenNuggetMobile",
             dependencies: [
                 .product(name: "Minimuxer", package: "Vendor"),
-                // The app unpacks `.tendies` packs itself, and `.tendies` is a
+                // The app unpacks `.tendies` wallpaper packs itself, and `.tendies` is a
                 // ZIP. ZIPFoundation is already built as part of this package
                 // (Minimuxer depends on it), so this is one line of manifest
                 // rather than a second ZIP reader written by hand.
                 .product(name: "ZIPFoundation", package: "Vendor"),
+                // The AirTraffic sandbox escape, for the features that write into
+                // app containers directly (Apple Wallet card art, the passcode
+                // dialer's TelephonyUI caches) instead of going through a backup
+                // restore. See Nugget/Core/Airlift.swift for why it is separate
+                // from the Minimuxer gateway.
+                .product(name: "AirliftFFI", package: "Vendor"),
             ],
             path: ".",
             exclude: [
@@ -77,6 +83,9 @@ let package = Package(
             ],
             linkerSettings: [
                 .linkedFramework("UIKit"),
+                // NeoSpring (Nugget/Core/NeoSpring.swift) resprings by loading a
+                // payload into a WKWebView, so WebKit has to be linked.
+                .linkedFramework("WebKit"),
                 .linkedLibrary("sqlite3"),
             ]
         ),

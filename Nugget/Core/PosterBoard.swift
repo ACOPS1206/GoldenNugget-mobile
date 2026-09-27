@@ -215,10 +215,25 @@ struct PosterBoardSelection {
 /// `auto_refresh_posterboard` in `preference_manager`.
 enum PosterBoardPreferences {
     static let autoRefreshKey = "PosterBoardAutoRefresh"
+    static let posterTypesKey = "PosterBoardTendiePosterTypes"
 
     static var autoRefresh: Bool {
         get { UserDefaults.standard.object(forKey: autoRefreshKey) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: autoRefreshKey) }
+    }
+
+    /// Which PosterBoard extension each imported pack is injected under, by file
+    /// name. Same reason as above: a `.tendies` pack is re-read from its archive
+    /// on every launch, so a choice the user made about it has to be kept
+    /// somewhere the archive cannot overwrite.
+    static var posterTypes: [String: PosterBoardPosterType] {
+        get {
+            let raw = UserDefaults.standard.dictionary(forKey: posterTypesKey) as? [String: String] ?? [:]
+            return raw.compactMapValues(PosterBoardPosterType.init(rawValue:))
+        }
+        set {
+            UserDefaults.standard.set(newValue.mapValues(\.rawValue), forKey: posterTypesKey)
+        }
     }
 }
 

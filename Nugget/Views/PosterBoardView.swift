@@ -18,6 +18,8 @@ import UniformTypeIdentifiers
 ///     rows in the store's own sqlite, and the database cannot be synthesised —
 ///     it has to be fetched from the device.  The card says when that happened
 ///     last, and the fetch is also the first stage of an apply that needs one.
+///     It is hidden on AirLift, which has no such stage: that mode writes the
+///     descriptors into the container and never touches the rows.
 ///   * **The unsafe-container warning** is shown on the pack row rather than in
 ///     a modal that appears on import: it is a property of the pack, and it stays
 ///     true for as long as the pack is listed.
@@ -46,13 +48,28 @@ struct PosterBoardView: View {
     @State private var showVideoImporter = false
     @State private var showThumbnailImporter = false
 
+    /// The apply mode, seeded from the setting and written back on change.
+    ///
+    /// `@AppStorage` would have been the shorter version, and the reason it is not
+    /// used is that the mode has to be validated against the device on this page —
+    /// AirLift needs iOS 26.2 and a pairing record, and a picker that can hold a mode
+    /// the page will later refuse is a worse thing to show than one that cannot be
+    /// set here.
+    @State private var applyMode: PosterBoardApplyMode = .airlift
+
     var body: some View {
         GoldenPage(spacing: GoldenTheme.rowSpacing) {
             deviceCard
-            databaseCard
+            applyModeCard
+            // AirLift writes the descriptors into the container and never looks
+            // at the store's sqlite, so on that mode the whole card is about a
+            // stage the run will not perform. Leaving it up would be offering a
+            // fetch that the apply below ignores.
+            if applyMode != .airlift { databaseCard }
             packsSection
             videoSection
             resetSection
+            if applyMode == .airlift { airliftApplyCard }
             applyCard
             if let pickError { errorSection(pickError) }
             if !statusText.isEmpty { GoldenStatusText(text: statusText, tone: statusTone) }
@@ -74,6 +91,7 @@ struct PosterBoardView: View {
             // "unknown device" for the whole life of this page.
             identity = await DeviceIdentity.read()
             selection.loadFromDisk()
+            applyMode = PosterBoardApplyModeSettings.current
             refreshDatabaseSummary()
         }
         .fileImporter(isPresented: $showPackImporter, allowedContentTypes: [.data]) { result in
@@ -99,6 +117,64 @@ struct PosterBoardView: View {
                 + "of the device, in the \(PosterBoard.domain) domain — the same channel the "
                 + "tweaks use. Nothing is written to the device until Apply.")
         }
+    }
+
+    // MARK: - Apply mode
+
+    /// The two ways a selection can reach the device, as a segmented choice.
+    ///
+    /// A `Picker` rather than a switch: this is a choice between two mechanisms
+    /// with different costs, and a switch cannot show what the other option is.
+    /// The consequence of picking AirLift is spelled out under it, because
+    /// "AirLift" alone says nothing about the version floor or the reboot it
+    /// saves.
+    private var applyModeCard: some View {
+        GoldenCard {
+            HStack(spacing: 12) {
+                Text("How to apply")
+                    .font(GoldenFont.rowTitle)
+                    .foregroundColor(GoldenTheme.textPrimary)
+                Spacer(minLength: 12)
+                Picker("", selection: $applyMode) {
+                    ForEach(PosterBoardApplyMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .tint(GoldenTheme.accent)
+                .onChange(of: applyMode) { _, mode in
+                    PosterBoardApplyModeSettings.current = mode
+                }
+            }
+            .goldenRowSurface()
+            GoldenMutedNote(text: applyMode.summary)
+            if applyMode == .airlift, !airliftBlocker.isEmpty {
+                GoldenStatusText(text: airliftBlocker, tone: .warning)
+            }
+            if applyMode == .airlift {
+                GoldenMutedNote(text: "The store database is not part of this mode, so its card "
+                    + "is hidden: the injection writes the descriptors straight into the "
+                    + "container and the rows are not touched. Automatic refresh is ignored too.")
+            }
+            if !selection.resetModes.isEmpty, !applyMode.supportsReset {
+                GoldenStatusText(text: "The reset you have selected cannot be done over AirLift. "
+                    + "Switch back to Protective backup to keep it.", tone: .warning)
+            }
+        }
+    }
+
+    /// Why AirLift is not usable right now, in the page's own words.
+    ///
+    /// The same check `GoldenNuggetEngine` makes before it starts a run, stated
+    /// here so the picker cannot be set to something the apply will refuse.
+    private var airliftBlocker: String {
+        let reason = Airlift.unsupportedReason(deviceVersion: identity.version)
+        if !reason.isEmpty { return reason }
+        if !FileManager.default.fileExists(atPath: AppPaths.pairingFile.path) {
+            return "AirLift needs a pairing record and none is stored. Import one on the home page."
+        }
+        return ""
     }
 
     private var databaseCard: some View {
@@ -182,31 +258,57 @@ struct PosterBoardView: View {
     }
 
     private func packRow(_ pack: PosterBoardTendie) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(pack.name)
-                    .font(GoldenFont.rowTitle)
-                    .foregroundColor(GoldenTheme.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text(pack.summary)
-                    .font(GoldenFont.caption)
-                    .foregroundColor(pack.isUnsafeContainer ? GoldenTheme.warning
-                                                            : GoldenTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(pack.name)
+                        .font(GoldenFont.rowTitle)
+                        .foregroundColor(GoldenTheme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(pack.summary)
+                        .font(GoldenFont.caption)
+                        .foregroundColor(pack.isUnsafeContainer ? GoldenTheme.warning
+                                                                : GoldenTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .layoutPriority(1)
+                Spacer(minLength: 8)
+                Button {
+                    PosterBoardImports.remove(pack)
+                    selection.loadFromDisk()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 14))
+                        .foregroundColor(running ? GoldenTheme.textDisabled : GoldenTheme.error)
+                }
+                .buttonStyle(.plain)
+                .disabled(running)
             }
-            .layoutPriority(1)
-            Spacer(minLength: 8)
-            Button {
-                PosterBoardImports.remove(pack)
-                selection.loadFromDisk()
-            } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 14))
-                    .foregroundColor(running ? GoldenTheme.textDisabled : GoldenTheme.error)
+
+            // Which extension this pack is injected under. A bare pack does not
+            // carry that, and picking the wrong one is silent: the descriptor
+            // lands in a folder the provider never reads and the wallpaper just
+            // does not appear. The reference asks at import time
+            // (`TendieItem.posterType`); here it is a row control that persists
+            // with the pack.
+            if !pack.isContainer {
+                Picker("Target extension", selection: Binding(
+                    get: { pack.posterType },
+                    set: { chosen in
+                        guard let index = selection.tendies.firstIndex(where: { $0.id == pack.id })
+                        else { return }
+                        selection.tendies[index] = pack.settingPosterType(chosen)
+                    }
+                )) {
+                    ForEach(PosterBoardPosterType.allCases) { type in
+                        Text(type.label).tag(type)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(GoldenTheme.accent)
+                .disabled(running)
             }
-            .buttonStyle(.plain)
-            .disabled(running)
         }
         .goldenRowSurface()
     }
@@ -364,9 +466,63 @@ struct PosterBoardView: View {
     /// sets: two backups, two restores, two chances to leave the device half-applied, and
     /// no way for the operator to know which of them carried what.  Upstream's own
     /// sidebar has a single Apply page for the same reason.
-    private var applyCard: some View {
+    /// The apply that needs no backup, on the page whose contents it delivers.
+    ///
+    /// It lives here rather than on the home page because the two applies are
+    /// not the same run: the home page's Apply couples the wallpapers to the
+    /// tweaks and to a protective backup, and this one is the wallpapers alone.
+    /// Reached through the home page, a wallpapers-only run looks identical to
+    /// one that also takes a backup — the page says otherwise, but the button
+    /// to believe is the one that was pressed.
+    private var airliftApplyCard: some View {
         GoldenCard {
             if selection.isActive {
+                GoldenStatusText(text: "Ready: \(selection.describe)", tone: .accent)
+            } else {
+                GoldenMutedNote(text: "No packs imported yet — import a `.tendies` above to "
+                    + "apply it this way.")
+            }
+            GoldenActionRow(title: "Apply via AirLift",
+                            value: running ? "…" : nil,
+                            systemImage: "bolt.horizontal.circle",
+                            tone: airliftButtonTone) {
+                applyViaAirlift()
+            }
+            .disabled(!airliftAvailable)
+            if !airliftBlocker.isEmpty {
+                GoldenStatusText(text: airliftBlocker, tone: .warning)
+            }
+            GoldenMutedNote(text: "Writes the descriptors into \(PosterBoard.domain) over a "
+                + "tunnel and resprings, so it is live in seconds. No backup is taken, because "
+                + "nothing is delivered back to the device — but for the same reason it applies "
+                + "**only** the packs: tweaks need the backup, so they still go through the "
+                + "**Apply** button on the home page.")
+        }
+    }
+
+    /// Whether the run can start: not already running, not blocked by the device,
+    /// and there is something selected to inject.
+    private var airliftAvailable: Bool {
+        !running && airliftBlocker.isEmpty && selection.isActive
+    }
+
+    private var airliftButtonTone: GoldenTone {
+        airliftAvailable ? .accent : .disabled
+    }
+
+    private var applyCard: some View {
+        GoldenCard {
+            if applyMode == .airlift {
+                // The home page's Apply is still a backup-mode run even when this
+                // page is set to AirLift: it delivers the tweaks, and the
+                // wallpapers ride that same backup. Saying "fetches the database
+                // first" here would be true of that run, but the database card
+                // above is hidden, so it would read as a reference to nothing.
+                GoldenMutedNote(text: "The **Apply** button on the home page delivers the "
+                    + "tweaks, and the wallpapers you picked go with them in one protective "
+                    + "backup — it is a backup-mode run regardless of this page's setting. To "
+                    + "apply the packs alone, with no backup, use **Apply via AirLift** above.")
+            } else if selection.isActive {
                 GoldenStatusText(text: "Ready: \(selection.describe)", tone: .accent)
                 GoldenMutedNote(text: "Delivered by the **Apply** button on the home page, "
                     + "together with the tweaks. It fetches the store's database from the "
@@ -377,10 +533,12 @@ struct PosterBoardView: View {
                     + "delivered by the **Apply** button on the home page, together with the "
                     + "tweaks — one backup, one restore.")
             }
-            GoldenMutedNote(text: "The database itself can be fetched on its own, from the "
-                + "card above — it is the one stage that can fail on its own terms (the device "
-                + "decides whether it will upload the container), so being able to run it, "
-                + "watch it and retry is worth its own button.")
+            if applyMode != .airlift {
+                GoldenMutedNote(text: "The database itself can be fetched on its own, from the "
+                    + "card above — it is the one stage that can fail on its own terms (the "
+                    + "device decides whether it will upload the container), so being able to "
+                    + "run it, watch it and retry is worth its own button.")
+            }
         }
     }
 
@@ -486,6 +644,42 @@ struct PosterBoardView: View {
                 status = text
                 statusTone = tone
                 refreshDatabaseSummary()
+            }
+        }
+    }
+
+    /// Run the AirLift injection for the packs selected on this page.
+    ///
+    /// Shaped like `fetchDatabase` on purpose: the page already owns a run slot,
+    /// a run log and a status line, and a second apply path that kept its own
+    /// would mean the user watching one of them not move.
+    private func applyViaAirlift() {
+        guard airliftAvailable else { return }
+        running = true
+        runStarted = Date()
+        RunLog.shared.clear()
+        status = "Injecting the packs over AirLift…"
+        statusTone = .accent
+        Task {
+            var text = ""
+            var tone: GoldenTone = .primary
+            do {
+                try await GoldenNuggetEngine.shared.applyPosterBoardViaAirlift(
+                    selection, deviceVersion: identity.version)
+                text = "Applied over AirLift. The device resprung — no backup was taken."
+                tone = .success
+            } catch let failure as TransportFailure where failure.isCancellation {
+                text = "⏹ stopped by the user (\(failure.label))"
+                tone = .warning
+            } catch {
+                text = "❌ \(error.localizedDescription)"
+                tone = .error
+            }
+            await MainActor.run {
+                running = false
+                runStarted = nil
+                status = text
+                statusTone = tone
             }
         }
     }

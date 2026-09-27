@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		3C77F32162E7F459FFB57B7D /* AfcFileExplorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C423B2BB4DB06ECED0B5F73 /* AfcFileExplorer.swift */; };
 		B7AF9075663AA9789413D094 /* AfcMediaBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC6D8068D586482F477E4CF0 /* AfcMediaBackup.swift */; };
+		AC71F3A22E4B4C0A9D51B7C8 /* Airlift.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC71F3A12E4B4C0A9D51B7C8 /* Airlift.swift */; };
 		EB8E79099013C10B8DFFC15C /* Alert++.swift in Sources */ = {isa = PBXBuildFile; fileRef = 784977FF7125F784FA4547E2 /* Alert++.swift */; };
 		484D0347B41ADB35555A017F /* AppPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91396F621D29D7FA9600BD21 /* AppPaths.swift */; };
 		D12A90C194539DFA53831C5A /* AppShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDCF91FEC1CCE1B24D2BB264 /* AppShell.swift */; };
@@ -30,6 +31,7 @@
 		D8CB50EA9A6F61C7683E54A6 /* GoldenNuggetPreset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37369801556192F20D0DF2D8 /* GoldenNuggetPreset.swift */; };
 		11558E54DB612291BA4B5C73 /* GoldenNuggetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4432398FF02541D88F5E11B /* GoldenNuggetView.swift */; };
 		D216DFB074CD321EF4316F9E /* GoldenTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85A3D093FF4C72DC8FA10411 /* GoldenTheme.swift */; };
+		4C6ABCDA5E29802D75B2F8DF /* GrappaToken.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D8F3D3ADE8DD40A0B221EFF /* GrappaToken.swift */; };
 		49D6B9D95723713BD06BE44A /* HostManifests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1586D9A781CB24F33910162E /* HostManifests.swift */; };
 		D72E5E9591A66FAB046A24E0 /* InFlightCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5DC362DFE508D1A75B921BC /* InFlightCall.swift */; };
 		38AC1AA2B797920552A965C5 /* Logging.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DA93A177C8D1537F0522DAD /* Logging.swift */; };
@@ -38,8 +40,13 @@
 		0331AFC575C298F5CD5B9046 /* ManifestStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 590719A37991943F005FE604 /* ManifestStore.swift */; };
 		8599F4FC00683BED33CFEA2F /* MediaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1405DB7C8287A4D6101F564 /* MediaView.swift */; };
 		9616622130656E770045CB83 /* Minimuxer in Frameworks */ = {isa = PBXBuildFile; productRef = B6CC7F8101BD13AD344DBB86 /* Minimuxer */; };
+		DBE66DE774B10E9BCB6F83BB /* NeoSpring.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA27C52390517208AC1D83A6 /* NeoSpring.swift */; };
 		B131B5D39A218B7F0A12FC3C /* NuggetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB5B064EBCC8C22AB174E0D2 /* NuggetApp.swift */; };
+		674E2A808A58E5D3E7945CA2 /* PasscodeTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BDD9DF9E26A827067A70118 /* PasscodeTheme.swift */; };
+		5C0B68612965BB616DD71F88 /* PasscodeThemeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BE93548CC1372E18A63F5EB /* PasscodeThemeView.swift */; };
 		8EFA230E330DA684FF98700A /* PosterBoard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1560E85808C2A01450AD4CD /* PosterBoard.swift */; };
+		37514328D53B9DB4EB71EC7B /* PosterBoardAirlift.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C329362DD802CCA9CB45A2 /* PosterBoardAirlift.swift */; };
+		70EC16B3D11CAD33E0C9271E /* PosterBoardApplyMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4E281A018DC76B5AFE0A1E3 /* PosterBoardApplyMode.swift */; };
 		05D914EAC38901911B35E6A4 /* PosterBoardBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA16FEAE810163E3FB58A973 /* PosterBoardBackup.swift */; };
 		253460D5373547DC8032194A /* PosterBoardResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24A6FCA64DAFCF3674497207 /* PosterBoardResources.swift */; };
 		4B7673F854107FC11EB157C5 /* PosterBoardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CBD070C52DD7281009B60B4 /* PosterBoardStore.swift */; };
@@ -69,13 +76,17 @@
 		33FB94F9FE3904D2BB7AAC79 /* TweakReset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EF249B17F02AC4241B04711 /* TweakReset.swift */; };
 		547AFD63F883C35F60A96328 /* TweakRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A77000F278E3D52579527931 /* TweakRow.swift */; };
 		1F4598565EB3ECC262843292 /* TweaksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB4799584FF11C9BF5BE59FF /* TweaksView.swift */; };
+		000FAF790458B28656C889EC /* WalletCardSkin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 298990634724C9BD09173CA1 /* WalletCardSkin.swift */; };
+		F8CA987268AFEEE27B32C442 /* WalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68FD81B29996DD807BDD0A8E /* WalletView.swift */; };
 		637D690748869293AAB5B9C8 /* WireCensus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 343E173B6BF30E9113DD3CA4 /* WireCensus.swift */; };
 		E801AE73005EB73126FC4367 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 92FE9028690931EFD26A8AFF /* libsqlite3.tbd */; };
+		91AEAC90A50A9A1D472D0FDA /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 96D6AABAE44982B09FFA8F97 /* WebKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		2C423B2BB4DB06ECED0B5F73 /* AfcFileExplorer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AfcFileExplorer.swift; sourceTree = "<group>"; };
 		AC6D8068D586482F477E4CF0 /* AfcMediaBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AfcMediaBackup.swift; sourceTree = "<group>"; };
+		AC71F3A12E4B4C0A9D51B7C8 /* Airlift.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Airlift.swift; sourceTree = "<group>"; };
 		784977FF7125F784FA4547E2 /* Alert++.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Alert++.swift"; sourceTree = "<group>"; };
 		91396F621D29D7FA9600BD21 /* AppPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPaths.swift; sourceTree = "<group>"; };
 		FDCF91FEC1CCE1B24D2BB264 /* AppShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShell.swift; sourceTree = "<group>"; };
@@ -99,6 +110,7 @@
 		37369801556192F20D0DF2D8 /* GoldenNuggetPreset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoldenNuggetPreset.swift; sourceTree = "<group>"; };
 		F4432398FF02541D88F5E11B /* GoldenNuggetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoldenNuggetView.swift; sourceTree = "<group>"; };
 		85A3D093FF4C72DC8FA10411 /* GoldenTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoldenTheme.swift; sourceTree = "<group>"; };
+		5D8F3D3ADE8DD40A0B221EFF /* GrappaToken.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrappaToken.swift; sourceTree = "<group>"; };
 		1586D9A781CB24F33910162E /* HostManifests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostManifests.swift; sourceTree = "<group>"; };
 		A5DC362DFE508D1A75B921BC /* InFlightCall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InFlightCall.swift; sourceTree = "<group>"; };
 		4DA93A177C8D1537F0522DAD /* Logging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logging.swift; sourceTree = "<group>"; };
@@ -106,8 +118,13 @@
 		F63167F7109495632C638455 /* MBFileBlob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MBFileBlob.swift; sourceTree = "<group>"; };
 		590719A37991943F005FE604 /* ManifestStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManifestStore.swift; sourceTree = "<group>"; };
 		F1405DB7C8287A4D6101F564 /* MediaView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaView.swift; sourceTree = "<group>"; };
+		AA27C52390517208AC1D83A6 /* NeoSpring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeoSpring.swift; sourceTree = "<group>"; };
 		CB5B064EBCC8C22AB174E0D2 /* NuggetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NuggetApp.swift; sourceTree = "<group>"; };
+		2BDD9DF9E26A827067A70118 /* PasscodeTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasscodeTheme.swift; sourceTree = "<group>"; };
+		0BE93548CC1372E18A63F5EB /* PasscodeThemeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasscodeThemeView.swift; sourceTree = "<group>"; };
 		A1560E85808C2A01450AD4CD /* PosterBoard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterBoard.swift; sourceTree = "<group>"; };
+		B1C329362DD802CCA9CB45A2 /* PosterBoardAirlift.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterBoardAirlift.swift; sourceTree = "<group>"; };
+		B4E281A018DC76B5AFE0A1E3 /* PosterBoardApplyMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterBoardApplyMode.swift; sourceTree = "<group>"; };
 		EA16FEAE810163E3FB58A973 /* PosterBoardBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterBoardBackup.swift; sourceTree = "<group>"; };
 		24A6FCA64DAFCF3674497207 /* PosterBoardResources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterBoardResources.swift; sourceTree = "<group>"; };
 		7CBD070C52DD7281009B60B4 /* PosterBoardStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterBoardStore.swift; sourceTree = "<group>"; };
@@ -138,8 +155,11 @@
 		A77000F278E3D52579527931 /* TweakRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweakRow.swift; sourceTree = "<group>"; };
 		FB4799584FF11C9BF5BE59FF /* TweaksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweaksView.swift; sourceTree = "<group>"; };
 		6AB24A4C7742CD2E32B8F55D /* Vendor */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Vendor; sourceTree = SOURCE_ROOT; };
+		298990634724C9BD09173CA1 /* WalletCardSkin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletCardSkin.swift; sourceTree = "<group>"; };
+		68FD81B29996DD807BDD0A8E /* WalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletView.swift; sourceTree = "<group>"; };
 		343E173B6BF30E9113DD3CA4 /* WireCensus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WireCensus.swift; sourceTree = "<group>"; };
 		92FE9028690931EFD26A8AFF /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
+		96D6AABAE44982B09FFA8F97 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -149,6 +169,7 @@
 			files = (
 				9616622130656E770045CB83 /* Minimuxer in Frameworks */,
 				E801AE73005EB73126FC4367 /* libsqlite3.tbd in Frameworks */,
+				91AEAC90A50A9A1D472D0FDA /* WebKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -168,6 +189,7 @@
 			children = (
 				2C423B2BB4DB06ECED0B5F73 /* AfcFileExplorer.swift */,
 				AC6D8068D586482F477E4CF0 /* AfcMediaBackup.swift */,
+				AC71F3A12E4B4C0A9D51B7C8 /* Airlift.swift */,
 				91396F621D29D7FA9600BD21 /* AppPaths.swift */,
 				BAC71EBF95E1574B88783B6B /* AsyncRacing.swift */,
 				E9512D830DC6552FBC02D519 /* AutoSaveBootstrap.swift */,
@@ -179,13 +201,18 @@
 				620C48822AEE820170AF577B /* GoldenNuggetAutosave.swift */,
 				680BEDC6838E13FA5AEE059E /* GoldenNuggetEngine.swift */,
 				37369801556192F20D0DF2D8 /* GoldenNuggetPreset.swift */,
+				5D8F3D3ADE8DD40A0B221EFF /* GrappaToken.swift */,
 				1586D9A781CB24F33910162E /* HostManifests.swift */,
 				A5DC362DFE508D1A75B921BC /* InFlightCall.swift */,
 				4DA93A177C8D1537F0522DAD /* Logging.swift */,
 				0891BC919AA2450E81C16D93 /* MBDBManifest.swift */,
 				F63167F7109495632C638455 /* MBFileBlob.swift */,
 				590719A37991943F005FE604 /* ManifestStore.swift */,
+				AA27C52390517208AC1D83A6 /* NeoSpring.swift */,
+				2BDD9DF9E26A827067A70118 /* PasscodeTheme.swift */,
 				A1560E85808C2A01450AD4CD /* PosterBoard.swift */,
+				B1C329362DD802CCA9CB45A2 /* PosterBoardAirlift.swift */,
+				B4E281A018DC76B5AFE0A1E3 /* PosterBoardApplyMode.swift */,
 				EA16FEAE810163E3FB58A973 /* PosterBoardBackup.swift */,
 				24A6FCA64DAFCF3674497207 /* PosterBoardResources.swift */,
 				7CBD070C52DD7281009B60B4 /* PosterBoardStore.swift */,
@@ -208,6 +235,7 @@
 				5115129235D0DAF38C497A28 /* TweakInjector.swift */,
 				980679A3C896C7012DDD8F66 /* TweakModel.swift */,
 				3EF249B17F02AC4241B04711 /* TweakReset.swift */,
+				298990634724C9BD09173CA1 /* WalletCardSkin.swift */,
 				343E173B6BF30E9113DD3CA4 /* WireCensus.swift */,
 			);
 			path = Core;
@@ -249,6 +277,7 @@
 			children = (
 				7C1F0A9E5D3B4E6FA8C210D1 /* EMProxy.framework */,
 				92FE9028690931EFD26A8AFF /* libsqlite3.tbd */,
+				96D6AABAE44982B09FFA8F97 /* WebKit.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -271,12 +300,14 @@
 				F4432398FF02541D88F5E11B /* GoldenNuggetView.swift */,
 				85A3D093FF4C72DC8FA10411 /* GoldenTheme.swift */,
 				F1405DB7C8287A4D6101F564 /* MediaView.swift */,
+				0BE93548CC1372E18A63F5EB /* PasscodeThemeView.swift */,
 				C4BE2466826B04C5BC5936DF /* PosterBoardView.swift */,
 				AD4EED31AD30A3DEA76C9577 /* ResetPagesSheet.swift */,
 				9E007DB1B5DADCC9E6394E17 /* RunLog.swift */,
 				9F72AE6CD4E8EC369A26D247 /* SettingsView.swift */,
 				A77000F278E3D52579527931 /* TweakRow.swift */,
 				FB4799584FF11C9BF5BE59FF /* TweaksView.swift */,
+				68FD81B29996DD807BDD0A8E /* WalletView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -326,6 +357,7 @@
 			packageProductDependencies = (
 				B6CC7F8101BD13AD344DBB86 /* Minimuxer */,
 				B6CC7F8101BD13AD344DBB87 /* ZIPFoundation */,
+				B6CC7F8101BD13AD344DBB88 /* AirliftFFI */,
 			);
 			productName = GoldenNuggetMobile;
 			productReference = 58A0011193A068B87B3F76BA /* GoldenNuggetMobile.app */;
@@ -381,6 +413,7 @@
 			files = (
 				3C77F32162E7F459FFB57B7D /* AfcFileExplorer.swift in Sources */,
 				B7AF9075663AA9789413D094 /* AfcMediaBackup.swift in Sources */,
+				AC71F3A22E4B4C0A9D51B7C8 /* Airlift.swift in Sources */,
 				EB8E79099013C10B8DFFC15C /* Alert++.swift in Sources */,
 				484D0347B41ADB35555A017F /* AppPaths.swift in Sources */,
 				D12A90C194539DFA53831C5A /* AppShell.swift in Sources */,
@@ -400,6 +433,7 @@
 				D8CB50EA9A6F61C7683E54A6 /* GoldenNuggetPreset.swift in Sources */,
 				11558E54DB612291BA4B5C73 /* GoldenNuggetView.swift in Sources */,
 				D216DFB074CD321EF4316F9E /* GoldenTheme.swift in Sources */,
+				4C6ABCDA5E29802D75B2F8DF /* GrappaToken.swift in Sources */,
 				49D6B9D95723713BD06BE44A /* HostManifests.swift in Sources */,
 				D72E5E9591A66FAB046A24E0 /* InFlightCall.swift in Sources */,
 				38AC1AA2B797920552A965C5 /* Logging.swift in Sources */,
@@ -407,8 +441,13 @@
 				3D9A822A8FFEC6765986F255 /* MBFileBlob.swift in Sources */,
 				0331AFC575C298F5CD5B9046 /* ManifestStore.swift in Sources */,
 				8599F4FC00683BED33CFEA2F /* MediaView.swift in Sources */,
+				DBE66DE774B10E9BCB6F83BB /* NeoSpring.swift in Sources */,
 				B131B5D39A218B7F0A12FC3C /* NuggetApp.swift in Sources */,
+				674E2A808A58E5D3E7945CA2 /* PasscodeTheme.swift in Sources */,
+				5C0B68612965BB616DD71F88 /* PasscodeThemeView.swift in Sources */,
 				8EFA230E330DA684FF98700A /* PosterBoard.swift in Sources */,
+				37514328D53B9DB4EB71EC7B /* PosterBoardAirlift.swift in Sources */,
+				70EC16B3D11CAD33E0C9271E /* PosterBoardApplyMode.swift in Sources */,
 				05D914EAC38901911B35E6A4 /* PosterBoardBackup.swift in Sources */,
 				253460D5373547DC8032194A /* PosterBoardResources.swift in Sources */,
 				4B7673F854107FC11EB157C5 /* PosterBoardStore.swift in Sources */,
@@ -438,6 +477,8 @@
 				33FB94F9FE3904D2BB7AAC79 /* TweakReset.swift in Sources */,
 				547AFD63F883C35F60A96328 /* TweakRow.swift in Sources */,
 				1F4598565EB3ECC262843292 /* TweaksView.swift in Sources */,
+				000FAF790458B28656C889EC /* WalletCardSkin.swift in Sources */,
+				F8CA987268AFEEE27B32C442 /* WalletView.swift in Sources */,
 				637D690748869293AAB5B9C8 /* WireCensus.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -671,6 +712,14 @@
 		B6CC7F8101BD13AD344DBB87 /* ZIPFoundation */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ZIPFoundation;
+		};
+		/* The AirTraffic sandbox escape (AirLift), vendored as a static .a in
+		   the same local package, so no new XCLocalSwiftPackageReference is
+		   involved. Mirrors project.yml and Package.swift by hand, like the two
+		   above. */
+		B6CC7F8101BD13AD344DBB88 /* AirliftFFI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AirliftFFI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
