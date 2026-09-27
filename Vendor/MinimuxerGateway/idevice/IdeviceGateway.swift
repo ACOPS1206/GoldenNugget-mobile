@@ -3159,6 +3159,16 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
     /// Booleans are picked out by their CoreFoundation type rather than by
     /// `as? Bool`: a plist integer is an `NSNumber`, and `NSNumber(1) as? Bool`
     /// is `true` — which would turn every 1 in a device record into a boolean.
+    ///
+    /// **`Date` is deliberately not handled, and the reason is the linker.**
+    /// `plist_new_date` is declared in the vendored `plist.h`, but the archive
+    /// this app links — `libidevice_ffi.a`, see the `-lidevice_ffi` in the link
+    /// line — does not export it; only `libimobiledevice.a` does, and that one
+    /// is not linked at all (`nm -gU` on both).  Calling it compiles and then
+    /// fails the build with `Undefined symbols … _plist_new_date`.  So an
+    /// unrepresentable value is dropped **and logged** instead of guessed at:
+    /// the record being forwarded is the device's own, and a field quietly
+    /// missing from a factory info is worse than a line in the log.
     private func plistNode(from value: Any) -> plist_t? {
         switch value {
         case let text as String:
@@ -3192,9 +3202,9 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
                 plist_array_append_item(node, child)
             }
             return node
-        case let date as Date:
-            return plist_new_date(Int32(date.timeIntervalSince1970), 0)
         default:
+            debugLog("[IdeviceGateway] plistNode: dropping a \(type(of: value)) value — the "
+                     + "linked libplist has no exported constructor for it (see the note above)")
             return nil
         }
     }

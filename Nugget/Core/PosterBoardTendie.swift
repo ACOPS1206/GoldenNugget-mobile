@@ -122,7 +122,7 @@ struct PosterBoardTendie: Identifiable, Hashable {
             // (some zips carry both `a/` and `a/b`), and the reference's
             // `extractall` merges them.
             if entry.type == .directory, fm.fileExists(atPath: target.path) { continue }
-            try archive.extract(entry, to: target)
+            _ = try archive.extract(entry, to: target)
         }
     }
 }

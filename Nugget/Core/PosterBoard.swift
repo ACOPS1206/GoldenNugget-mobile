@@ -497,10 +497,10 @@ private struct PosterBoardBuilder {
                         // below, at the version directory.
                         continue
                     }
-                    let rewritten = try rewrittenContents(directory: currentPath,
-                                                          fileName: child,
-                                                          identifier: currentID,
-                                                          restorePath: restorePath)
+                    let rewritten = rewrittenContents(directory: currentPath,
+                                                      fileName: child,
+                                                      identifier: currentID,
+                                                      restorePath: restorePath)
                     switch rewritten {
                     case .none:
                         payloads.append(TweakPayload(domain: PosterBoard.domain,

@@ -173,7 +173,7 @@ enum PosterBoardStore {
                     + String(cString: sqlite3_errmsg(db)))
             }
         } catch {
-            exec(db, "ROLLBACK")
+            _ = exec(db, "ROLLBACK")
             throw error
         }
         return staged

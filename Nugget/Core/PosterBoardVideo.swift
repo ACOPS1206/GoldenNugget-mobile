@@ -266,10 +266,10 @@ enum PosterBoardVideo {
     /// byte flips to `B` (a 4-byte blob) when it does not — which also grows the
     /// header by two and has to be reflected in its own length field.
     static func wrapInAAR(contentsPlist: Data, video: URL, output: URL) throws {
-        var first = [UInt8](Data(bytes: Self.hex(
-            "4141303125005459503146504154500E00636F6E74656E74732E706C697374444154418E13")))
-        var second = [UInt8](Data(bytes: Self.hex(
-            "4141303129005459503146504154501200736574746C696E674566666563742E6D6F7644415441F4B8")))
+        var first = Self.hex(
+            "4141303125005459503146504154500E00636F6E74656E74732E706C697374444154418E13")
+        var second = Self.hex(
+            "4141303129005459503146504154501200736574746C696E674566666563742E6D6F7644415441F4B8")
 
         patchSizeField(&first, size: contentsPlist.count, longHeaderLength: 0x27)
         patchSizeField(&second, size: Int(fileSize(video)), longHeaderLength: 0x2B)
