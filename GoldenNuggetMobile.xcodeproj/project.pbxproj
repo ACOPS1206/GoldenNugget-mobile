@@ -38,6 +38,7 @@
 		8599F4FC00683BED33CFEA2F /* MediaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1405DB7C8287A4D6101F564 /* MediaView.swift */; };
 		9616622130656E770045CB83 /* Minimuxer in Frameworks */ = {isa = PBXBuildFile; productRef = B6CC7F8101BD13AD344DBB86 /* Minimuxer */; };
 		B131B5D39A218B7F0A12FC3C /* NuggetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB5B064EBCC8C22AB174E0D2 /* NuggetApp.swift */; };
+		06EF713AFDD0684FF33D43A0 /* PairingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 685121455FC2C43084A16DD9 /* PairingStore.swift */; };
 		52F9CFD7A2DB9E90B4FE71D1 /* ProgressPulse.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10F91169C201521D8C0F3B86 /* ProgressPulse.swift */; };
 		8969C92A6ECADAC5DA057A58 /* ProtectiveBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2521FA7674D8EDC6F4DF724 /* ProtectiveBackup.swift */; };
 		6260750CEB090F2A1CD8D4A4 /* RestoreRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = EABB4369B839C2CD9D0D7C98 /* RestoreRunner.swift */; };
@@ -95,6 +96,7 @@
 		590719A37991943F005FE604 /* ManifestStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManifestStore.swift; sourceTree = "<group>"; };
 		F1405DB7C8287A4D6101F564 /* MediaView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaView.swift; sourceTree = "<group>"; };
 		CB5B064EBCC8C22AB174E0D2 /* NuggetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NuggetApp.swift; sourceTree = "<group>"; };
+		685121455FC2C43084A16DD9 /* PairingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingStore.swift; sourceTree = "<group>"; };
 		10F91169C201521D8C0F3B86 /* ProgressPulse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressPulse.swift; sourceTree = "<group>"; };
 		F2521FA7674D8EDC6F4DF724 /* ProtectiveBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtectiveBackup.swift; sourceTree = "<group>"; };
 		EABB4369B839C2CD9D0D7C98 /* RestoreRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestoreRunner.swift; sourceTree = "<group>"; };
@@ -162,6 +164,7 @@
 				0891BC919AA2450E81C16D93 /* MBDBManifest.swift */,
 				F63167F7109495632C638455 /* MBFileBlob.swift */,
 				590719A37991943F005FE604 /* ManifestStore.swift */,
+				685121455FC2C43084A16DD9 /* PairingStore.swift */,
 				10F91169C201521D8C0F3B86 /* ProgressPulse.swift */,
 				F2521FA7674D8EDC6F4DF724 /* ProtectiveBackup.swift */,
 				EABB4369B839C2CD9D0D7C98 /* RestoreRunner.swift */,
@@ -373,6 +376,7 @@
 				0331AFC575C298F5CD5B9046 /* ManifestStore.swift in Sources */,
 				8599F4FC00683BED33CFEA2F /* MediaView.swift in Sources */,
 				B131B5D39A218B7F0A12FC3C /* NuggetApp.swift in Sources */,
+				06EF713AFDD0684FF33D43A0 /* PairingStore.swift in Sources */,
 				52F9CFD7A2DB9E90B4FE71D1 /* ProgressPulse.swift in Sources */,
 				8969C92A6ECADAC5DA057A58 /* ProtectiveBackup.swift in Sources */,
 				6260750CEB090F2A1CD8D4A4 /* RestoreRunner.swift in Sources */,

@@ -4,6 +4,13 @@ import Minimuxer
 @main
 struct GoldenNuggetApp: App {
     init() {
+        // Resolve the pairing record **before** any view exists.  The store is
+        // a process-wide singleton, so this is what makes "paired" independent
+        // of a view's lifetime: a home page that gets re-created (relaunch,
+        // or the split view rebuilding its detail column on a size-class
+        // change) reads the answer this produced instead of coming up empty.
+        PairingStore.shared.bootstrap()
+
         // LocalDevVPN compatibility: only start our own WireGuard server
         // (em_proxy at 127.0.0.1:51820) when no LocalDevVPN-style tunnel
         // (NEPacketTunnelProvider with iface 10.7.1.1) is already up.

@@ -16,7 +16,11 @@ import Foundation
 /// (`MIN_CARD_WIDTH = 200`, 12 pt gutters), which is what makes the page behave
 /// the same on a phone and on the iPad this app actually runs on.
 struct GoldenNuggetView: View {
-    @AppStorage("PairingFile") var pairingFileRaw: String?
+    /// The pairing record.  **Not** page state: whether the app is paired is a
+    /// process-wide fact (`PairingStore`), because a re-created view cannot be
+    /// allowed to forget it.  See that file for why the `@AppStorage` +
+    /// `@State` pair it replaces lost the pairing on a relaunch.
+    @ObservedObject private var pairing = PairingStore.shared
     // The tunnel addressing, persisted under the same keys `Tunnel` reads (see
     // `Tunnel.Key`), so the fields below and every probe are looking at one set
     // of values.  `@AppStorage` rather than `@State` because the tunnel is
@@ -26,20 +30,18 @@ struct GoldenNuggetView: View {
     @AppStorage(Tunnel.Key.peerIP) var tunnelPeerIP = Tunnel.defaultPeerIP
     @AppStorage(Tunnel.Key.port) var tunnelPort = String(Tunnel.defaultServicePort)
     @AppStorage(Tunnel.Key.prefixLength) var tunnelPrefixLength = String(Tunnel.defaultPrefixLength)
-    @State private var pairingFileURL: String?
     /// Whether the sidebar is a column of its own or a stack behind the detail —
     /// see `navBarVisibility`.
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    /// Launch auto-start bookkeeping for `reimportPairingFile()`, **owned by
-    /// `RootView`**: `startMinimuxer`'s lock only rejects *concurrent* attempts,
-    /// so these two have to outlive the view that reads them even though what
-    /// they guard is process-wide.  `didAutoStart` keeps a second `.task` pass
-    /// from starting the core twice; `autoImportDisabled` is the user's "Reset
-    /// pairing file" saying no — without it the next `.task` pass would fall
-    /// straight back to the `ALTPairingFile` the installer embedded and re-pair
-    /// a device the user just unpaired.
+    /// Launch auto-start bookkeeping, **owned by `RootView`**: `startMinimuxer`'s
+    /// lock only rejects *concurrent* attempts, so this has to outlive the view
+    /// that reads it even though what it guards is process-wide.  It keeps a
+    /// second `.task` pass from starting the core twice.
+    ///
+    /// The companion it used to have here — "the user said no to the embedded
+    /// pairing record" — moved into `PairingStore`, because "Reset pairing file"
+    /// has to survive the relaunch that would otherwise undo it.
     @Binding var didAutoStart: Bool
-    @Binding var autoImportDisabled: Bool
     @State private var running = false
     @State private var showPairingImporter = false
     @State private var showRebootNotice = false
@@ -85,11 +87,11 @@ struct GoldenNuggetView: View {
 
     /// Explicit, so `AppShell.swift` gets a signature it can depend on.
     ///
-    /// The synthesized memberwise initializer covers these three (they are the
+    /// The synthesized memberwise initializer covers these two (they are the
     /// only stored properties without a default), but its parameters come out in
-    /// **declaration order** — `didAutoStart:autoImportDisabled:tweakSelection:`
-    /// — so the call site would silently depend on where each one happens to sit
-    /// among a dozen other properties, and moving one breaks a different file.
+    /// **declaration order** — `didAutoStart:tweakSelection:` — so the call site
+    /// would silently depend on where each one happens to sit among a dozen
+    /// other properties, and moving one breaks a different file.
     /// Everything else keeps its default.
     ///
     /// Note this initializer is also why one was needed at all: a custom `init()`
@@ -98,11 +100,9 @@ struct GoldenNuggetView: View {
     /// these — which surfaced as "return from initializer without initializing
     /// all stored properties".
     init(tweakSelection: Binding<TweakSelection>,
-         didAutoStart: Binding<Bool>,
-         autoImportDisabled: Binding<Bool>) {
+         didAutoStart: Binding<Bool>) {
         _tweakSelection = tweakSelection
         _didAutoStart = didAutoStart
-        _autoImportDisabled = autoImportDisabled
     }
 
     var body: some View {
@@ -158,7 +158,13 @@ struct GoldenNuggetView: View {
             // setLogging()/start(): the Rust side latches the first
             // idevice_init_logger call and would otherwise keep file logging off.
             GoldenNuggetEngine.shared.enableRustFileLogging()
-            if !autoImportDisabled, reimportPairingFile(), !didAutoStart {
+            // `PairingStore.bootstrap()` is idempotent, so this is also the
+            // self-heal: a view handed a fresh identity re-reads the same
+            // durable record instead of coming up unpaired.  It is what the
+            // old `reimportPairingFile()` did, minus the two in-memory flags
+            // that decided whether it ran at all.
+            let havePairing = pairing.bootstrap()
+            if havePairing, !didAutoStart {
                 didAutoStart = true
                 startMinimuxer()
             }
@@ -540,7 +546,7 @@ struct GoldenNuggetView: View {
         .disabled(!available)
     }
 
-    private var paired: Bool { pairingFileURL != nil }
+    private var paired: Bool { pairing.isPaired }
 
     private var canApply: Bool { paired && tweakSelection.enabledCount > 0 && !running }
 
@@ -551,11 +557,11 @@ struct GoldenNuggetView: View {
     // MARK: - Behaviour
 
     func resetPairing() {
-        pairingFileRaw = nil
-        pairingFileURL = nil
-        // Also stop the launch auto-import for the rest of this session, or the
-        // installer's embedded record would undo this on the next `.task` pass.
-        autoImportDisabled = true
+        // The store deletes the file in Documents as well as the mirror and the
+        // in-memory record.  Deleting the file is what makes the reset survive
+        // a relaunch: the restore path reads Documents first, so leaving it
+        // behind used to bring the record straight back.
+        pairing.reset()
         didAutoStart = false
         RunLog.shared.clear()
     }
@@ -565,108 +571,9 @@ struct GoldenNuggetView: View {
         UTType(filenameExtension: $0, conformingTo: .data)
     }
 
-    /// A pairing record is usable only if it is a plist with a non-empty
-    /// top-level `UDID` — that key is what minimuxer's `start()` reads first
-    /// and it logs "Couldn't get UDID" and stops when it is missing.
-    static func usablePairingRecord(_ raw: String) -> Bool {
-        guard let data = raw.data(using: .utf8),
-              let obj = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
-              let dict = obj as? [String: Any]
-        else { return false }
-        return (dict["UDID"] as? String)?.isEmpty == false
-    }
-
-    /// What a candidate record actually contains, for the log line — a rejected
-    /// record has to be diagnosable from the log alone, because the alternative
-    /// on a phone is "minimuxer did not start" with nothing to go on.
-    private static func pairingSourceLabel(_ raw: String) -> String {
-        guard let keys = pairingFileTopLevelKeys(raw) else { return "not a parseable plist" }
-        let listed = keys.isEmpty ? "(no keys)" : keys.sorted().joined(separator: ", ")
-        return "keys: \(listed)\(keys.contains("UDID") ? " [UDID]" : " [no UDID]")"
-    }
-
-    /// Make sure a usable pairing record exists on disk, and report whether one
-    /// does.  Run on every launch, before `startMinimuxer()`.
-    ///
-    /// This used to be an `ALTPairingFile` lookup that only fired on a *first*
-    /// launch, which broke the app in three ways at once:
-    ///
-    ///   * `@AppStorage("PairingFile")` is set by that first launch, so on the
-    ///     second and every later launch the `pairingFileRaw == nil` guard
-    ///     skipped the whole branch — `pairingFileURL` was set, so the UI said
-    ///     "connected" while nothing had started the core.  The app looked fine
-    ///     and did nothing until the user re-imported by hand.
-    ///   * The embedded record was only assigned to a variable, never written to
-    ///     `Documents/pairingfile.mobiledevicepairing`, so the file the rest of
-    ///     the app (and `AppPaths`) treats as canonical did not exist.
-    ///   * `alt.count > 5000` was the only test applied to it.  A real pairing
-    ///     record is a few KB, so the threshold silently rejected a perfectly
-    ///     good one and accepted a truncated multi-KB blob.  It is replaced by
-    ///     `usablePairingRecord`, which checks what actually matters.
-    ///
-    /// Precedence is deliberate: a pairing file the user imported wins over the
-    /// one the installer embedded, because re-pairs are per-device and an
-    /// embedded record is a build-time artefact.  Each candidate is validated
-    /// before use, so a corrupt file on disk falls through to the next one
-    /// instead of blocking the launch.
-    @discardableResult
-    func reimportPairingFile() -> Bool {
-        let dest = AppPaths.pairingFile
-        let embedded = Bundle.main.object(forInfoDictionaryKey: "ALTPairingFile") as? String
-        // On disk first, then the persisted copy, then the installer's record.
-        let candidates: [(source: String, raw: String?)] = [
-            ("Documents/pairingfile.mobiledevicepairing", try? String(contentsOf: dest, encoding: .utf8)),
-            ("stored PairingFile", pairingFileRaw),
-            ("Info.plist ALTPairingFile", embedded),
-        ]
-
-        for (source, rawOpt) in candidates {
-            guard let raw = rawOpt?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { continue }
-            guard Self.usablePairingRecord(raw) else {
-                GoldenNuggetEngine.shared.log("pairing record rejected (\(source)): \(Self.pairingSourceLabel(raw))")
-                continue
-            }
-            let onDisk = (try? String(contentsOf: dest, encoding: .utf8))?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if onDisk == raw {
-                GoldenNuggetEngine.shared.log("pairing record: \(source) (\(Self.pairingSourceLabel(raw)))")
-            } else {
-                do {
-                    try raw.write(to: dest, atomically: true, encoding: .utf8)
-                    GoldenNuggetEngine.shared.log("pairing record re-imported from \(source) into \(dest.lastPathComponent) (\(Self.pairingSourceLabel(raw)))")
-                } catch {
-                    GoldenNuggetEngine.shared.log("pairing record found (\(source)) but could not be written to Documents: \(error.localizedDescription)")
-                }
-            }
-            pairingFileRaw = raw
-            pairingFileURL = dest.path
-            return true
-        }
-
-        // Nothing usable anywhere.  Do not leave a stale path behind: it would
-        // make `paired` true and the UI promise a connection that cannot exist.
-        pairingFileURL = nil
-        if pairingFileRaw != nil {
-            pairingFileRaw = nil
-            GoldenNuggetEngine.shared.log("stored pairing record was unusable — cleared, import a pairing file to connect")
-        } else if embedded == nil {
-            GoldenNuggetEngine.shared.log("no pairing record: none on disk, none stored, and the installer embedded no ALTPairingFile")
-        }
-        return false
-    }
-
-    // Document-picker URLs are security-scoped: reading them without
-    // startAccessingSecurityScopedResource fails with "you don't have
-    // permission to view it". Copy the file into Documents and use that
-    // stable path afterwards (minimuxer reads from Documents too).
     func loadPairingFile(from url: URL) throws {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        let raw = try String(contentsOf: url)
-        let dest = AppPaths.pairingFile
-        try raw.write(to: dest, atomically: true, encoding: .utf8)
-        pairingFileRaw = raw
-        pairingFileURL = dest.path
+        // Copies into Documents, validates, and publishes — see `PairingStore`.
+        try pairing.importFrom(url)
         startMinimuxer()
     }
 
@@ -825,7 +732,7 @@ struct GoldenNuggetView: View {
     private static var startInFlight = false
 
     func startMinimuxer() {
-        guard let pairingFileRaw else { return }
+        guard let pairingFileRaw = pairing.raw else { return }
         Self.startLock.lock()
         if Self.startInFlight {
             Self.startLock.unlock()
@@ -888,7 +795,7 @@ struct GoldenNuggetView: View {
                     // Diagnostic: minimuxer's start() requires a top-level "UDID"
                     // string key in the pairing-file plist. Show the real keys so
                     // a wrong pairing file is obvious instead of a bare error.
-                    if let keys = await Self.pairingFileTopLevelKeys(pairingFileRaw) {
+                    if let keys = PairingStore.topLevelKeys(pairingFileRaw) {
                         let hasUDID = keys.contains("UDID")
                         GoldenNuggetEngine.shared.log("pairing file top-level keys: \(keys.isEmpty ? "(empty)" : keys.sorted().joined(separator: ", ")) \(hasUDID ? "[UDID OK]" : "[NO UDID — start() will fail]")")
                     } else {
@@ -932,18 +839,6 @@ struct GoldenNuggetView: View {
                 }
             }
         }
-    }
-
-    // Parse the pairing file plist and return its top-level keys. minimuxer's
-    // start() demands a top-level "UDID" string; if it's absent the lib logs
-    // "Couldn't get UDID" and fails before any device/tunnel work.
-    static func pairingFileTopLevelKeys(_ raw: String) -> [String]? {
-        guard let data = raw.data(using: .utf8) else { return nil }
-        guard let obj = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) else {
-            return nil
-        }
-        guard let dict = obj as? [String: Any] else { return nil }
-        return Array(dict.keys)
     }
 
     /// Route engine log lines into `RunLog`.
