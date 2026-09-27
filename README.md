@@ -81,11 +81,11 @@ Wanted support? join our [Discord Server][server].
 
 **Thanks everyone who contributes to project!** 🎉
 
-<a href="https://github.com/awesomenull-dev/GoldenNugget/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=awesomenull-dev/GoldenNugget" alt="Contributors" />
+<a href="https://github.com/GoldenNugget-Team/GoldenNugget-mobile/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=GoldenNugget-Team/GoldenNugget-mobile" alt="Contributors" />
 </a>
 
-Want to see your name here? Open [Pull Request](https://github.com/awesomenull-dev/GoldenNugget-mobile/pulls)!
+Want to see your name here? Open [Pull Request](https://github.com/GoldenNugget-Team/GoldenNugget-mobile/pulls)!
 
 </div>
 
