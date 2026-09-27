@@ -115,11 +115,11 @@ enum PosterBoardVideo {
         }
 
         log("  → video loop: decoding \(plan.name) into \(ca.lastPathComponent)")
-        try writeCAML(video: plan.video,
-                      caDirectory: ca,
-                      calculationMode: plan.calculationMode.rawValue,
-                      reverse: plan.reverse,
-                      log: log)
+        try await writeCAML(video: plan.video,
+                            caDirectory: ca,
+                            calculationMode: plan.calculationMode.rawValue,
+                            reverse: plan.reverse,
+                            log: log)
     }
 
     /// `create_caml`: decode every frame, then write the frame list around them.
@@ -127,7 +127,7 @@ enum PosterBoardVideo {
                                   caDirectory: URL,
                                   calculationMode: String,
                                   reverse: Bool,
-                                  log: @escaping @Sendable (String) -> Void) throws {
+                                  log: @escaping @Sendable (String) -> Void) async throws {
         let asset = AVURLAsset(url: video)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw GoldenNuggetError("\(video.lastPathComponent) carries no video track.")
@@ -209,10 +209,15 @@ enum PosterBoardVideo {
         let segmentation = contents.appendingPathComponent("input.segmentation", conformingTo: .data)
 
         // The reference converts anything that is not already a .mov; a .mov is
-        // used as it stands.
-        let converted = plan.video.pathExtension.lowercased() == "mov"
-            ? nil
-            : try exportAsMOV(plan.video)
+        // used as it stands. Spelled as a statement rather than a ternary:
+        // `try await` inside a conditional expression has to be marked on the
+        // whole expression, and the branch is clearer as a branch.
+        let converted: URL?
+        if plan.video.pathExtension.lowercased() == "mov" {
+            converted = nil
+        } else {
+            converted = try await exportAsMOV(plan.video)
+        }
         let movie = converted ?? plan.video
         defer { if let converted { try? FileManager.default.removeItem(at: converted) } }
 
@@ -373,10 +378,13 @@ enum PosterBoardVideo {
     }
 
     /// `nominalFrameRate`, with the two fallbacks a track can need.
-    private static func framesPerSecond(of track: AVAssetTrack) -> Double {
-        let nominal = Double(track.nominalFrameRate)
+    ///
+    /// `load(…)` rather than the synchronous properties: those are still
+    /// reachable but deprecated since iOS 16, and this is their last caller.
+    private static func framesPerSecond(of track: AVAssetTrack) async throws -> Double {
+        let nominal = Double(try await track.load(.nominalFrameRate))
         if nominal > 0 { return nominal }
-        let minimum = CMTimeGetSeconds(track.minFrameDuration)
+        let minimum = CMTimeGetSeconds(try await track.load(.minFrameDuration))
         if minimum > 0 { return 1 / minimum }
         return 30
     }
@@ -386,7 +394,7 @@ enum PosterBoardVideo {
     /// `convert_to_mov` — ffmpeg's `-c:v copy -c:a copy -f mov`, as
     /// `AVAssetExportPresetPassthrough`: rewrapping the container without
     /// touching a frame, which is what "copy" means for both.
-    private static func exportAsMOV(_ video: URL) throws -> URL {
+    private static func exportAsMOV(_ video: URL) async throws -> URL {
         let output = FileManager.default.temporaryDirectory
             .appendingPathComponent("posterboard-\(UUID().uuidString).mov")
         let asset = AVURLAsset(url: video)
@@ -394,17 +402,11 @@ enum PosterBoardVideo {
                                                  presetName: AVAssetExportPresetPassthrough) else {
             throw GoldenNuggetError("\(video.lastPathComponent) cannot be rewrapped as a .mov.")
         }
-        session.outputURL = output
-        session.outputFileType = .mov
-        // The export is asynchronous and the compile step is not; a semaphore is
-        // the honest bridge. It is bounded by the file's own size, and the whole
-        // compile already runs off the main thread.
-        let done = DispatchSemaphore(value: 0)
-        session.exportAsynchronously { done.signal() }
-        done.wait()
-        guard session.status == .completed else {
+        do {
+            try await session.export(to: output, as: .mov)
+        } catch {
             throw GoldenNuggetError("Could not rewrap \(video.lastPathComponent) as a .mov: "
-                + (session.error?.localizedDescription ?? "export ended \(session.status)"))
+                + error.localizedDescription)
         }
         return output
     }
