@@ -240,10 +240,18 @@ class GoldenNuggetEngine {
         // that can succeed.
         let version = try await resolvedDeviceVersion(deviceVersion)
         let major = Int(version.split(separator: ".").first ?? "0") ?? 0
-        let ios27 = major >= 27
+        // Development mode can force the iOS 26 branch, so the reported version is no
+        // longer the last word on which branch runs -- only the default for it. Read
+        // once, here, and both decisions below quote the same snapshot.
+        let dev = DevSettings.effective
+        let ios27 = major >= 27 && !dev.forcePartialRestore
         // Reported before the fork, because this number *is* the fork: the
         // branch lines below say where the run went, this says why.
         log("device version for the manifest-format fork: \(version) (major \(major))")
+        if dev.forcePartialRestore {
+            log("development mode: forcing the iOS 26 branch on a major \(major) device "
+                + "-- no protective backup will be pulled")
+        }
 
         // iOS 26: a Partial Restore, built rather than pulled -- an empty device
         // directory, the host-side manifests, then this run's rows. Nothing was
@@ -270,7 +278,11 @@ class GoldenNuggetEngine {
             // photos: it is started to apply tweaks, and the media page is where
             // that choice is made with a count and a free-space figure in front
             // of the user.
-            await mediaBackup(deletingOriginals: false)
+            if dev.skipAfcMedia {
+                log("development mode: skipping the AFC media pull (Dev.SkipAfcMedia)")
+            } else {
+                await mediaBackup(deletingOriginals: false)
+            }
         } else {
             log("Manifest format: legacy MBDB (iOS 26 path), built from nothing")
             backupRoot = try await partialRestore(udid: udid)

@@ -522,6 +522,11 @@ struct GoldenIconButton: View {
 /// the reference's own fallback when the artwork is missing
 /// (`home.py`: a `bg_secondary` square at radius 14).
 struct GoldenLogo: View {
+    /// The square the logo is drawn at. The home header keeps the design system's
+    /// 80; the settings page's About wants it larger, and a second hard-coded
+    /// frame here would be one more number to keep in step with the theme.
+    var size: CGFloat = GoldenTheme.logoSize
+
     var body: some View {
         Group {
             if let image = GoldenLogo.bundledIcon {
@@ -538,7 +543,7 @@ struct GoldenLogo: View {
                     )
             }
         }
-        .frame(width: GoldenTheme.logoSize, height: GoldenTheme.logoSize)
+        .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: GoldenTheme.logoRadius))
     }
 

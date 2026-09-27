@@ -24,6 +24,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Hashable {
     case supervision
     case media
     case files
+    case settings
 
     var id: String { rawValue }
 
@@ -35,6 +36,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Hashable {
         case .supervision: "Supervision"
         case .media: "Media"
         case .files: "Files"
+        case .settings: "Settings"
         }
     }
 
@@ -46,42 +48,47 @@ enum AppDestination: String, CaseIterable, Identifiable, Hashable {
         case .supervision: "lock.shield"
         case .media: "photo.on.rectangle"
         case .files: "folder"
+        case .settings: "gearshape"
         }
     }
 }
 
 struct RootView: View {
-    /// The detail column's stack.  The single source of truth for what is
-    /// showing: empty means home, which is also why the sidebar's "current" is
-    /// `path.last ?? .home` and there is no second variable to keep in sync.
-    @State private var path: [AppDestination] = []
-    /// A phone opens on the detail column alone; a tablet gets both.
+    /// Which of the two shells below is in charge.
     ///
-    /// On a phone the collapsed split view still reaches the sidebar from the
-    /// detail's bar, so `.detailOnly` costs nothing but gives the page its full
-    /// width back — a 240 pt sidebar next to a 393 pt content column would leave
-    /// every card grid at one column anyway.  A tablet has the room, and
-    /// `.automatic` is what remembers the user's last choice there.
-    @State private var columnVisibility: NavigationSplitViewVisibility = Self.visibilityForThisDevice
+    /// `.compact` is the iPhone, and it is the entire reason this view has two
+    /// bodies instead of one.
+    @Environment(\.horizontalSizeClass) private var width
+    /// Drives the device-identity poll: read on the way to the foreground, stopped
+    /// on the way out.  Owned here because this is the one view that outlives every
+    /// destination — the split view replaces the detail on each selection, and a
+    /// poll bound to a page would stop and restart as the user moves around.
+    @Environment(\.scenePhase) private var scenePhase
 
-    private static var visibilityForThisDevice: NavigationSplitViewVisibility {
-        UIDevice.current.userInterfaceIdiom == .pad ? .automatic : .detailOnly
-    }
-    /// Owned here, above the split view, because two columns need it at once:
-    /// the home page counts and applies it, and Tweaks/Daemons edit it.  It was
-    /// `@State` on the home page, which worked only while that page was the one
-    /// thing in the hierarchy — in a split view the detail is replaced on every
-    /// selection change, and the selection would have gone with it.
+    /// The detail stack.  The single source of truth for what is showing: empty
+    /// means home, which is also why the menu's "current" is `path.last ?? .home`
+    /// and there is no second variable to keep in sync.
+    @State private var path: [AppDestination] = []
+    /// Regular widths only.  See `regular`.
+    @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
+    /// The compact shell's menu, presented as a sheet.
+    @State private var menuPresented = false
+
+    /// Owned here, above whichever shell is showing, because two columns need it at
+    /// once: the home page counts and applies it, and Tweaks/Daemons edit it.  It
+    /// was `@State` on the home page, which worked only while that page was the one
+    /// thing in the hierarchy — a split view replaces the detail on every selection
+    /// change, and the selection would have gone with it.
     @State private var tweakSelection = TweakSelection()
     /// Launch auto-start bookkeeping, hoisted for the same reason as the
-    /// selection: `didAutoStart` guards a process-wide singleton
-    /// (`startMinimuxer`'s lock rejects *concurrent* attempts only), so it has
-    /// to outlive the view that reads it.  See `GoldenNuggetView`.
+    /// selection: the flags guard a process-wide singleton
+    /// (`startMinimuxer`'s lock rejects *concurrent* attempts only), so they
+    /// have to outlive the view that reads them.  See `GoldenNuggetView`.
     @State private var didAutoStart = false
     /// "Reset pairing file" saying no, and **persisted on purpose**.
     ///
-    /// It used to be `@State` alongside `didAutoStart`, which made the reset
-    /// only half-work: `resetPairing()` cleared the record in memory and in
+    /// It used to be `@State` alongside `didAutoStart`, which made the reset only
+    /// half-work: `resetPairing()` cleared the record in memory and in
     /// `UserDefaults` but left `Documents/pairingfile.mobiledevicepairing` in
     /// place, and the restore path reads that file *first*.  So the next launch
     /// — which started again from "the user has not said no" — picked the
@@ -97,38 +104,8 @@ struct RootView: View {
     @AppStorage("PairingFileAutoImportDisabled") private var autoImportDisabled = false
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            AppSidebar(current: path.last ?? .home) { destination in
-                path = destination == .home ? [] : [destination]
-            }
-            .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 300)
-        } detail: {
-            NavigationStack(path: $path) {
-                // `tweakSelection`, not `selection` — that label belongs to
-                // TweaksView's own binding.  The order is the explicit
-                // initializer's, not the property declaration order.
-                GoldenNuggetView(tweakSelection: $tweakSelection,
-                                 didAutoStart: $didAutoStart,
-                                 autoImportDisabled: $autoImportDisabled)
-                    .navigationDestination(for: AppDestination.self) { destination in
-                        switch destination {
-                        case .home:
-                            // Unreachable: home is the stack's root, so the path
-                            // never carries it.  The switch has to be exhaustive.
-                            EmptyView()
-                        case .tweaks:
-                            TweaksView(selection: $tweakSelection)
-                        case .daemons:
-                            DaemonsView(selection: $tweakSelection)
-                        case .supervision:
-                            SupervisionView()
-                        case .media:
-                            MediaView()
-                        case .files:
-                            FilesView()
-                        }
-                    }
-            }
+        Group {
+            if width == .compact { compactShell } else { regularShell }
         }
         // The reference ships a single palette (`theme.colors.DARK`) and builds
         // its whole iOS GUI on it, so this app is dark-only by design.  Saying so
@@ -137,12 +114,181 @@ struct RootView: View {
         // the cards instead of rendering light-on-dark.
         .preferredColorScheme(.dark)
         .tint(GoldenTheme.accent)
+        // The device line and the version bounds it gates refresh themselves, and
+        // the two ends of the app's life are the moments that matter: coming back
+        // from the background is when a rebooted or swapped device is most stale,
+        // and going out is when nothing should be talking to lockdown at all.
+        // `.task(id:)` rather than an `onChange` because the id covers the first
+        // appearance too — the app opens into `.active` and must start polling
+        // without waiting for a change that may never come.
+        .task(id: scenePhase) {
+            guard scenePhase == .active else {
+                DeviceIdentityMonitor.shared.stop()
+                return
+            }
+            DeviceIdentityMonitor.shared.start()
+        }
+    }
+
+    // MARK: - Compact (iPhone)
+
+    /// A plain stack with the menu in a sheet, because a split view cannot do this
+    /// job in one column.
+    ///
+    /// In a compact width a `NavigationSplitView` shows its **first** column at
+    /// launch and pushes the second on top. The first column is the sidebar, so
+    /// the app opens on a menu with Home buried behind it — and no amount of
+    /// `columnVisibility` changes that: with room for one column there is nothing
+    /// to select between, and `.detailOnly` and `.prominentDetail` are both
+    /// dropped on the floor. Reversing the columns would fix the launch and put
+    /// the menu on the *right* in a regular width, which is worse.
+    ///
+    /// So the split view stays where it works — a tablet — and the phone gets the
+    /// arrangement the phone idiom is built on: content at the root, menu behind a
+    /// burger. It also settles the leading controls: a sheet cannot leave a
+    /// back-chevron behind, so there is exactly one button at the top left instead
+    /// of the system's toggle and a custom burger arguing over the same slot.
+    @ViewBuilder
+    private var compactShell: some View {
+        NavigationStack(path: $path) {
+            detail
+        }
+        .environment(\.showSidebar) { menuPresented = true }
+        .sheet(isPresented: $menuPresented) {
+            NavigationStack {
+                AppDestinationList(current: path.last ?? .home) { destination in
+                    menuPresented = false
+                    path = destination == .home ? [] : [destination]
+                }
+                .navigationTitle("GoldenNugget")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Close") { menuPresented = false }
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
+    }
+
+    // MARK: - Regular (iPad)
+
+    /// A tablet, where the two columns genuinely fit and the split view earns its
+    /// keep: it survives a window a third of the screen by itself, which a plain
+    /// stack cannot.
+    ///
+    /// `.prominentDetail` is what makes the sidebar start out of the way. The
+    /// binding alone did not: `.detailOnly` is only the *preference*, and the
+    /// style decides what is presented at launch.
+    @ViewBuilder
+    private var regularShell: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            AppDestinationList(current: path.last ?? .home) { destination in
+                path = destination == .home ? [] : [destination]
+                // Picking a destination from a sidebar that is showing over the
+                // detail would otherwise leave it covering the page just chosen,
+                // which is the opposite of what a tap on a list means.  Reachable
+                // again from the system's toggle and the edge swipe.
+                if columnVisibility != .detailOnly { columnVisibility = .detailOnly }
+            }
+            .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 300)
+        } detail: {
+            NavigationStack(path: $path) { detail }
+        }
+        .navigationSplitViewStyle(.prominentDetail)
+    }
+
+    /// The pages, shared by both shells.  The order of the arguments is the
+    /// explicit initializer's, not the property declaration order.
+    @ViewBuilder
+    private var detail: some View {
+        GoldenNuggetView(tweakSelection: $tweakSelection,
+                         didAutoStart: $didAutoStart,
+                         autoImportDisabled: $autoImportDisabled)
+            .navigationDestination(for: AppDestination.self) { destination in
+                switch destination {
+                case .home:
+                    // Unreachable: home is the stack's root, so the path never
+                    // carries it.  The switch still has to be exhaustive.
+                    EmptyView()
+                case .tweaks:
+                    TweaksView(selection: $tweakSelection)
+                case .daemons:
+                    DaemonsView(selection: $tweakSelection)
+                case .supervision:
+                    SupervisionView()
+                case .media:
+                    MediaView()
+                case .files:
+                    FilesView()
+                case .settings:
+                    SettingsView()
+                }
+            }
     }
 }
 
-/// The sidebar column: six destinations, drawn with the design system's own row
-/// metrics rather than the platform's, so it matches the pages next to it.
-private struct AppSidebar: View {
+/// Carries the menu-opening action down to the pages that draw the burger.
+///
+/// A closure and not a `Bool`: the pages must not be able to *set* the menu's
+/// visibility, only ask for it.  `defaultValue` is a no-op rather than a crash so
+/// a page previewed or rendered outside the shell draws its bar instead of
+/// trapping.
+private struct ShowSidebarKey: EnvironmentKey {
+    static let defaultValue: () -> Void = {}
+}
+
+extension EnvironmentValues {
+    var showSidebar: () -> Void {
+        get { self[ShowSidebarKey.self] }
+        set { self[ShowSidebarKey.self] = newValue }
+    }
+}
+
+/// Puts the burger in the bar, but only where the system draws no toggle itself.
+///
+/// In a regular width the split view's prominent-detail style already puts a
+/// sidebar toggle in the leading slot, and that is the one that is correct: it
+/// agrees with the system about whether the column is up, and it comes with the
+/// edge swipe. A hand-rolled button next to it is where the duplicate leading
+/// controls came from.
+///
+/// A `ViewModifier` struct rather than a bare `View` extension because reading
+/// `@Environment` needs somewhere to hang it; an extension method on `View` has
+/// no `self` to hold the property wrapper.
+struct GoldenSidebarButton: ViewModifier {
+    @Environment(\.showSidebar) private var showSidebar
+    @Environment(\.horizontalSizeClass) private var width
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if width == .compact {
+            content.toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: showSidebar) {
+                        Image(systemName: "line.3.horizontal")
+                    }
+                    .accessibilityLabel("Menu")
+                }
+            }
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func goldenSidebarButton() -> some View { modifier(GoldenSidebarButton()) }
+}
+
+/// The list of destinations, used as the sidebar column in a regular width and as
+/// the sheet's contents in a compact one.
+///
+/// A `List` of buttons rather than a `List` of `NavigationLink`s, because the
+/// selection target is a `NavigationStack` *path* in the other column, not the
+/// split view's own: a link would push onto this list and replace it.
+private struct AppDestinationList: View {
     let current: AppDestination
     let select: (AppDestination) -> Void
 
@@ -169,11 +315,9 @@ private struct AppSidebar: View {
         }
         .listStyle(.sidebar)
         // The platform sidebar style draws its own grouped background; hiding it
-        // puts the page surface underneath back, so the column is the same
+        // puts the page surface underneath back, so the list is the same
         // `backgroundPrimary` the pages are.
         .scrollContentBackground(.hidden)
         .background(GoldenTheme.backgroundPrimary.ignoresSafeArea())
-        .navigationTitle("GoldenNugget")
     }
 }
-

@@ -58,7 +58,17 @@ struct GoldenNuggetView: View {
     @Binding var tweakSelection: TweakSelection
     /// The pending debounced autosave, cancelled and replaced on every change.
     @State private var autosaveTask: Task<Void, Never>?
-    @State private var identity = DeviceIdentity.unknown
+    /// The device line's data, from the shared monitor rather than as page state.
+    ///
+    /// It was `@State` filled once by `readDevice()`, which made it a snapshot with
+    /// a short life: the header said "unknown device" until the bounded wait in
+    /// `readDevice` succeeded, and nothing after that ever asked again.  Naming the
+    /// observed object something other than `device` because `scheduleAutosave()`
+    /// and `applyTweaks()` both take a local snapshot called `device`.
+    @ObservedObject private var deviceMonitor = DeviceIdentityMonitor.shared
+    /// Every use below reads this, so the page has no identity of its own to keep in
+    /// step with the monitor — one source of truth, four pages, one poll.
+    private var identity: DeviceIdentity { deviceMonitor.current }
     @State private var readingDevice = false
     /// `home.py: process_status_lbl` — the coloured line under the buttons, which
     /// the reference hides again six seconds after it was set.
@@ -120,6 +130,9 @@ struct GoldenNuggetView: View {
             RunLogCard()
         }
         .navigationTitle("GoldenNugget")
+        // Compact widths only -- on a tablet the split view draws its own sidebar
+        // toggle, and a second button beside it is the duplicate-controls mess.
+        .goldenSidebarButton()
         .navigationBarTitleDisplayMode(.inline)
         // The home page carries its own logo header, so the platform bar would be
         // a second, empty one.  Hiding it *here* — not on the pushed page — keeps
@@ -868,13 +881,11 @@ struct GoldenNuggetView: View {
                     + "\(attempt + 1), after the first read raced minimuxer's start")
             }
         }
-        identity = read
         readingDevice = false
-        if read == .unknown {
-            GoldenNuggetEngine.shared.log("device identity unavailable — the device has not answered lockdown yet")
-        } else {
-            GoldenNuggetEngine.shared.log("device identity: \(read.describe)")
-        }
+        // Published, not assigned: the monitor is what the other three pages read,
+        // and it is also what logs the change.  Handing it a value we already have
+        // avoids the second handshake a `refresh()` here would cost.
+        await deviceMonitor.publish(read)
         // Load the selection here rather than when the Tweaks tab is built, so
         // the cards above count the restored selection instead of zero.
         if let report = AutoSaveBootstrap.apply(into: &tweakSelection, identity: read) {

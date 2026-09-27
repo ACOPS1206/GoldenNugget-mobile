@@ -18,7 +18,11 @@ struct DaemonsView: View {
     /// selection on purpose: it gates every group rather than being one, and
     /// turning it off is the same observable state as having no group on.
     @State private var masterEnabled = true
-    @State private var identity = DeviceIdentity.unknown
+    /// The model line at the top of the page, from the shared monitor — see
+    /// `TweaksView`'s note.  A computed read, so this page cannot hold a copy that
+    /// disagrees with the one the Tweaks page filtered its rows by.
+    @ObservedObject private var deviceMonitor = DeviceIdentityMonitor.shared
+    private var identity: DeviceIdentity { deviceMonitor.current }
 
     /// Same disclosure behaviour as the Tweaks page: a section the user has not
     /// touched is open when something in it is on. Forty groups of switches is a
@@ -52,6 +56,9 @@ struct DaemonsView: View {
             screenTimeCard
         }
         .navigationTitle("Daemons")
+        // Compact widths only -- on a tablet the split view draws its own sidebar
+        // toggle, and a second button beside it is the duplicate-controls mess.
+        .goldenSidebarButton()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .toolbarBackground(GoldenTheme.backgroundSecondary, for: .navigationBar)
@@ -62,7 +69,10 @@ struct DaemonsView: View {
             // no separate flag here, so the page reports the state that actually
             // reaches the device: master is on exactly when a group is on.
             masterEnabled = DaemonGroups.all.contains { isOn($0) }
-            identity = await DeviceIdentity.read()
+            // Fresh rather than cached: the model line at the top of this page is
+            // what the user came to read, and a page opened after a device swap
+            // should not need a restart to say so.
+            await deviceMonitor.refresh()
         }
     }
 

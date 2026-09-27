@@ -20,7 +20,11 @@ import SwiftUI
 struct SupervisionView: View {
     @ObservedObject private var settings = SupervisionSettings.shared
     @State private var organizationDraft = ""
-    @State private var identity: DeviceIdentity = .unknown
+    /// The iOS version the "Connected device: iOS x.y" line reports, from the
+    /// shared monitor — see `TweaksView`'s note.  Read through a computed property
+    /// so the line cannot keep naming the version the page was opened with.
+    @ObservedObject private var deviceMonitor = DeviceIdentityMonitor.shared
+    private var identity: DeviceIdentity { deviceMonitor.current }
 
     var body: some View {
         GoldenPage(spacing: GoldenTheme.rowSpacing) {
@@ -28,13 +32,17 @@ struct SupervisionView: View {
             skipSetupCard
         }
         .navigationTitle("Supervision")
+        // Compact widths only -- on a tablet the split view draws its own sidebar
+        // toggle, and a second button beside it is the duplicate-controls mess.
+        .goldenSidebarButton()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .toolbarBackground(GoldenTheme.backgroundSecondary, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .task {
-            identity = await DeviceIdentity.read()
+            // Before the draft, because the summary below quotes the version.
+            await deviceMonitor.refresh()
             organizationDraft = settings.organizationName
         }
     }

@@ -39,6 +39,9 @@ struct FilesView: View {
             }
         }
         .navigationTitle("Files")
+        // Compact widths only -- on a tablet the split view draws its own sidebar
+        // toggle, and a second button beside it is the duplicate-controls mess.
+        .goldenSidebarButton()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .toolbarBackground(GoldenTheme.backgroundSecondary, for: .navigationBar)
