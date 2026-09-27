@@ -542,21 +542,34 @@ struct GoldenLogo: View {
         .clipShape(RoundedRectangle(cornerRadius: GoldenTheme.logoRadius))
     }
 
-    /// The same icon the home screen shows.
+    /// The same artwork the home screen shows.
     ///
-    /// The icon is an Icon Composer bundle compiled into `Assets.car`, so
-    /// `UIImage(named:)` resolves it out of the catalog and returns the variant
-    /// for the current appearance. That is tried first, and it is what makes the
-    /// in-app logo follow the light/dark theme instead of being a frozen PNG.
+    /// It deliberately does **not** go through `UIImage(named: "AppIcon")`, even
+    /// though the icon is a catalog asset and that looks like the obvious way in.
+    /// An app icon is not an image: the name resolves to a `CUINamedImage` out of
+    /// the iconstack rather than to CGImage-backed content, and UIKit's
+    /// `-[_UIImageCGImageContent initWithCGImageSource:CGImage:scale:]` asserts on
+    /// it. That is an `NSAssertionHandler` throw, not a Swift error, so it cannot
+    /// be caught — it aborts the process:
     ///
-    /// The loose `AppIcon60x60@2x` / `AppIcon76x76@2x~ipad` fallbacks are gone
-    /// from the bundle on purpose -- they are light-only and they shadowed the
-    /// iconstack on the home screen, which is why the icon came out white in
-    /// both themes. `Logo@1x/@2x` are the same artwork under names that no
-    /// icon key can claim, kept as the fallback for a catalog lookup that comes
-    /// back empty.
+    ///     GoldenLogo.bundledIcon -> UIImage(named:) -> _UIAssetManager imageNamed:
+    ///       -> CUINamedImage UIImageWithAsset: -> _UIImageCGImageContent initWithCGImageSource:
+    ///       -> NSAssertionHandler handleFailureInMethod: -> objc_exception_throw -> abort
+    ///
+    /// SIGABRT, `bug_type 309`, and because this is a `static let` the trap fires
+    /// on the first view that asks for the logo — during the home screen's first
+    /// layout pass, so the app dies before anything is on screen. One iconstack in
+    /// the car happened to resolve to a loadable rendition; a second one did not,
+    /// which is what turned a latent bad call into a launch crash.
+    ///
+    /// `Logo@1x/@2x` are the same artwork under names no icon key can claim, so
+    /// they cannot shadow the iconstack the way the light-only `AppIcon*.png`
+    /// files used to. Loading them by path cannot abort.
+    ///
+    /// Following the light/dark theme again means a real `.imageset` in the
+    /// catalog with a dark twin — `UIImage(named:)` handles an ordinary imageset
+    /// fine. It needs an actool round-trip, since the car is built on macOS.
     private static let bundledIcon: UIImage? = {
-        if let catalog = UIImage(named: "AppIcon") { return catalog }
         if let path = Bundle.main.path(forResource: "Logo@2x", ofType: "png"),
            let image = UIImage(contentsOfFile: path) { return image }
         if let path = Bundle.main.path(forResource: "Logo@1x", ofType: "png"),
