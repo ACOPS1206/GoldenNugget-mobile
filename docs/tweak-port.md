@@ -488,6 +488,7 @@ scripts/gen-pb-templates-from-goldennugget.py [--goldennugget ~/GoldenNugget] [-
 # Routine gates
 scripts/typecheck.sh                 # passes only at 0 errors
 scripts/sync-pbxproj-sources.py      # must be run after adding/removing files under Nugget/
+scripts/check-linked-symbols.py      # every C symbol the gateway calls must be in the archive that is linked
 ```
 
 `tweak-port-diff.py` depends on `packaging` (the reference uses it for version comparison).
