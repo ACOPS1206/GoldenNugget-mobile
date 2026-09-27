@@ -26,3 +26,21 @@ xtool/
 # the scripts write them to .backups/ now.
 .backups/
 Vendor/patches/libidevice_ffi.a.*
+
+# cargo's build directory for the vendored AirliftFFI crate.  815 MB of objects
+# and nothing a checkout needs: scripts/build-airlift-ffi-ios.sh rebuilds it.
+Vendor/AirliftFFI/rust-core/target/
+
+# The archive scripts/dedupe-airlift-archive.py takes as its input, kept next to
+# the de-duplicated copy so the rewrite is repeatable.  A 66 MB duplicate of a
+# build output, and the same size class as the .backups/ copies above — the
+# linked libairlift_ffi.a is the one the app needs, and --install writes this.
+Vendor/AirliftFFI.xcframework/ios-arm64/libairlift_ffi.a.pristine
+
+# Python bytecode.  One .pyc was tracked in scripts/__pycache__/ and every run of
+# a check script rewrites them, so they show up as modifications forever.
+__pycache__/
+
+# Device logs pulled for diagnosis (pymobiledevice3 apps pull … goldennugget.log).
+# They carry the device UDID and whatever the run was doing.
+gn*.log

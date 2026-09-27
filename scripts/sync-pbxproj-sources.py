@@ -76,11 +76,25 @@ def die(message: str):
 
 
 def resolved_sources() -> list[str]:
-    """The target's sources as SwiftPM resolves them — never a guess."""
-    proc = subprocess.run(
-        ["xcrun", "swift", "package", "describe", "--disable-sandbox"],
-        cwd=ROOT, capture_output=True, text=True,
-    )
+    """The target's sources as SwiftPM resolves them — never a guess.
+
+    `xcrun` is absent on a Linux host, where SwiftPM cannot be asked anything, so
+    there is a fallback: the manifest declares `sources: ["Nugget"]`, and for a
+    directory entry SwiftPM's answer *is* every `.swift` file under it. The walk
+    is therefore not a second source of truth — it is the same answer computed
+    without the tool that normally computes it, and the manifest is still the
+    thing being mirrored.
+    """
+    try:
+        proc = subprocess.run(
+            ["xcrun", "swift", "package", "describe", "--disable-sandbox"],
+            cwd=ROOT, capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        proc = None
+    if proc is None:
+        return walk_sources()
+
     if proc.returncode != 0:
         die(f"`swift package describe` failed:\n{proc.stderr.strip()}")
 
@@ -99,6 +113,30 @@ def resolved_sources() -> list[str]:
     if not sources:
         die("`swift package describe` resolved the target to zero sources")
     return sorted(sources)
+
+
+def walk_sources() -> list[str]:
+    """Every `.swift` under the manifest's source directory, package-relative."""
+    manifest = (ROOT / "Package.swift").read_text(encoding="utf-8")
+    found = re.search(r'sources:\s*\[(.+?)\]', manifest, re.S)
+    if not found:
+        die("Package.swift declares no `sources:` array to fall back on")
+    entries = [unquote(entry.strip()) for entry in found.group(1).split(",")]
+    entries = [entry for entry in entries if entry]
+    if entries != [NUGGET]:
+        die(f"the xcrun-less fallback only handles sources: [\"{NUGGET}\"], "
+            f"but the manifest says {entries}")
+
+    root = ROOT / NUGGET
+    if not root.is_dir():
+        die(f"Package.swift declares {NUGGET}, which is not a directory")
+    # The target's own `path` is `.`, so a package-relative path is the repo
+    # path — `relative_to(ROOT)`, with no prefix added.
+    return sorted(
+        path.relative_to(ROOT).as_posix()
+        for path in root.rglob("*.swift")
+        if path.is_file()
+    )
 
 
 # ------------------------------------------------------------- pbxproj reading

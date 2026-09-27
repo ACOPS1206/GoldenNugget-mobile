@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -70,6 +71,23 @@ def strip_comments(text: str) -> str:
                      if not line.lstrip().startswith("//"))
 
 
+def nm_tool() -> str:
+    """The `nm` that can read the archives, preferring the LLVM one.
+
+    GNU binutils `nm` parses *some* Mach-O members and rejects the rest with
+    "file format not recognized" — 223 matching symbols out of libidevice_ffi.a
+    against 49793 for `llvm-nm` on the same file — so it does not fail, it
+    under-reports, and every symbol it missed reads as MISSING here. The gate
+    would then be a false alarm on a link that is in fact fine, which is the
+    worst direction for a check people learn to ignore.
+    """
+    for name in ("llvm-nm", "nm"):
+        found = shutil.which(name)
+        if found:
+            return found
+    sys.exit("check-linked-symbols: no llvm-nm or nm on PATH")
+
+
 def exported(archive: Path) -> set[str]:
     """Defined (T) symbols of an archive, with the leading underscore.
 
@@ -78,13 +96,21 @@ def exported(archive: Path) -> set[str]:
     understands, so it exits non-zero while still listing every readable symbol —
     including the C ones this script is about. Bailing on that code would make the
     gate useless on the one archive that matters. What is checked instead is that
-    the output yielded symbols at all; a genuinely unreadable archive then fails
-    loudly rather than passing by default.
+    the output yielded symbols at all, and that no member went unparsed: a
+    genuinely unreadable archive then fails loudly rather than passing by default,
+    and so does a tool that read only part of one.
     """
-    result = subprocess.run(["nm", "-gU", str(archive)], capture_output=True, text=True)
+    result = subprocess.run([nm_tool(), "-gU", str(archive)], capture_output=True, text=True)
     symbols = {m.group(1) for m in re.finditer(r"^\S+ T (_[A-Za-z0-9_]+)$", result.stdout, re.M)}
+    unreadable = [line for line in result.stderr.splitlines()
+                  if "file format not recognized" in line]
+    if unreadable:
+        sys.exit(f"check-linked-symbols: {nm_tool()} could not read "
+                 f"{len(unreadable)} member(s) of {archive}, so the symbol set would be "
+                 f"partial and every unread symbol would read as MISSING; install llvm-nm "
+                 f"(first unread: {unreadable[0]})")
     if not symbols:
-        sys.exit(f"check-linked-symbols: nm produced no symbols for {archive} "
+        sys.exit(f"check-linked-symbols: {nm_tool()} produced no symbols for {archive} "
                  f"(exit {result.returncode}); the check would be vacuous")
     return symbols
 
