@@ -275,8 +275,20 @@ scripts/gen-pb-templates-from-goldennugget.py [--check]
 # The routine gates (sync-pbxproj-sources.py is mandatory after adding/removing files under Nugget/)
 scripts/typecheck.sh "" --first PosterBoard.swift
 scripts/sync-pbxproj-sources.py
+scripts/check-linked-symbols.py               # see §3.3: the gateway's C calls are a link-time contract
 python3 scripts/tweak-port-diff.py            # needs packaging; see docs/tweak-port.md §4.3
 ```
+
+**A gate that passes is not a gate that ran.**  `check-linked-symbols.py` is the one this port
+needed and did not have: `plist_new_date` is declared in the vendored `plist.h`, so it
+compiled, and the device build then died at the link with `Undefined symbols …
+_plist_new_date` — the archive that gets linked (`libidevice_ffi.a`) does not export it,
+while the one that does (`libimobiledevice.a`) is never linked.  The first version of the
+script passed anyway: its regex attached the name suffix to only the last alternative, so not
+one `plist_*` call was ever matched — 43 symbols are referenced today and it reported 23.  The
+fix came from running the script **the other way round** (a probe calling a symbol the archive
+does not export has to make it fail), and that reversed run is now the only reason to trust its
+forward "OK".
 
 **One trap in `scripts/typecheck.sh` (measured here)**: `Core/AfcFileExplorer.swift` has a
 permanent 28 phantom errors from the stale vendored module, and `swiftc` **stops reporting
