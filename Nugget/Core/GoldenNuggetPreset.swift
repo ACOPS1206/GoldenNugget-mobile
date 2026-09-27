@@ -184,10 +184,17 @@ struct TweakImportReport {
 /// declines to enable an incompatible tweak and says so in the report, so a
 /// shared preset cannot turn on something the UI would never show.
 enum GoldenNuggetPresetImport {
-    /// The reference tweaks whose feature this port does not carry, with the
-    /// reason, so an import says *why* rather than just dropping them.
+    /// The reference tweaks whose feature a preset cannot carry, with the reason,
+    /// so an import says *why* rather than just dropping them.
+    ///
+    /// `PosterBoard` is on this list for a reason that has nothing to do with
+    /// this port: the reference itself refuses to serialise wallpapers
+    /// ("device-specific and heavy, so they must not travel with a preset"), so
+    /// there is nothing in a preset to carry.  The feature *is* ported — it lives
+    /// on the PosterBoard page, and the page is where a wallpaper is chosen.
     static let unported: [String: String] = [
-        "PosterBoard": "wallpapers — excluded from presets by GoldenNugget itself",
+        "PosterBoard": "wallpapers — the reference excludes them from presets; "
+            + "use the PosterBoard page instead",
         "Templates": "PosterBoard templates — needs the template asset store",
         "StatusBar": "Status Bar — needs the StatusBarOverrideData struct over CFFI",
         "IconThemes": "Icon Themes — needs the icon asset store",

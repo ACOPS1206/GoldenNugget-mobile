@@ -3069,8 +3069,137 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
         }
     }
 
-    // MARK: - mobilebackup2 restore
+    /// The device's own installation-proxy record for one app, as a Swift value.
+    ///
+    /// A backup's `FactoryInfo` is where the host tells the device which app
+    /// containers it wants uploaded, and the entry it expects under
+    /// `Applications` is shaped exactly like the one the device just handed us
+    /// from `installation_proxy`.  This forwards that record verbatim instead of
+    /// composing one (`Container` + `ApplicationSINF` + `iTunesMetadata` +
+    /// `PlaceholderIcon`): the shape is the device's contract, and a hand-built
+    /// entry would have to be re-measured against every iOS release.
+    private func syncAppFactoryEntry(bundleId: String) throws -> [String: Any] {
+        debugLog("[IdeviceGateway] syncAppFactoryEntry() called, appId: \(bundleId)")
+        return try performWithEitherService(
+            connectRP: installation_proxy_connect_rsd,
+            connectLockdown: installation_proxy_connect,
+            cleanup: installation_proxy_client_free,
+            serviceName: "instproxy"
+        ) { client in
+            var outResult: UnsafeMutableRawPointer? = nil
+            var outLen: Int = 0
+            try bundleId.withCString { appPtr in
+                var bundleIds: [UnsafePointer<Int8>?] = [appPtr]
+                let err = installation_proxy_get_apps(client, nil, &bundleIds, 1, &outResult, &outLen)
+                if let err = err {
+                    let msg = self.getErrorMessage(from: err)
+                    defer { idevice_error_free(err) }
+                    throw IdeviceGatewayError(.serviceError,
+                                              reason: "Failed to look up \(bundleId), error: (\(msg))")
+                }
+            }
+            guard let resultPtr = outResult, outLen > 0 else {
+                throw IdeviceGatewayError(.serviceError,
+                                          reason: "The device does not list \(bundleId).")
+            }
+            let plistArray = resultPtr.assumingMemoryBound(to: plist_t?.self)
+            var fallback: [String: Any]?
+            for index in 0..<outLen {
+                guard let node = plistArray[index], let entry = self.plistNodeToDictionary(node) else {
+                    continue
+                }
+                if let identifier = entry["CFBundleIdentifier"] as? String, identifier == bundleId {
+                    free(outResult)
+                    return entry
+                }
+                // `get_apps` answers with whatever it found, so a miss can come
+                // back as a different app's record. Only the identifier above
+                // proves the match; this is the shape for the log when it fails.
+                fallback = entry
+            }
+            free(outResult)
+            if let fallback {
+                let identifier = fallback["CFBundleIdentifier"] as? String ?? "<none>"
+                throw IdeviceGatewayError(.serviceError,
+                                          reason: "The device answered for \(identifier), not \(bundleId).")
+            }
+            throw IdeviceGatewayError(.serviceError,
+                                      reason: "The device returned no record for \(bundleId).")
+        }
+    }
 
+    /// A `FactoryInfo` listing exactly the given app containers.
+    ///
+    /// Takes ownership of the result through the caller's `defer { plist_free }`,
+    /// the same contract `skipAppContainers`' empty dictionary has.
+    private func factoryInfo(applications: [String: [String: Any]]) -> plist_t? {
+        let info = plist_new_dict()
+        let apps = plist_new_dict()
+        for (bundleId, entry) in applications {
+            guard let node = plistNode(from: entry) else {
+                debugLog("[IdeviceGateway] factoryInfo: \(bundleId) could not be converted to a plist")
+                continue
+            }
+            plist_dict_set_item(apps, bundleId, node)
+        }
+        plist_dict_set_item(info, "Applications", apps)
+        // The stock factory info carries this list beside the dictionary, and the
+        // reference sets it too (`_add_posterboard_container`).
+        let installed = plist_new_array()
+        for bundleId in applications.keys {
+            plist_array_append_item(installed, plist_new_string(bundleId))
+        }
+        plist_dict_set_item(info, "Installed Applications", installed)
+        return info
+    }
+
+    /// A Foundation value as a `plist_t`, recursively.  The inverse of
+    /// `plistNodeToDictionary`, for the one direction that did not exist yet.
+    ///
+    /// Booleans are picked out by their CoreFoundation type rather than by
+    /// `as? Bool`: a plist integer is an `NSNumber`, and `NSNumber(1) as? Bool`
+    /// is `true` — which would turn every 1 in a device record into a boolean.
+    private func plistNode(from value: Any) -> plist_t? {
+        switch value {
+        case let text as String:
+            return plist_new_string(text)
+        case let data as Data:
+            return data.withUnsafeBytes { buffer -> plist_t? in
+                guard let base = buffer.baseAddress else { return plist_new_data("", 0) }
+                return plist_new_data(base.assumingMemoryBound(to: CChar.self), UInt64(data.count))
+            }
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                return plist_new_bool(number.boolValue ? 1 : 0)
+            }
+            if CFNumberIsFloatType(number) {
+                return plist_new_real(number.doubleValue)
+            }
+            return number.int64Value < 0
+                ? plist_new_int(number.int64Value)
+                : plist_new_uint(number.uint64Value)
+        case let dictionary as [String: Any]:
+            let node = plist_new_dict()
+            for (key, item) in dictionary {
+                guard let child = plistNode(from: item) else { continue }
+                plist_dict_set_item(node, key, child)
+            }
+            return node
+        case let array as [Any]:
+            let node = plist_new_array()
+            for item in array {
+                guard let child = plistNode(from: item) else { continue }
+                plist_array_append_item(node, child)
+            }
+            return node
+        case let date as Date:
+            return plist_new_date(Int32(date.timeIntervalSince1970), 0)
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - mobilebackup2 restore
     private func syncRestoreBackup(
         backupRoot: String,
         sourceIdentifier: String,
@@ -3455,6 +3584,18 @@ extension IdeviceGateway {
         }
     }
 
+    /// The device's own `installation_proxy` record for one app.
+    ///
+    /// The payload a backup's `FactoryInfo` wants for each app container it is
+    /// asking for; see `syncAppFactoryEntry` for why it is forwarded rather than
+    /// composed.  Returned as a Swift dictionary because it crosses into app
+    /// code, which has no business holding a `plist_t`.
+    public func appFactoryEntry(bundleId: String) async throws -> [String: Any] {
+        try await withFFIDispatch {
+            try self.syncAppFactoryEntry(bundleId: bundleId)
+        }
+    }
+
     public func restoreBackup(
         backupRoot: String,
         sourceIdentifier: String,
@@ -3483,6 +3624,11 @@ extension IdeviceGateway {
     ///   - skipAppContainers: If true, sends `FactoryInfo` with an empty
     ///     `Applications` dict so the device skips app containers entirely
     ///     (protective backup).
+    ///   - applications: App records to list in `FactoryInfo`'s `Applications`,
+    ///     keyed by bundle id — the way to ask for a *specific* container (e.g.
+    ///     PosterBoard's, whose sqlite database is otherwise never uploaded).
+    ///     Each value is the device's own `appFactoryEntry(bundleId:)` record.
+    ///     Takes precedence over `skipAppContainers` when non-empty.
     ///   - shouldPreserve: Optional mid-stream filter. False → payload drained, not stored.
     ///   - onProgress: Optional progress callback (0-100).
     /// - Returns: The device's final response plist as a dictionary.
@@ -3491,13 +3637,16 @@ extension IdeviceGateway {
         backupRoot: String,
         sourceIdentifier: String,
         skipAppContainers: Bool = false,
+        applications: [String: [String: Any]]? = nil,
         shouldPreserve: (@Sendable (String, String) -> Bool)? = nil,
         onProgress: (@Sendable (Double) -> Void)? = nil,
         delegateLog: (@Sendable (String) -> Void)? = nil
     ) async throws -> [String: Any] {
         try await withFFIDispatch {
             var factoryInfo: plist_t? = nil
-            if skipAppContainers {
+            if let applications, !applications.isEmpty {
+                factoryInfo = self.factoryInfo(applications: applications)
+            } else if skipAppContainers {
                 factoryInfo = plist_new_dict()
                 let apps = plist_new_dict()
                 plist_dict_set_item(factoryInfo, "Applications", apps)

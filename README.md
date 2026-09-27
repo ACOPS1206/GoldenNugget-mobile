@@ -38,5 +38,13 @@ scripts/sync-pbxproj-sources.py --check   # report drift, change nothing
 scripts/typecheck.sh                      # swiftc gate, 0 errors to pass
 ```
 
+That script reconciles **sources only**. A SwiftPM *product* the app depends on
+(`.product(name:package:)` in `Package.swift`) has to be mirrored by hand in
+`project.yml` **and** in `project.pbxproj` (`packageProductDependencies` plus a
+`XCSwiftPackageProductDependency` object) — XcodeGen is not installed here, so
+`project.pbxproj` cannot be regenerated from `project.yml` and the three files
+have to agree. The app depends on two products of the vendored package today:
+`Minimuxer` and `ZIPFoundation` (the latter for `.tendies` packs, which are ZIPs).
+
 Both scripts take the source list from `swift package describe`, so they cannot
 disagree about what is in the target.

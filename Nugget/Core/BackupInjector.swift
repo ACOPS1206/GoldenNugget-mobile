@@ -205,14 +205,14 @@ enum BackupInjector {
             // sqlite Manifest.db at all: the device reads Manifest.mbdb and
             // asks for each payload by its fileID.
             let mbdbStage = StageTimer("write Manifest.mbdb")
-            let rows = MBDBManifest.rows(for: tweakPayloads)
+            let rows = try MBDBManifest.rows(for: tweakPayloads)
             try MBDBManifest.encode(rows).write(to: deviceDir.appendingPathComponent("Manifest.mbdb"),
                                                 options: .atomic)
             for payload in tweakPayloads {
                 let name = MBDBManifest.fileID(domain: payload.domain,
                                                relativePath: payload.relativePath)
-                try payload.contents.write(to: deviceDir.appendingPathComponent(name),
-                                           options: .atomic)
+                try payload.bytes().write(to: deviceDir.appendingPathComponent(name),
+                                          options: .atomic)
             }
             mbdbStage.done()
             try? FileManager.default.removeItem(at: deviceDir.appendingPathComponent("Manifest.db"))

@@ -205,6 +205,10 @@ enum TweakInjector {
             if !profile.verified { unverified.insert(payload.domain) }
             let fileException = profile.fileExceptionPublisher
                 .map { buildDataprotectionExtendedAttributes(publisher: $0) }
+            // Read once. A payload on disk is a mapped file, so the write, the
+            // size and the digest all have to share one read — three reads of a
+            // video wallpaper is three passes over hundreds of megabytes.
+            let bytes = try payload.bytes()
 
             var rows: [(path: String, flags: Int32)] = [("", 2)]
             var accumulated = ""
@@ -222,7 +226,7 @@ enum TweakInjector {
                     let payloadURL = store.payloadURL(forFileID: rowID)
                     try fm.createDirectory(at: payloadURL.deletingLastPathComponent(),
                                            withIntermediateDirectories: true)
-                    try payload.contents.write(to: payloadURL)
+                    try bytes.write(to: payloadURL)
                     fileRows += 1
                 } else {
                     dirRows += 1
@@ -234,7 +238,7 @@ enum TweakInjector {
                     mode: isFile
                         ? (Int(MODE_FILE_DEFAULT) | Int(S_IFREG))
                         : (Int(MODE_DIR_DEFAULT) | Int(S_IFDIR)),
-                    size: isFile ? payload.contents.count : 0,
+                    size: isFile ? bytes.count : 0,
                     userID: isFile ? profile.fileOwner : (isRoot ? profile.rootOwner : profile.dirOwner),
                     groupID: isFile ? profile.fileGroup : (isRoot ? profile.rootGroup : profile.dirGroup),
                     protectionClass: isFile
@@ -246,7 +250,7 @@ enum TweakInjector {
                     // and it is the SHA-1 of the bytes written just above — see
                     // `MBFileArchiver.digest` / `TweakRowProfile.carriesDigest`.
                     // Directory rows never carry a digest on the device.
-                    digest: isFile && profile.carriesDigest ? payloadDigest(payload.contents) : nil,
+                    digest: isFile && profile.carriesDigest ? payloadDigest(bytes) : nil,
                     // Only file rows carry the exception, per the measurements
                     // behind `TweakRowProfile` (and the same rule the injector
                     // for the shipping classes already follows).

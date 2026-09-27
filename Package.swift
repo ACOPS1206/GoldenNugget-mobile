@@ -33,6 +33,11 @@ let package = Package(
             name: "GoldenNuggetMobile",
             dependencies: [
                 .product(name: "Minimuxer", package: "Vendor"),
+                // The app unpacks `.tendies` packs itself, and `.tendies` is a
+                // ZIP. ZIPFoundation is already built as part of this package
+                // (Minimuxer depends on it), so this is one line of manifest
+                // rather than a second ZIP reader written by hand.
+                .product(name: "ZIPFoundation", package: "Vendor"),
             ],
             path: ".",
             exclude: [

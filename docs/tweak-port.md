@@ -16,6 +16,12 @@
 > **2026-09-26**：补上 `skip_setup` 的两个文件，做成 Supervision 页的开关（**默认关**，上游默认开），
 > 面板清单改为从参照生成；两处有意分歧（不合并设备现有 cloud config、不写 keybag 证书）见 §2.3 / §3.3。
 >
+> **2026-09-27**：**PosterBoard 独立成一条线，见 `docs/posterboard-port.md`**。本文件描述的是
+> registry 那 133 个 plist tweak；PosterBoard 的壁纸 / 视频壁纸 / 重置走同一条投递通道
+> （`TweakPayload → TweakInjector`，域 `AppDomain-com.apple.PosterBoard`）但有自己的编译段、
+> 自己的数据库阶段和自己的页面。为此 `TweakPayload` 多了一个 `source:`（载荷可以在磁盘上），
+> 见该文档 §2。
+>
 > 真机构建仍需你本地跑 `scripts/build-ipa.sh`。
 
 移植对象：`~/GoldenNugget`（Python / PySide6，`src/tweaks/` 与 `src/controllers/`）。
@@ -52,17 +58,21 @@
 | `src/controllers/preset_manager.py`（预设 v2 JSON） | `GoldenNuggetPreset` / `GoldenNuggetPresetImport` | 见 §4.2 |
 | `tweak_loader._build_spec` | 生成器把 `factory()` 的字典折进 `multiValues` | `WatchOSCompatibility` 的多键写入 |
 
-### 1.2 未移植（5 个 feature）
+### 1.2 未移植（4 个 feature）
 
 UI 里直接不出现；导入预设时**逐条报告原因**，不静默丢弃。
 
 | 未移植 | 原因 |
 |---|---|
-| PosterBoard | 壁纸——**参照自己也把它排除出预设**（"device-specific and heavy, so they must not travel with a preset"） |
-| Templates | 依赖 PosterBoard 模板资源库 |
+| Templates | 独立的 `.template` 格式（`config.json` + 五种 option）+ 模板资源库；与 PosterBoard 正交，见 `docs/posterboard-port.md` §6 |
 | Status Bar | 需要 `StatusBarOverrideData` 结构体走 CFFI（`status_bar/status_bar_c/status_setter.py`） |
 | Icon Themes | 需要图标资源持久库 |
-| Daemons（含 `ClearScreenTimeAgentPlist`） | 强制关 launchd daemon，风险最高；且需要 90 个 `INTERFACE_KEYS` 的逐项开关 UI |
+| Daemons（含 `ClearScreenTimeAgentPlist`） | 强制关 launchd daemon，风险最高；且需要 90 个 `INTERFACE_KEY` 的逐项开关 UI |
+
+**PosterBoard 不在这张表里了**（2026-09-27 移植，壁纸 + 视频壁纸 + 重置；Templates 仍缺）——
+但参照把它排除出预设（"device-specific and heavy, so they must not travel with a preset"），
+所以导入一个含 `PosterBoard` 条目的预设仍然会把它列进「不在本次移植内」，理由已改为
+「参照自己不导出壁纸，请用 PosterBoard 页」。
 
 ---
 

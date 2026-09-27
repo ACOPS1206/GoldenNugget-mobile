@@ -153,6 +153,14 @@ targets:
     dependencies:
       - package: Minimuxer
         product: Minimuxer
+      # The app unpacks `.tendies` wallpaper packs itself, and a `.tendies` is a
+      # ZIP. Same package, second product: SwiftPM does not expose a transitive
+      # dependency, so `import ZIPFoundation` needs this line as well as the one
+      # in Package.swift. `sync-pbxproj-sources.py` reconciles the source list,
+      # not the package products, so this file and project.pbxproj have to agree
+      # by hand — hence the comment.
+      - package: Minimuxer
+        product: ZIPFoundation
       - sdk: libsqlite3.tbd
       # EMProxy is deliberately NOT listed here.  It reaches the app through the
       # `Minimuxer` package (`.binaryTarget(name: "EMProxy", …)` in

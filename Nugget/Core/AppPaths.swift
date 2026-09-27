@@ -35,6 +35,16 @@ enum AppPaths {
         URL.documents.appendingPathComponent(udid, conformingTo: .data)
     }
 
+    /// `<Documents>/PosterBoardFetch/` — the scratch root of a PosterBoard
+    /// database fetch.
+    ///
+    /// Its own root rather than the protective backup's, which is re-created on
+    /// every apply: a PosterBoard apply runs both exchanges, and the second one
+    /// must not wipe the first one's backup out from under the injection that is
+    /// about to read it.
+    static let posterBoardFetchRoot = URL.documents
+        .appendingPathComponent("PosterBoardFetch", conformingTo: .data)
+
     /// `<backupRoot>/<udid>/` — the per-device directory inside a backup root.
     static func deviceDir(backupRoot: URL, udid: String) -> URL {
         backupRoot.appendingPathComponent(udid)

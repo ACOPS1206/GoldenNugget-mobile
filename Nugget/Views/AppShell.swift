@@ -20,6 +20,7 @@ import UIKit
 enum AppDestination: String, CaseIterable, Identifiable, Hashable {
     case home
     case tweaks
+    case posterBoard
     case daemons
     case supervision
     case media
@@ -31,6 +32,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home: "GoldenNugget"
         case .tweaks: "Tweaks"
+        case .posterBoard: "PosterBoard"
         case .daemons: "Daemons"
         case .supervision: "Supervision"
         case .media: "Media"
@@ -42,6 +44,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home: "house"
         case .tweaks: "slider.horizontal.3"
+        case .posterBoard: "photo.artframe"
         case .daemons: "server.rack"
         case .supervision: "lock.shield"
         case .media: "photo.on.rectangle"
@@ -118,6 +121,8 @@ struct RootView: View {
                             EmptyView()
                         case .tweaks:
                             TweaksView(selection: $tweakSelection)
+                        case .posterBoard:
+                            PosterBoardView()
                         case .daemons:
                             DaemonsView(selection: $tweakSelection)
                         case .supervision:
@@ -140,7 +145,7 @@ struct RootView: View {
     }
 }
 
-/// The sidebar column: six destinations, drawn with the design system's own row
+/// The sidebar column: seven destinations, drawn with the design system's own row
 /// metrics rather than the platform's, so it matches the pages next to it.
 private struct AppSidebar: View {
     let current: AppDestination

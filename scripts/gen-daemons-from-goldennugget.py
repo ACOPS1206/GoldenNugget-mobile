@@ -314,8 +314,12 @@ def main() -> int:
     if args.check:
         current = OUTPUT.read_text() if OUTPUT.exists() else ""
         if current == text:
+            # `DaemonGroupsCount` already returns a count — `len()` on it raised
+            # `TypeError: object of type 'int' has no len()`, so this gate could
+            # never report a pass (only a traceback) and read as "drift" either
+            # way.
             print(f"TweakCatalogDaemons.swift matches the reference "
-                  f"({len(DaemonGroupsCount(data))} groups)")
+                  f"({DaemonGroupsCount(data)} groups)")
             return 0
         print("TweakCatalogDaemons.swift is out of date", file=sys.stderr)
         return 1

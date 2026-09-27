@@ -38,6 +38,14 @@
 		8599F4FC00683BED33CFEA2F /* MediaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1405DB7C8287A4D6101F564 /* MediaView.swift */; };
 		9616622130656E770045CB83 /* Minimuxer in Frameworks */ = {isa = PBXBuildFile; productRef = B6CC7F8101BD13AD344DBB86 /* Minimuxer */; };
 		B131B5D39A218B7F0A12FC3C /* NuggetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB5B064EBCC8C22AB174E0D2 /* NuggetApp.swift */; };
+		8EFA230E330DA684FF98700A /* PosterBoard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1560E85808C2A01450AD4CD /* PosterBoard.swift */; };
+		05D914EAC38901911B35E6A4 /* PosterBoardBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA16FEAE810163E3FB58A973 /* PosterBoardBackup.swift */; };
+		253460D5373547DC8032194A /* PosterBoardResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24A6FCA64DAFCF3674497207 /* PosterBoardResources.swift */; };
+		4B7673F854107FC11EB157C5 /* PosterBoardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CBD070C52DD7281009B60B4 /* PosterBoardStore.swift */; };
+		26E0D0C0DB2AED03EBB4708C /* PosterBoardTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08CCA12F39D94B614A61B482 /* PosterBoardTemplates.swift */; };
+		FA786E5D4A1B85135B773FBC /* PosterBoardTendie.swift in Sources */ = {isa = PBXBuildFile; fileRef = B611D828253F18B5A9CDFE0E /* PosterBoardTendie.swift */; };
+		AA1E5E9A6CF388051D140AE3 /* PosterBoardVideo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E1EF03EBDE439B7665BF877 /* PosterBoardVideo.swift */; };
+		C3451315BB71389FE8DC092B /* PosterBoardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4BE2466826B04C5BC5936DF /* PosterBoardView.swift */; };
 		52F9CFD7A2DB9E90B4FE71D1 /* ProgressPulse.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10F91169C201521D8C0F3B86 /* ProgressPulse.swift */; };
 		8969C92A6ECADAC5DA057A58 /* ProtectiveBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2521FA7674D8EDC6F4DF724 /* ProtectiveBackup.swift */; };
 		6260750CEB090F2A1CD8D4A4 /* RestoreRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = EABB4369B839C2CD9D0D7C98 /* RestoreRunner.swift */; };
@@ -95,6 +103,14 @@
 		590719A37991943F005FE604 /* ManifestStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManifestStore.swift; sourceTree = "<group>"; };
 		F1405DB7C8287A4D6101F564 /* MediaView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaView.swift; sourceTree = "<group>"; };
 		CB5B064EBCC8C22AB174E0D2 /* NuggetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NuggetApp.swift; sourceTree = "<group>"; };
+		A1560E85808C2A01450AD4CD /* PosterBoard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterBoard.swift; sourceTree = "<group>"; };
+		EA16FEAE810163E3FB58A973 /* PosterBoardBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterBoardBackup.swift; sourceTree = "<group>"; };
+		24A6FCA64DAFCF3674497207 /* PosterBoardResources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterBoardResources.swift; sourceTree = "<group>"; };
+		7CBD070C52DD7281009B60B4 /* PosterBoardStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterBoardStore.swift; sourceTree = "<group>"; };
+		08CCA12F39D94B614A61B482 /* PosterBoardTemplates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterBoardTemplates.swift; sourceTree = "<group>"; };
+		B611D828253F18B5A9CDFE0E /* PosterBoardTendie.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterBoardTendie.swift; sourceTree = "<group>"; };
+		2E1EF03EBDE439B7665BF877 /* PosterBoardVideo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterBoardVideo.swift; sourceTree = "<group>"; };
+		C4BE2466826B04C5BC5936DF /* PosterBoardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterBoardView.swift; sourceTree = "<group>"; };
 		10F91169C201521D8C0F3B86 /* ProgressPulse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressPulse.swift; sourceTree = "<group>"; };
 		F2521FA7674D8EDC6F4DF724 /* ProtectiveBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtectiveBackup.swift; sourceTree = "<group>"; };
 		EABB4369B839C2CD9D0D7C98 /* RestoreRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestoreRunner.swift; sourceTree = "<group>"; };
@@ -162,6 +178,13 @@
 				0891BC919AA2450E81C16D93 /* MBDBManifest.swift */,
 				F63167F7109495632C638455 /* MBFileBlob.swift */,
 				590719A37991943F005FE604 /* ManifestStore.swift */,
+				A1560E85808C2A01450AD4CD /* PosterBoard.swift */,
+				EA16FEAE810163E3FB58A973 /* PosterBoardBackup.swift */,
+				24A6FCA64DAFCF3674497207 /* PosterBoardResources.swift */,
+				7CBD070C52DD7281009B60B4 /* PosterBoardStore.swift */,
+				08CCA12F39D94B614A61B482 /* PosterBoardTemplates.swift */,
+				B611D828253F18B5A9CDFE0E /* PosterBoardTendie.swift */,
+				2E1EF03EBDE439B7665BF877 /* PosterBoardVideo.swift */,
 				10F91169C201521D8C0F3B86 /* ProgressPulse.swift */,
 				F2521FA7674D8EDC6F4DF724 /* ProtectiveBackup.swift */,
 				EABB4369B839C2CD9D0D7C98 /* RestoreRunner.swift */,
@@ -240,6 +263,7 @@
 				F4432398FF02541D88F5E11B /* GoldenNuggetView.swift */,
 				85A3D093FF4C72DC8FA10411 /* GoldenTheme.swift */,
 				F1405DB7C8287A4D6101F564 /* MediaView.swift */,
+				C4BE2466826B04C5BC5936DF /* PosterBoardView.swift */,
 				9E007DB1B5DADCC9E6394E17 /* RunLog.swift */,
 				989DDFE32F20F006B3946B58 /* SupervisionView.swift */,
 				A77000F278E3D52579527931 /* TweakRow.swift */,
@@ -292,6 +316,7 @@
 			name = GoldenNuggetMobile;
 			packageProductDependencies = (
 				B6CC7F8101BD13AD344DBB86 /* Minimuxer */,
+				B6CC7F8101BD13AD344DBB87 /* ZIPFoundation */,
 			);
 			productName = GoldenNuggetMobile;
 			productReference = 58A0011193A068B87B3F76BA /* GoldenNuggetMobile.app */;
@@ -373,6 +398,14 @@
 				0331AFC575C298F5CD5B9046 /* ManifestStore.swift in Sources */,
 				8599F4FC00683BED33CFEA2F /* MediaView.swift in Sources */,
 				B131B5D39A218B7F0A12FC3C /* NuggetApp.swift in Sources */,
+				8EFA230E330DA684FF98700A /* PosterBoard.swift in Sources */,
+				05D914EAC38901911B35E6A4 /* PosterBoardBackup.swift in Sources */,
+				253460D5373547DC8032194A /* PosterBoardResources.swift in Sources */,
+				4B7673F854107FC11EB157C5 /* PosterBoardStore.swift in Sources */,
+				26E0D0C0DB2AED03EBB4708C /* PosterBoardTemplates.swift in Sources */,
+				FA786E5D4A1B85135B773FBC /* PosterBoardTendie.swift in Sources */,
+				AA1E5E9A6CF388051D140AE3 /* PosterBoardVideo.swift in Sources */,
+				C3451315BB71389FE8DC092B /* PosterBoardView.swift in Sources */,
 				52F9CFD7A2DB9E90B4FE71D1 /* ProgressPulse.swift in Sources */,
 				8969C92A6ECADAC5DA057A58 /* ProtectiveBackup.swift in Sources */,
 				6260750CEB090F2A1CD8D4A4 /* RestoreRunner.swift in Sources */,
@@ -617,6 +650,15 @@
 		B6CC7F8101BD13AD344DBB86 /* Minimuxer */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Minimuxer;
+		};
+		/* The app unpacks `.tendies` wallpaper packs, which are ZIPs. Second
+		   product of the same local package (Vendor), so no new
+		   XCLocalSwiftPackageReference is involved. Mirrors project.yml and
+		   Package.swift; XcodeGen is not installed here, so this file cannot be
+		   regenerated from that one and the three have to agree by hand. */
+		B6CC7F8101BD13AD344DBB87 /* ZIPFoundation */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ZIPFoundation;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

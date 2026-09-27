@@ -221,8 +221,142 @@ class GoldenNuggetEngine {
             for warning in skipSetup.warnings { log("⚠️ \(warning)") }
         }
 
+        // Skip setup first, then the compiled tweaks: one array, one pass
+        // through the injector, which derives the directory rows from each
+        // payload's path and therefore writes the two skip-setup files in the
+        // order `add_skip_setup` appends them.
+        let payloads = skipSetup.payloads + compiled.payloads
         let udid = try await prepareRun()
+        try await deliver(payloads: payloads, udid: udid, deviceVersion: deviceVersion,
+                          label: "tweak restore") {
+            log("Tweak apply succeeded: the device confirmed it finished.")
+            log("Reboot the device so the injected preferences take effect.")
+        }
+    }
 
+    /// Apply a PosterBoard selection: wallpapers, a video, or a reset.
+    ///
+    /// Same flow as `applyTweaks` — one channel, `AppDomain-com.apple.PosterBoard`
+    /// — with one extra stage in front of it and one rule relaxed:
+    ///
+    ///   * **The database comes first.** A wallpaper exists only once it has a
+    ///     row in the store's own sqlite, and the reference's answer is a
+    ///     *targeted* backup that names just that container (`PosterBoardBackup`).
+    ///     It runs before the compile because the compile cannot be done without
+    ///     it; the compile still runs before the expensive protective pull.
+    ///   * **A reset needs no database and no fetch**, so a reset-only apply is
+    ///     compile-first exactly like a tweak apply.
+    ///
+    /// The two backups are deliberate rather than fused: the protective pull's
+    /// `FactoryInfo` says "no app containers" and that is what makes it fast and
+    /// what the tweak path has production evidence for.  Asking it for one
+    /// container as well would change the shape of the one path that is known to
+    /// work, to save one exchange.
+    func applyPosterBoard(
+        selection: PosterBoardSelection,
+        deviceVersion: String,
+        forceRefresh: Bool
+    ) async throws {
+        AppLog.shared.memory.reset()
+        warnIfPreviousCallStillRunning()
+        clearCancel()
+        clearProgress()
+        let runStage = StageTimer("RUN posterboard apply")
+        defer { runStage.done() }
+
+        guard selection.isActive else {
+            throw GoldenNuggetError("Nothing is selected on the PosterBoard page: import a "
+                + ".tendies pack, pick a video, or choose what to reset.")
+        }
+        log("PosterBoard: \(selection.describe)")
+
+        let udid = try await prepareRun()
+        let version = try await resolvedDeviceVersion(deviceVersion)
+
+        var structureVersion = PosterBoard.fallbackStructureVersion
+        var database: URL?
+        if !selection.fullReset && selection.resetModes.isEmpty {
+            let fetchRoot = AppPaths.posterBoardFetchRoot
+            let fetched = try await PosterBoardBackup.fetch(
+                backupRoot: fetchRoot, udid: udid,
+                onProgress: { overall in self.logProgress("posterboard backup progress", overall) },
+                log: { AppLog.write($0) })
+            database = fetched.database
+            structureVersion = fetched.structureVersion
+        } else {
+            log("PosterBoard: reset only — no database is needed, and none is fetched.")
+        }
+
+        let working = PosterBoard.workDirectory
+        let payloads = try await PosterBoard.compile(selection: selection,
+                                                     structureVersion: structureVersion,
+                                                     database: database,
+                                                     deviceVersion: version,
+                                                     forceRefresh: forceRefresh,
+                                                     workingDirectory: working,
+                                                     log: { AppLog.write($0) })
+        guard !payloads.isEmpty else {
+            throw GoldenNuggetError("PosterBoard produced no files for this selection.")
+        }
+        let onDisk = payloads.filter { $0.source != nil }.count
+        let totalBytes = payloads.reduce(0) { $0 + $1.byteCount }
+        let human = ByteCountFormatter.string(fromByteCount: Int64(totalBytes), countStyle: .file)
+        log("PosterBoard: \(payloads.count) payload(s), \(onDisk) of them on disk (\(human))")
+
+        try await deliver(payloads: payloads, udid: udid, deviceVersion: version,
+                          label: "posterboard restore") {
+            log("PosterBoard apply succeeded: the device confirmed it finished.")
+            if selection.fullReset || !selection.resetModes.isEmpty {
+                log("The store was cleared. Reboot the device, then add wallpapers from a fresh "
+                    + "database fetch — a reset makes the copy fetched before it stale.")
+            } else {
+                log("Reboot the device so the store picks the new wallpapers up.")
+            }
+        }
+    }
+
+    /// Fetch only the device's PosterBoard database, without applying anything.
+    ///
+    /// The page's own action, and the reference has the same one (its "Fetch
+    /// Database File" wizard in `pb_dialog.py`) for the same reason: the fetch is
+    /// the one stage of a wallpaper apply that can fail on its own terms — the
+    /// device decides whether it will upload the container — so being able to run
+    /// it alone, watch it, and retry is worth a button. The result is cached at
+    /// `PosterBoardBackup.cachedDatabase(udid:)`, and an apply reuses nothing:
+    /// it fetches its own, because a copy fetched before a reset is stale.
+    func fetchPosterBoardDatabase() async throws {
+        AppLog.shared.memory.reset()
+        warnIfPreviousCallStillRunning()
+        clearCancel()
+        clearProgress()
+        let stage = StageTimer("RUN posterboard database fetch")
+        defer { stage.done() }
+
+        let udid = try await prepareRun()
+        _ = try await PosterBoardBackup.fetch(
+            backupRoot: AppPaths.posterBoardFetchRoot, udid: udid,
+            onProgress: { overall in self.logProgress("posterboard backup progress", overall) },
+            log: { AppLog.write($0) })
+        log("PosterBoard database fetched and validated.")
+    }
+
+    // MARK: - The shared delivery tail
+    //
+    // Both applies end in the same four stages, and the order is load-bearing:
+    // the manifest-format fork decides whether there is anything to prune, the
+    // pull is what authorizes the session, the prune must precede the injection,
+    // and the restore is what delivers any of it.
+
+    /// One payload set through stages 1–4 (`udid` comes from the caller, because
+    /// a PosterBoard apply has already talked to the device by the time it
+    /// compiles).
+    private func deliver(
+        payloads: [TweakPayload],
+        udid: String,
+        deviceVersion: String,
+        label: String,
+        onSuccess: () -> Void
+    ) async throws {
         // The two versions take opposite paths, and the split is the
         // reference's one-line fork (`backup.py:113`) widened to the whole run:
         // iOS 26 speaks legacy MBDB and can have a backup built for it from
@@ -280,19 +414,13 @@ class GoldenNuggetEngine {
         try await BackupInjector.pruneAndInject(
             backupRoot: backupRoot,
             udid: udid,
-            // Skip setup first, then the compiled tweaks: one array, one pass
-            // through the injector, which derives the directory rows from each
-            // payload's path and therefore writes the two skip-setup files in the
-            // order `add_skip_setup` appends them.
-            tweakPayloads: skipSetup.payloads + compiled.payloads,
+            tweakPayloads: payloads,
             prune: prune,
             ios27: ios27
         )
 
-        try await runRestore(backupRoot: backupRoot, udid: udid, label: "tweak restore") {
-            log("Tweak apply succeeded: the device confirmed it finished.")
-            log("Reboot the device so the injected preferences take effect.")
-        }
+        try await runRestore(backupRoot: backupRoot, udid: udid, label: label,
+                             onSuccess: onSuccess)
     }
 
     /// The AFC media stage, as a stage rather than a separate button so the run
