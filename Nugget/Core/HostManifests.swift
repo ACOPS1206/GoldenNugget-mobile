@@ -17,6 +17,43 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 /// aborts instantly if it is missing.  A restore refuses a backup without them
 /// too, so both flows call `ensure` before touching anything else.
 enum HostManifests {
+    /// The `BackupKeyBag` blob for `Manifest.plist`, byte for byte what the
+    /// reference hardcodes (`src/restore/backup.py:244`).
+    ///
+    /// It is libimobiledevice's backup keybag: `VERS`/`TYPE`/`UUID`/`HMCK`
+    /// followed by 16 `SALT`+`ITER`+`UUID`+`CLAS`+`WRAP`+`KTYP`+`WPKY` entries,
+    /// 1336 bytes once decoded. It carries no device identity — the UUIDs are
+    /// keybag-entry identifiers, not the UDID — so the same blob serves every
+    /// device, and the reference hardcodes it for the same reason.
+    ///
+    /// Its job is to wrap the per-file data-protection keys the device expects a
+    /// `DataProtection: true` manifest to account for. Omit it and the device
+    /// pulls all the payloads, then refuses the restore with
+    /// `MBErrorDomain/205 — No keybag in manifest`.
+    private static let backupKeyBag = Data(base64Encoded: Self.backupKeyBagBase64)!
+    private static let backupKeyBagBase64 =
+        """
+        VkVSUwAAAAQAAAAFVFlQRQAAAAQAAAABVVVJRAAAABDud41d1b9NBICR1BH9JfVtSE1DSwAAACgAAAAAAAAAAAAAAAAAAAAA\
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAV1JBUAAAAAQAAAAAU0FMVAAAABRY5Ne2bthGQ5rf4O3gikep1e6tZUlURVIAAAAE\
+        AAAnEFVVSUQAAAAQB7R8awiGR9aba1UuVahGPENMQVMAAAAEAAAAAVdSQVAAAAAEAAAAAktUWVAAAAAEAAAAAFdQS1kAAAAo\
+        N3kQAJloFg+ukEUY+v5P+dhc/Welw/oucsyS40UBh67ZHef5ZMk9UVVVSUQAAAAQgd0cg0hSTgaxR3PVUbcEkUNMQVMAAAAE\
+        AAAAAldSQVAAAAAEAAAAAktUWVAAAAAEAAAAAFdQS1kAAAAoMiQTXx0SJlyrGJzdKZQ+SfL124w+2Tf/3d1R2i9yNj9zZCHN\
+        JhnorVVVSUQAAAAQf7JFQiBOS12JDD7qwKNTSkNMQVMAAAAEAAAAA1dSQVAAAAAEAAAAAktUWVAAAAAEAAAAAFdQS1kAAAAo\
+        SEelorROJA46ZUdwDHhMKiRguQyqHukotrxhjIfqiZ5ESBXX9txi51VVSUQAAAAQfF0G/837QLq01xH9+66vx0NMQVMAAAAE\
+        AAAABFdSQVAAAAAEAAAAAktUWVAAAAAEAAAAAFdQS1kAAAAol0BvFhd5bu4Hr75XqzNf4g0fMqZAie6OxI+x/pgm6Y95XW17\
+        N+ZIDVVVSUQAAAAQimkT2dp1QeadMu1KhJKNTUNMQVMAAAAEAAAABVdSQVAAAAAEAAAAA0tUWVAAAAAEAAAAAFdQS1kAAAAo\
+        2N2DZarQ6GPoWRgTiy/tdjKArOqTaH0tPSG9KLbIjGTOcLodhx23xFVVSUQAAAAQQV37JVZHQFiKpoNiGmT6+ENMQVMAAAAE\
+        AAAABldSQVAAAAAEAAAAA0tUWVAAAAAEAAAAAFdQS1kAAAAofe2QSvDC2cV7Etk4fSBbgqDx5ne/z1VHwmJ6NdVrTyWi80Sy\
+        869DM1VVSUQAAAAQFzkdH+VgSOmTj3yEcfWmMUNMQVMAAAAEAAAAB1dSQVAAAAAEAAAAA0tUWVAAAAAEAAAAAFdQS1kAAAAo\
+        7kLYPQ/DnHBERGpaz37eyntIX/XzovsS0mpHW3SoHvrb9RBgOB+WblVVSUQAAAAQEBpgKOz9Tni8F9kmSXd0sENMQVMAAAAE\
+        AAAACFdSQVAAAAAEAAAAA0tUWVAAAAAEAAAAAFdQS1kAAAAo5mxVoyNFgPMzphYhm1VG8Fhsin/xX+r6mCd9gByF5SxeolAI\
+        T/ICF1VVSUQAAAAQrfKB2uPSQtWh82yx6w4BoUNMQVMAAAAEAAAACVdSQVAAAAAEAAAAA0tUWVAAAAAEAAAAAFdQS1kAAAAo\
+        5iayZBwcRa1c1MMx7vh6lOYux3oDI/bdxFCW1WHCQR/Ub1MOv+QaYFVVSUQAAAAQiLXvK3qvQza/mea5inss/0NMQVMAAAAE\
+        AAAACldSQVAAAAAEAAAAA0tUWVAAAAAEAAAAAFdQS1kAAAAoD2wHX7KriEe1E31z7SQ7/+AVymcpARMYnQgegtZD0Mq2U55u\
+        xwNr2FVVSUQAAAAQ/Q9feZxLS++qSe/a4emRRENMQVMAAAAEAAAAC1dSQVAAAAAEAAAAA0tUWVAAAAAEAAAAAFdQS1kAAAAo\
+        cYda2jyYzzSKggRPw/qgh6QPESlkZedgDUKpTr4ZZ8FDgd7YoALY1g==
+        """
+
     /// Write `Status.plist` / `Manifest.plist` / `Info.plist` if any is missing.
     ///
     /// The device uploads `Manifest.db` in the stream, but never these three —
@@ -76,15 +113,21 @@ enum HostManifests {
             }
         }
 
-        // Manifest.plist — seeded empty; the injector fills Applications.
+        // Manifest.plist — the injector fills Applications; the keybag below is
+        // not optional.  Without it the device answers
+        // `MBErrorDomain/205 — No keybag in manifest` after it has pulled every
+        // payload (iOS 26.6.2, 2026-09-29), so the run dies in the restore and
+        // nothing is applied.  The reference seeds the same key with a fixed
+        // blob (`src/restore/backup.py:244`).
         let manifestURL = deviceDir.appendingPathComponent("Manifest.plist")
         if !fm.fileExists(atPath: manifestURL.path) {
             try? PropertyListSerialization.data(fromPropertyList: ["DataProtection": true,
+                                                                   "BackupKeyBag": Self.backupKeyBag,
                                                                    "Lockdown": [:],
                                                                    "SystemDomainsVersion": ios27 ? "24.0" : "20.0",
                                                                    "Version": ios27 ? "10.0" : "9.1",
                                                                    "Applications": [:]],
-                                                format: .xml, options: 0)
+                                                 format: .xml, options: 0)
                 .write(to: manifestURL)
         }
 
