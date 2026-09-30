@@ -117,11 +117,10 @@ See [CONTRIBUTING.md](https://github.com/awesomenull-dev/GoldenNugget/blob/main/
 ## Credits
 - [awesomenull] Lead developer
 - [Wind0ws11Aero] for helping with development a lot.
+- [@mak5er](https://github.com/mak5er): AirCard developer.
+- [NeoSpring](https://github.com/rooootdev/neospring): Swift implementation by **[@skadz108](https://github.com/skadz108)** and **[@rooootdev](https://github.com/rooootdev)**, and **[@neonmodder123](https://github.com/neonmodder123)** for the WebKit GPU process respring technique.
 - [LeminLimez] for creating Nugget.
 - [0xjonhnnydev] for [AirLift]
-- [PosterRestore][PosterRestoreDiscord] for their help with PosterBoard
-  - Special thanks to [dootskyre][dootskyreX], [Middo][MiddoX], [dulark][dularkGitHub], forcequitOS, and pingubow for their work on nugget. It would not have been possible without them!
-  - Thanks to [Snoolie for aar handling][python-aar-stuffGitHub]!
 - [iTechExpert][iTechExpertTwitter] for various Springboard/Internal Options
 - [Mikasa-san][Mikasa-sanGitHub] for [Quiet Daemon][QuietDaemonGitHub]
 
