@@ -65,6 +65,10 @@
 		406691A53A3755BE7434B389 /* SkipSetupCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B71CFF2C640582DC97E891A3 /* SkipSetupCatalog.swift */; };
 		3EC01C63F03C83569AE193A6 /* SkipSetupSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA5B1026029FABF4BBD94979 /* SkipSetupSettings.swift */; };
 		88BF13A4B64876644E9B178D /* StallGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 989555D74B847B3F468BC1DC /* StallGuard.swift */; };
+		6CDDFBA4BCD5B8146BD1AB8E /* StatusBarArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87F95B42B6AACCE131FAEED6 /* StatusBarArchive.swift */; };
+		122ED6EE7845648380FB17A4 /* StatusBarModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63E8852814BA761E602CA1AF /* StatusBarModel.swift */; };
+		827B148A2DDB3B15D9072BB2 /* StatusBarSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD3E97EAC80C591A18711C71 /* StatusBarSelection.swift */; };
+		2D2A8FB0ED27100E0E426F46 /* StatusBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6E0C270A0BC03644A2E21A7 /* StatusBarView.swift */; };
 		495EAECFEA30AF8C2A6C9BF0 /* TransportFailure.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7270E65A4703F9C0AB9AA65F /* TransportFailure.swift */; };
 		37ED7E92BD392586B1D0A4DF /* Tunnel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D1BC98037C6BDC8AF58496B /* Tunnel.swift */; };
 		4E0010FD17DF55D881CB25AA /* TweakCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77B7AF6A5B6F051A9CA68A4D /* TweakCatalog.swift */; };
@@ -78,9 +82,9 @@
 		1F4598565EB3ECC262843292 /* TweaksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB4799584FF11C9BF5BE59FF /* TweaksView.swift */; };
 		000FAF790458B28656C889EC /* WalletCardSkin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 298990634724C9BD09173CA1 /* WalletCardSkin.swift */; };
 		F8CA987268AFEEE27B32C442 /* WalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68FD81B29996DD807BDD0A8E /* WalletView.swift */; };
+		91AEAC90A50A9A1D472D0FDA /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 96D6AABAE44982B09FFA8F97 /* WebKit.framework */; };
 		637D690748869293AAB5B9C8 /* WireCensus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 343E173B6BF30E9113DD3CA4 /* WireCensus.swift */; };
 		E801AE73005EB73126FC4367 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 92FE9028690931EFD26A8AFF /* libsqlite3.tbd */; };
-		91AEAC90A50A9A1D472D0FDA /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 96D6AABAE44982B09FFA8F97 /* WebKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -143,6 +147,10 @@
 		B71CFF2C640582DC97E891A3 /* SkipSetupCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkipSetupCatalog.swift; sourceTree = "<group>"; };
 		AA5B1026029FABF4BBD94979 /* SkipSetupSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkipSetupSettings.swift; sourceTree = "<group>"; };
 		989555D74B847B3F468BC1DC /* StallGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StallGuard.swift; sourceTree = "<group>"; };
+		87F95B42B6AACCE131FAEED6 /* StatusBarArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarArchive.swift; sourceTree = "<group>"; };
+		63E8852814BA761E602CA1AF /* StatusBarModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarModel.swift; sourceTree = "<group>"; };
+		BD3E97EAC80C591A18711C71 /* StatusBarSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarSelection.swift; sourceTree = "<group>"; };
+		F6E0C270A0BC03644A2E21A7 /* StatusBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarView.swift; sourceTree = "<group>"; };
 		7270E65A4703F9C0AB9AA65F /* TransportFailure.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportFailure.swift; sourceTree = "<group>"; };
 		9D1BC98037C6BDC8AF58496B /* Tunnel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tunnel.swift; sourceTree = "<group>"; };
 		77B7AF6A5B6F051A9CA68A4D /* TweakCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweakCatalog.swift; sourceTree = "<group>"; };
@@ -157,9 +165,9 @@
 		6AB24A4C7742CD2E32B8F55D /* Vendor */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Vendor; sourceTree = SOURCE_ROOT; };
 		298990634724C9BD09173CA1 /* WalletCardSkin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletCardSkin.swift; sourceTree = "<group>"; };
 		68FD81B29996DD807BDD0A8E /* WalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletView.swift; sourceTree = "<group>"; };
+		96D6AABAE44982B09FFA8F97 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
 		343E173B6BF30E9113DD3CA4 /* WireCensus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WireCensus.swift; sourceTree = "<group>"; };
 		92FE9028690931EFD26A8AFF /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
-		96D6AABAE44982B09FFA8F97 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -227,6 +235,9 @@
 				B71CFF2C640582DC97E891A3 /* SkipSetupCatalog.swift */,
 				AA5B1026029FABF4BBD94979 /* SkipSetupSettings.swift */,
 				989555D74B847B3F468BC1DC /* StallGuard.swift */,
+				87F95B42B6AACCE131FAEED6 /* StatusBarArchive.swift */,
+				63E8852814BA761E602CA1AF /* StatusBarModel.swift */,
+				BD3E97EAC80C591A18711C71 /* StatusBarSelection.swift */,
 				7270E65A4703F9C0AB9AA65F /* TransportFailure.swift */,
 				77B7AF6A5B6F051A9CA68A4D /* TweakCatalog.swift */,
 				CEC4576E97290242BE461F36 /* TweakCatalogDaemons.swift */,
@@ -305,6 +316,7 @@
 				AD4EED31AD30A3DEA76C9577 /* ResetPagesSheet.swift */,
 				9E007DB1B5DADCC9E6394E17 /* RunLog.swift */,
 				9F72AE6CD4E8EC369A26D247 /* SettingsView.swift */,
+				F6E0C270A0BC03644A2E21A7 /* StatusBarView.swift */,
 				A77000F278E3D52579527931 /* TweakRow.swift */,
 				FB4799584FF11C9BF5BE59FF /* TweaksView.swift */,
 				68FD81B29996DD807BDD0A8E /* WalletView.swift */,
@@ -466,6 +478,10 @@
 				406691A53A3755BE7434B389 /* SkipSetupCatalog.swift in Sources */,
 				3EC01C63F03C83569AE193A6 /* SkipSetupSettings.swift in Sources */,
 				88BF13A4B64876644E9B178D /* StallGuard.swift in Sources */,
+				6CDDFBA4BCD5B8146BD1AB8E /* StatusBarArchive.swift in Sources */,
+				122ED6EE7845648380FB17A4 /* StatusBarModel.swift in Sources */,
+				827B148A2DDB3B15D9072BB2 /* StatusBarSelection.swift in Sources */,
+				2D2A8FB0ED27100E0E426F46 /* StatusBarView.swift in Sources */,
 				495EAECFEA30AF8C2A6C9BF0 /* TransportFailure.swift in Sources */,
 				37ED7E92BD392586B1D0A4DF /* Tunnel.swift in Sources */,
 				4E0010FD17DF55D881CB25AA /* TweakCatalog.swift in Sources */,

@@ -331,11 +331,19 @@ struct GoldenActionRow: View {
 /// `IOSSwitch` is a hand-drawn copy of the platform switch (51×31, `success`
 /// track when on, `border` when off, white knob) — on iOS the platform control
 /// *is* that, so it is used and tinted rather than redrawn.
+///
+/// `onChange` is optional and defaults to doing nothing, because a `Binding`
+/// covers the cases where the value is the only thing that changes and misses the
+/// cases where an edit has a side effect: the status-bar page writes its
+/// selection out to disk from it, and there is no other place to hang that off.
 struct GoldenSwitch: View {
     @Binding var isOn: Bool
+    var onChange: (Bool) -> Void = { _ in }
 
     var body: some View {
-        Toggle("", isOn: $isOn)
+        Toggle("", isOn: Binding(
+            get: { isOn },
+            set: { isOn = $0; onChange($0) }))
             .labelsHidden()
             .tint(GoldenTheme.success)
     }

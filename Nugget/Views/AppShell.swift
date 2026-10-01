@@ -21,6 +21,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Hashable {
     case home
     case tweaks
     case posterBoard
+    case statusBar
     case wallet
     case passcode
     case daemons
@@ -35,6 +36,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Hashable {
         case .home: "GoldenNugget"
         case .tweaks: "Tweaks"
         case .posterBoard: "PosterBoard"
+        case .statusBar: "Status Bar"
         case .wallet: "Wallet"
         case .passcode: "Passcode"
         case .daemons: "Daemons"
@@ -49,6 +51,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Hashable {
         case .home: "house"
         case .tweaks: "slider.horizontal.3"
         case .posterBoard: "photo.artframe"
+        case .statusBar: "antenna.radiowaves.left.and.right"
         case .wallet: "creditcard.fill"
         case .passcode: "lock.rectangle"
         case .daemons: "server.rack"
@@ -91,6 +94,11 @@ struct RootView: View {
     /// delivered by the **Apply on the home page**, so as page state they would be
     /// destroyed by the very act of walking over to press it.
     @State private var posterBoardSelection = PosterBoardSelection()
+    /// The status-bar page's selection. Hoisted for the same reason, and for a
+    /// stronger one: it is edited on the status bar page and delivered by the
+    /// **Apply on the home page**, so as page state it would be destroyed by the
+    /// act of walking over to press it.
+    @State private var statusBarSelection = StatusBarSelection()
     /// Launch auto-start bookkeeping, hoisted for the same reason as the
     /// selection: the flags guard a process-wide singleton
     /// (`startMinimuxer`'s lock rejects *concurrent* attempts only), so they
@@ -143,7 +151,10 @@ struct RootView: View {
         // PosterBoard page is first opened: the Apply that delivers them is on the home
         // page, and a selection that is only loaded by *visiting* its editor is a
         // selection that can be missing while the button is pressed.
-        .task { posterBoardSelection.loadFromDisk() }
+        .task {
+            posterBoardSelection.loadFromDisk()
+            statusBarSelection.loadFromDisk()
+        }
     }
 
     // MARK: - Compact (iPhone)
@@ -221,6 +232,7 @@ struct RootView: View {
     private var detail: some View {
         GoldenNuggetView(tweakSelection: $tweakSelection,
                          posterBoardSelection: $posterBoardSelection,
+                         statusBarSelection: $statusBarSelection,
                          didAutoStart: $didAutoStart,
                          autoImportDisabled: $autoImportDisabled)
             .navigationDestination(for: AppDestination.self) { destination in
@@ -233,6 +245,8 @@ struct RootView: View {
                     TweaksView(selection: $tweakSelection)
                 case .posterBoard:
                     PosterBoardView(selection: $posterBoardSelection)
+                case .statusBar:
+                    StatusBarView(selection: $statusBarSelection)
                 case .wallet:
                     WalletView()
                 case .passcode:

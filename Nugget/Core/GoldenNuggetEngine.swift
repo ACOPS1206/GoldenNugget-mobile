@@ -191,6 +191,7 @@ class GoldenNuggetEngine {
     func applyTweaks(
         selection: TweakSelection,
         posterBoard: PosterBoardSelection,
+        statusBar: StatusBarSelection,
         deviceVersion: String,
         isIPhone: Bool
     ) async throws {
@@ -204,6 +205,29 @@ class GoldenNuggetEngine {
         let compiled = TweakCompiler.compile(selection: selection,
                                              deviceVersion: deviceVersion,
                                              isIPhone: isIPhone)
+
+        // The status bar is built here, on the version the page already read, and
+        // for the same reason the plist compile is: a payload that cannot be built
+        // has to fail before the device is touched.  The page resolves the
+        // mechanism from this same number, so the two cannot disagree.
+        var statusBarPayloads: [TweakPayload] = []
+        if statusBar.isActive {
+            let mechanism = StatusBarMechanism.mechanism(for: deviceVersion)
+            let built = try statusBar.payload(for: mechanism)
+            statusBarPayloads = [TweakPayload(domain: mechanism.domain,
+                                              relativePath: mechanism.restorePath,
+                                              contents: built.data)]
+            // The count, then the parenthetical the reference's summary has: an
+            // enabled-but-empty selection still writes a file, and the log has to
+            // say so, or a reset reads as a no-op.
+            log("Status bar: \(statusBar.overrides.activeCount) override(s)"
+                + " \(statusBar.overrides.activeCount == 0 ? "(a reset)" : "") via "
+                + "\(mechanism == .classic ? "the classic struct" : "the iOS 27 archive") "
+                + "→ \(statusBarPayloads[0].label) (\(built.data.count) B)")
+            for field in built.dropped {
+                log("  ⚠️ \(field) has no counterpart in the iOS 27 archive and was not delivered")
+            }
+        }
 
         // Upstream's skip-setup block rides the same apply, **ahead of** the
         // tweaks (`device_manager.add_skip_setup`).  Its warnings are logged
@@ -221,10 +245,11 @@ class GoldenNuggetEngine {
             ? SkipSetup.build(supervised: false, organizationName: "")
             : SkipSetup.Build(payloads: [], warnings: [])
 
-        guard !compiled.payloads.isEmpty || !skipSetup.payloads.isEmpty || posterBoard.isActive else {
+        guard !compiled.payloads.isEmpty || !skipSetup.payloads.isEmpty || posterBoard.isActive
+                || statusBar.isActive else {
             throw GoldenNuggetError("Nothing to apply: no tweak is enabled (or every enabled one "
-                + "was skipped), skip setup is off, and there is nothing selected on the "
-                + "PosterBoard page.")
+                + "was skipped), skip setup is off, the status bar is untouched, and there is "
+                + "nothing selected on the PosterBoard page.")
         }
         log("Tweaks: \(compiled.payloads.count) file(s) from \(compiled.locations.count) plist(s)")
         for location in compiled.locations { log("  → \(location.rawValue)") }
@@ -297,11 +322,14 @@ class GoldenNuggetEngine {
                 + "(\(ByteCountFormatter.string(fromByteCount: Int64(total), countStyle: .file)))")
         }
 
-        // Skip setup first, then the tweaks, then the wallpapers: one array, one pass
-        // through the injector, which derives the directory rows from each payload's path
-        // and therefore writes the two skip-setup files in the order `add_skip_setup`
-        // appends them.
-        let payloads = skipSetup.payloads + compiled.payloads + posterBoardPayloads
+        // Skip setup, then the tweaks, then the status bar, then the wallpapers: one
+        // array, one pass through the injector, which derives the directory rows from
+        // each payload's path.  The order is the reference's — `add_skip_setup`
+        // ahead of the tweaks, and `apply_classic_tweak` / `apply_ios27_tweak`
+        // before the wallpapers — and it only actually matters for the two
+        // skip-setup files, which land in the order they are appended.
+        let payloads = skipSetup.payloads + compiled.payloads + statusBarPayloads
+            + posterBoardPayloads
 
         // Wallpapers-only run in AirLift mode: the injection already happened and
         // it resprings on its way out, so running the backup/restore tail here

@@ -61,6 +61,9 @@ struct GoldenNuggetView: View {
     /// here because **this is the one Apply**: the wallpapers ride the same pass as the
     /// tweaks, exactly as the reference's single `_apply_tweak_pass` carries them.
     @Binding var posterBoardSelection: PosterBoardSelection
+    /// The status-bar page's selection, hoisted for the same reason: it is edited
+    /// on its own page and delivered by the Apply here.
+    @Binding var statusBarSelection: StatusBarSelection
     /// The pending debounced autosave, cancelled and replaced on every change.
     @State private var autosaveTask: Task<Void, Never>?
     /// The device line's data, from the shared monitor rather than as page state.
@@ -109,7 +112,7 @@ struct GoldenNuggetView: View {
 
     /// Explicit, so `AppShell.swift` gets a signature it can depend on.
     ///
-    /// The synthesized memberwise initializer covers these three (they are the
+    /// The synthesized memberwise initializer covers these four (they are the
     /// only stored properties without a default), but its parameters come out in
     /// **declaration order** — `didAutoStart:autoImportDisabled:tweakSelection:`
     /// — so the call site would silently depend on where each one happens to sit
@@ -123,10 +126,12 @@ struct GoldenNuggetView: View {
     /// all stored properties".
     init(tweakSelection: Binding<TweakSelection>,
          posterBoardSelection: Binding<PosterBoardSelection>,
+         statusBarSelection: Binding<StatusBarSelection>,
          didAutoStart: Binding<Bool>,
          autoImportDisabled: Binding<Bool>) {
         _tweakSelection = tweakSelection
         _posterBoardSelection = posterBoardSelection
+        _statusBarSelection = statusBarSelection
         _didAutoStart = didAutoStart
         _autoImportDisabled = autoImportDisabled
     }
@@ -911,6 +916,7 @@ struct GoldenNuggetView: View {
         showStatus("Applying…", .accent, autoHide: false)
         let snapshot = tweakSelection
         let wallpapers = posterBoardSelection
+        let statusBar = statusBarSelection
         let device = identity
         Task {
             var text = ""
@@ -919,6 +925,7 @@ struct GoldenNuggetView: View {
             do {
                 try await GoldenNuggetEngine.shared.applyTweaks(selection: snapshot,
                                                                 posterBoard: wallpapers,
+                                                                statusBar: statusBar,
                                                                 deviceVersion: device.version,
                                                                 isIPhone: device.isIPhone)
                 text = "Applied. Reboot the device."
