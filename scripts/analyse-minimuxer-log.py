@@ -14,14 +14,19 @@ if not PATH:
     raise SystemExit("usage: analyse-minimuxer-log.py <minimuxer.log>")
 
 line_re = re.compile(
-    r"^(?P<ts>\S+Z) DEBUG out-of-order seq=(?P<seq>\d+) expected=(?P<exp>\d+) hp=(?P<hp>\d+)$")
+    r"^(?P<ts>\S+Z) DEBUG out-of-order seq=(?P<seq>\d+) expected=(?P<exp>\d+) hp=(?P<hp>\d+)"
+    r"(?: held=(?P<held>\w+) buffered=(?P<buf>\d+))?$")
 dup_re = re.compile(r"^(?P<ts>\S+Z) DEBUG duplicate data seq=(?P<seq>\d+) expected=(?P<exp>\d+) hp=(?P<hp>\d+)$")
+dup_ack_re = re.compile(
+    r"^(?P<ts>\S+Z) DEBUG duplicate ACK for hp=(?P<hp>\d+): ack=(?P<ack>\d+) "
+    r"window=(?P<win>\d+) \(hole (?P<hole>\d+) bytes wide\)$")
 rst_re = re.compile(r"^(?P<ts>\S+Z)\s+WARN RST on hp=(?P<hp>\d+)$")
 dl_re = re.compile(r"^(?P<ts>\S+Z) DEBUG (?:Received DL message|Sending device link message): (?P<tag>\S+)")
 dx_re = re.compile(r"^(?P<ts>\S+Z) DEBUG (?:Starting|Received DL message: DLMessageVersionExchange)")
 
 rows = []
 dups, rsts, versions = [], [], []
+dup_acks, held_dropped = [], 0
 dl_by_second = {}
 
 with open(PATH) as fh:
@@ -30,10 +35,16 @@ with open(PATH) as fh:
         m = line_re.match(line)
         if m:
             rows.append((m["ts"], int(m["seq"]), int(m["exp"]), m["hp"]))
+            if m["held"] == "false":
+                held_dropped += 1
             continue
         m = dup_re.match(line)
         if m:
             dups.append((m["ts"], int(m["seq"]), int(m["exp"]), m["hp"]))
+            continue
+        m = dup_ack_re.match(line)
+        if m:
+            dup_acks.append((m["ts"], m["hp"], int(m["ack"]), int(m["win"]), int(m["hole"])))
             continue
         m = rst_re.match(line)
         if m:
@@ -56,6 +67,8 @@ if not rows:
 
 print(f"out-of-order lines : {len(rows)}   hp values: {sorted({r[3] for r in rows})}")
 print(f"duplicate data     : {len(dups)}   hp values: {sorted({d[3] for d in dups})}")
+print(f"duplicate ACKs     : {len(dup_acks)}   hp values: {sorted({d[1] for d in dup_acks})}   "
+      f"held=false: {held_dropped}")
 print(f"RST                : {len(rsts)}   hp values: {sorted({r[1] for r in rsts})}")
 print(f"version exchanges  : {len(versions)}")
 print()
@@ -92,6 +105,22 @@ for ts, seq, exp, hp in dups:
     print(f"  {ts}  duplicate data seq={seq} expected={exp} hp={hp}  (expected is {exp - seq:+d} vs seq)")
 for ts, hp in rsts:
     print(f"  {ts}  RST hp={hp}")
+
+print()
+print("— duplicate ACKs sent by jktcp, per connection (whether the peer was asked to retransmit)")
+by_hp = {}
+for ts, hp, ack, win, hole in dup_acks:
+    by_hp.setdefault(hp, []).append((ts, ack, win, hole))
+for hp in sorted(by_hp, key=lambda k: -len(by_hp[k])):
+    evs = by_hp[hp]
+    distinct_ack = sorted({a for _, a, _, _ in evs})
+    widest = max(h for _, _, _, h in evs)
+    print(f"  hp={hp}: {len(evs)} dup ACK(s), ack value(s) {distinct_ack[:4]}"
+          f"{'…' if len(distinct_ack) > 4 else ''}, widest hole {widest} B")
+    for ts, ack, win, hole in evs[:3]:
+        print(f"      {ts}  ack={ack} window={win} hole={hole} B")
+    if len(evs) > 3:
+        print(f"      … {len(evs) - 3} more")
 
 print()
 print("— DL messages per second (only seconds that had any)")

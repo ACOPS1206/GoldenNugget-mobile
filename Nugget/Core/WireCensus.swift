@@ -40,6 +40,13 @@ struct RustWireSample: Sendable {
     /// than the buffer, which waiting cannot repair either.
     var heldDropped = 0
 
+    /// jktcp `duplicate ACK for hp=` lines: the duplicate ACKs this side put on
+    /// the wire for out-of-order data.  The retransmit counter says whether the
+    /// peer is filling the hole; this says whether it was ever asked to.  A
+    /// logged zero here with a standing gap means the hole is not the peer
+    /// refusing to retransmit — it is us never asking, or the ask never landing.
+    var duplicateAcks = 0
+
     /// Bytes the device has sent that jktcp still cannot deliver.
     var gap: UInt64? {
         guard let expected, let seq, seq > expected else { return nil }
@@ -151,6 +158,9 @@ final class WireCensus: @unchecked Sendable {
             } else if line.contains("held=false") {
                 sample.heldDropped += 1
             }
+            if line.contains("duplicate ACK for hp=") {
+                sample.duplicateAcks += 1
+            }
             guard line.contains("out-of-order seq=") else { continue }
             sample.outOfOrder += 1
             if let value = number(after: "expected=", in: line) { sample.expected = value }
@@ -199,6 +209,9 @@ final class WireCensus: @unchecked Sendable {
             line += s.retransmits > 0
                 ? ", peer retransmitted ×\(s.retransmits)"
                 : ", peer has retransmitted NOTHING"
+            line += s.duplicateAcks > 0
+                ? ", jktcp sent ×\(s.duplicateAcks) duplicate ACK(s)"
+                : ", jktcp sent no duplicate ACK(s)"
         }
         if s.heldDropped > 0 {
             line += ", \(s.heldDropped) segment(s) refused (reorder window full)"
@@ -234,6 +247,9 @@ final class WireCensus: @unchecked Sendable {
         line += sample.retransmits > 0
             ? "; the peer re-sent \(sample.retransmits) range(s), so the gap is being worked on"
             : "; the peer has re-sent NOTHING — this gap does not close by waiting"
+        line += sample.duplicateAcks > 0
+            ? " (jktcp did put ×\(sample.duplicateAcks) duplicate ACK(s) on the wire, so the ask was made)"
+            : " (jktcp sent no duplicate ACK(s) at all, so the peer was never asked to retransmit)"
         if sample.heldDropped > 0 {
             line += ". \(sample.heldDropped) segment(s) were refused (reorder window full), so part "
                 + "of the stream was dropped rather than held"

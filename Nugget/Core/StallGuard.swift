@@ -340,6 +340,9 @@ enum StallGuard {
             ? "the device re-sent \(sample.retransmits) range(s) meanwhile, so the gap is filling "
                 + "slowly rather than never"
             : "the device has re-sent NOTHING meanwhile, so no amount of waiting will fill the gap"
+                + (sample.duplicateAcks > 0
+                    ? " (jktcp sent it ×\(sample.duplicateAcks) duplicate ACK(s), so the ask was made)"
+                    : " (jktcp sent no duplicate ACK(s), so the hole was never announced)")
         return "the tunnel stopped delivering — jktcp is holding \(gap / 1024) KB of the device's "
             + String(format: "stream behind an unfilled gap and delivered %.1f KB/s for %.0fs",
                      rate / 1024, span)
