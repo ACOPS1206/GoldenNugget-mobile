@@ -37,16 +37,28 @@ for arg in "$@"; do
   esac
 done
 
-export RUSTUP_HOME="$TOOLCHAIN_ROOT/rustup"
-export CARGO_HOME="$TOOLCHAIN_ROOT/cargo"
-export PATH="$CARGO_HOME/bin:$PATH"
-
 # ---------------------------------------------------------------------------
 # 1. Rust toolchain + iOS std
 # ---------------------------------------------------------------------------
+#
+# The repo-local toolchain is the macOS path: its rustup-init is an
+# aarch64-apple-darwin binary. On Linux the system toolchain already carries
+# the iOS std, so use it as-is. An empty `.rust/cargo` must not be put ahead of
+# it on PATH, and RUSTUP_HOME must not be repointed at a toolchainless
+# directory, or the rustup `cargo` proxy stops finding its toolchain.
 
-mkdir -p "$TOOLCHAIN_ROOT"
-if [[ ! -x "$CARGO_HOME/bin/cargo" ]]; then
+if [[ -x "$TOOLCHAIN_ROOT/cargo/bin/cargo" ]]; then
+  export RUSTUP_HOME="$TOOLCHAIN_ROOT/rustup"
+  export CARGO_HOME="$TOOLCHAIN_ROOT/cargo"
+  export PATH="$CARGO_HOME/bin:$PATH"
+elif command -v cargo >/dev/null 2>&1 \
+  && rustup target list --installed 2>/dev/null | grep -qx "$TARGET"; then
+  echo "==> using the system toolchain ($(cargo --version))"
+else
+  mkdir -p "$TOOLCHAIN_ROOT"
+  export RUSTUP_HOME="$TOOLCHAIN_ROOT/rustup"
+  export CARGO_HOME="$TOOLCHAIN_ROOT/cargo"
+  export PATH="$CARGO_HOME/bin:$PATH"
   echo "==> installing rustup into $TOOLCHAIN_ROOT (nothing outside this repo)"
   curl -sSf -o "$TOOLCHAIN_ROOT/rustup-init" \
     https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init
@@ -74,6 +86,9 @@ fi
 command -v cmake >/dev/null 2>&1 \
   || { echo "error: cmake not found; aws-lc-sys cannot build without it" >&2; exit 1; }
 echo "==> $(cmake --version | head -1)"
+# CMake 4 removed compatibility with `cmake_minimum_required(VERSION <3.5)`,
+# which aws-lc-sys still uses. Harmless (ignored) on CMake 3.
+export CMAKE_POLICY_VERSION_MINIMUM=3.5
 
 # ---------------------------------------------------------------------------
 # 3. Upstream checkout, with the patch wired in
@@ -188,7 +203,47 @@ grep -q "fn should_store_file" "$SRC/ffi/src/mobilebackup2.rs" \
 #   * With lto + codegen-units=1 the app crashed non-deterministically in use;
 #     at 16 CGUs it does not. Not root-caused -- matched, not explained.
 
-SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+if command -v xcrun >/dev/null 2>&1; then
+  SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+else
+  # On Linux there is no xcrun. Take the same iPhoneOS SDK the app itself is
+  # built against from xtool, and hand cc-rs (aws-lc-sys) and bindgen the
+  # answers xcrun would have given, so nothing shells out to a missing tool.
+  SDK_ROOT="$(xtool sdk status 2>/dev/null | sed -n 's/^  Path: //p' | head -1)"
+  if [[ -z "$SDK_ROOT" || ! -d "$SDK_ROOT" ]]; then
+    echo "error: no xcrun, and xtool's Darwin SDK is not installed." >&2
+    echo "       run 'xtool sdk install', then re-run." >&2
+    exit 1
+  fi
+  SDK="$SDK_ROOT/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
+  [[ -e "$SDK" ]] || { echo "error: no iPhoneOS.sdk inside $SDK_ROOT" >&2; exit 1; }
+  if [[ -L "$SDK" ]]; then
+    SDK="$(readlink -f "$SDK")"
+  fi
+  export SDKROOT="$SDK"
+  export CC_aarch64_apple_ios="$(command -v clang)"
+  export CFLAGS_aarch64_apple_ios="--target=arm64-apple-ios17.0 -isysroot $SDK"
+  export AR_aarch64_apple_ios="$(command -v ar)"
+  echo "==> no xcrun; cross-building against $(basename "$SDK") from the xtool SDK"
+
+  # Some crates in the workspace are `cdylib`s, so cargo links a Mach-O dylib
+  # even though what ships is the staticlib (which needs no linking). The Linux
+  # clang driver does not pass `-platform_version`, and the swiftly toolchain's
+  # own ld64.lld refuses platform iOS; the xtool Darwin toolset's ld64.lld does
+  # link it, given the platform flags. Point rustc at a clang shim that supplies
+  # all three so those incidental dylibs link.
+  LD64="$SDK_ROOT/toolset/bin/ld64.lld"
+  [[ -x "$LD64" ]] || { echo "error: no $LD64 in the xtool Darwin SDK" >&2; exit 1; }
+  IOS_LINKER="$TOOLCHAIN_ROOT/ios-link.sh"
+  cat >"$IOS_LINKER" <<EOF
+#!/bin/sh
+exec "$(command -v clang)" --target=arm64-apple-ios17.0 -isysroot "$SDK" \\
+  -fuse-ld="$LD64" -Wl,-platform_version,ios,17.0,17.0 -Wl,-arch,arm64 "\$@"
+EOF
+  chmod +x "$IOS_LINKER"
+  export CARGO_TARGET_AARCH64_APPLE_IOS_LINKER="$IOS_LINKER"
+  echo "==> Mach-O linker: $LD64 via clang shim"
+fi
 echo "==> cargo build --release --target $TARGET"
 (
   cd "$SRC/ffi"
@@ -212,14 +267,18 @@ fi
 # The pinned tag is older than the revision the shipped .a was cut from, and is
 # missing one symbol the Swift side links (IdeviceGateway.launchAppPre17).
 #
-# Verified by linking rather than by nm: Xcode's nm cannot parse rustc 1.98
-# objects ("Unknown attribute kind") and llvm-nm is not always installed, while
-# clang/ld handle them fine. A probe link is also the property that actually
-# matters -- if the symbol resolves to a definition in a linked arm64 binary,
-# the app will link too.
+# On macOS this is verified by linking, not by nm: Xcode's nm cannot parse
+# rustc 1.98 objects ("Unknown attribute kind"), while clang/ld handle them.
+# A probe link is also the property that matters -- the symbol resolving to a
+# definition in a linked arm64 binary means the app will link too.
+#
+# On Linux the probe link cannot run: the swift 6.4 ld64.lld refuses
+# "platform iOS" and chokes on libSystem.tbd's arm64e-ios TAPI target. Check
+# the archive's export directly with llvm-nm, which parses the Mach-O members.
 PROBE="$(mktemp -d)"
 trap 'rm -rf "$PROBE"' EXIT
-cat >"$PROBE/probe.c" <<'EOF'
+if command -v xcrun >/dev/null 2>&1; then
+  cat >"$PROBE/probe.c" <<'EOF'
 struct IdeviceFfiError;
 extern struct IdeviceFfiError *idevice_to_stream(void *, void **);
 int main(void) {
@@ -227,24 +286,28 @@ int main(void) {
     return idevice_to_stream(0, &stream) == 0;
 }
 EOF
-if ! clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=17.0 \
-  -Wl,-undefined,dynamic_lookup -Wl,-no_fixup_chains \
-  "$PROBE/probe.c" "$BUILT" -o "$PROBE/probe" 2>"$PROBE/ld.log"; then
-  echo "error: probe link against $BUILT failed:" >&2
-  cat "$PROBE/ld.log" >&2
-  exit 1
+  if ! clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=17.0 \
+    -Wl,-undefined,dynamic_lookup -Wl,-no_fixup_chains \
+    "$PROBE/probe.c" "$BUILT" -o "$PROBE/probe" 2>"$PROBE/ld.log"; then
+    echo "error: probe link against $BUILT failed:" >&2
+    cat "$PROBE/ld.log" >&2
+    exit 1
+  fi
+  nm "$PROBE/probe" >"$PROBE/syms" 2>/dev/null || true
+  echo "==> probe link resolves _idevice_to_stream: ok"
+else
+  NM="$(command -v llvm-nm || command -v nm)"
+  "$NM" "$BUILT" >"$PROBE/syms" 2>/dev/null || true
 fi
 # `grep -q` would close the pipe early and, under `pipefail`, nm's SIGPIPE would
 # read as "not found". Dump to a file and grep the file instead.
-nm "$PROBE/probe" >"$PROBE/syms" 2>/dev/null || true
 if ! grep -q "[Tt] _idevice_to_stream" "$PROBE/syms"; then
   echo "error: $BUILT does not export _idevice_to_stream" >&2
   exit 1
 fi
-echo "==> probe link resolves _idevice_to_stream: ok"
 
-echo "==> built: $BUILT ($(stat -f %z "$BUILT") bytes)"
-lipo -info "$BUILT"
+echo "==> built: $BUILT ($(wc -c <"$BUILT") bytes)"
+command -v lipo >/dev/null 2>&1 && lipo -info "$BUILT" || true
 
 # ---------------------------------------------------------------------------
 # 5. Install
