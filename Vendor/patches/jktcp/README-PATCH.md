@@ -64,6 +64,13 @@ turns a small loss into a large one.
 - `advertised_window()` / `window_field()` replace the hard-coded
   `u16::MAX - 1` at every call site, so the window field is the free reorder
   space, expressed in units of the scale announced in the SYN.
+- `ConnectionState` also gains `last_ack_window` and `last_acked_seq`.
+  `ack_window()` holds the advertised window steady across acknowledgements that
+  do not move `ack`; it only recomputes when the gap head advances. RFC 5681
+  counts an ACK as a *duplicate* only when its advertised window "equals the
+  advertised window in the last incoming acknowledgment", so the shrinking
+  window `window_field()` produces for held data turned every duplicate ACK into
+  a window update the peer would not count — the 2026-10 stall below.
 - `Adapter::set_reorder_window()` sets `DEFAULT_REORDER_WINDOW` (8 MiB) per
   construction.
 
@@ -80,17 +87,21 @@ segment size and burst length from the 2026-09-19 run:
 | `burst_behind_a_hole_is_held_then_released` | delivers **26,624 B** of 2,486,272 | delivers all 2,486,272 B, in order |
 | `out_of_order_segment_is_answered` | 0 ACKs | ACK pointing at the gap head |
 | `out_of_order_burst_does_not_flood_acks` | 0 ACKs | ≥3, <200 for 2402 segments |
-| `advertised_window_tracks_buffer_space` | (does not compile¹) | 1 MiB → 1 MiB − 4 segments |
+| `advertised_window_tracks_buffer_space` | (does not compile¹) | 1 MiB free → 1 MiB advertised in order |
+| `duplicate_acks_repeat_the_last_window` | n/a² | every duplicate ACK repeats the in-order window |
 
 ¹ It is the only case that calls `set_reorder_window`, so it cannot compile
 against the unpatched file. The others assert only on the wire and on the read
 buffer, which is what lets the same suite run both ways.
 
+² It asserts the fix for the 2026-10 stall below; it does not compile against
+the unpatched file either, since `ack_window()` does not exist there.
+
 The obsolete case `out_of_order_packet_dropped` was **removed**: it asserted
 `"out-of-order data must not be buffered"` and `"out-of-order packet must not
 trigger an ACK"`, i.e. exactly the behaviour being fixed.
 
-`cargo test --lib` is 16 passed / 2 failed on both versions; the two failures
+`cargo test --lib` is 17 passed / 2 failed; the two failures
 are `tests::local_tcp` and `tests::handle_speed`, which need root to create a
 TUN device (`Failed to create tunnel. Are you root?`). Pre-existing, unrelated.
 
@@ -127,6 +138,38 @@ whether the duplicate ACKs leave and whether the peer acts on them. `ack()` wrot
 only to the pcap, which this build does not capture, so that was invisible; the
 `duplicate ACK for hp=…` line added to the out-of-order branch now records the
 ack number, the window and the hole width for every duplicate ACK sent.
+
+## 2026-10: the window was what made the duplicate ACKs useless
+
+Re-measured on an iPhone (iOS 27.0.1) during a protective backup over the
+`LocalDevVPN` tunnel. This time the wire census (added to the Swift side, and the
+Rust log) could see both directions:
+
+```
+out-of-order ×5983   duplicate ACK for hp=… ×684   duplicate data seq=… ×298
+held=false ×0
+```
+
+So the previous open question is answered: the duplicate ACKs **do** leave, and
+the peer **does** retransmit. But the gap still closed at ~1024 B per ~300 ms
+(~3.4 KB/s) — an RTO, not a fast retransmit — and the session eventually died
+(`Socket(Kind(NotConnected))`). The cause is in `window_field()`:
+
+```
+(32764, 32760, 32756, …)   // the window on consecutive duplicate ACKs
+```
+
+Every held segment lowers `reorder_bytes`, so every duplicate ACK advertised a
+smaller window than the one before. RFC 5681 §2 defines a duplicate ACK as
+requiring *(e) the advertised window in the incoming acknowledgment equals the
+advertised window in the last incoming acknowledgment*. None of these qualified,
+so the peer never counted three of them and never fast-retransmitted.
+
+The fix is `last_ack_window` / `last_acked_seq` / `ack_window()`: a duplicate ACK
+repeats the window of the last ACK that made progress. The reorder window is
+still the ceiling on what is advertised — it is recomputed the moment the gap
+head moves — so this does not over-advertise; it only stops the window from
+moving *between* duplicate ACKs.
 
 ## Rebuilding
 

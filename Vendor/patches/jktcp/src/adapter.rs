@@ -137,6 +137,19 @@ struct ConnectionState {
     dup_acks: u32,
     /// When the last duplicate ACK went out, for pacing.
     last_dup_ack: Option<Instant>,
+    /// The window field carried by the last ACK that advanced `ack`.
+    ///
+    /// RFC 5681 calls an acknowledgement a *duplicate* only when "the
+    /// advertised window in the incoming acknowledgment equals the advertised
+    /// window in the last incoming acknowledgment". A window that shrinks with
+    /// every buffered segment therefore turns every duplicate ACK into a
+    /// window update the peer will not count, and no amount of them triggers a
+    /// fast retransmit. So the window is held steady across acknowledgements
+    /// that do not move `ack`; it is only recomputed when the gap head moves.
+    last_ack_window: u16,
+    /// `ack` as of the last acknowledgement we sent, to tell a duplicate
+    /// (same `ack`) from one that reports progress.
+    last_acked_seq: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -166,6 +179,20 @@ impl ConnectionState {
             reorder_window,
             dup_acks: 0,
             last_dup_ack: None,
+            last_ack_window: (reorder_window >> OUR_WSCALE).min(u16::MAX as usize) as u16,
+            // u32::MAX is unreachable as a real `ack`, so the first
+            // acknowledgement is always treated as progress.
+            last_acked_seq: u32::MAX,
+        }
+    }
+
+    /// The window field to advertise on the next ACK, held steady while `ack`
+    /// has not moved so consecutive duplicate ACKs compare equal (RFC 5681).
+    fn ack_window(&self) -> u16 {
+        if self.ack == self.last_acked_seq {
+            self.last_ack_window
+        } else {
+            self.window_field()
         }
     }
 
@@ -969,7 +996,7 @@ impl Adapter {
                                     "duplicate ACK for hp={}: ack={} window={} (hole {} bytes wide)",
                                     res.destination_port,
                                     state.ack,
-                                    state.window_field(),
+                                    state.ack_window(),
                                     res.sequence_number.wrapping_sub(state.ack)
                                 );
                                 ack_me = Some(res.destination_port);
@@ -1035,12 +1062,20 @@ impl Adapter {
     }
 
     async fn ack(&mut self, host_port: u16) -> Result<(), std::io::Error> {
-        let Some(state) = self.states.get(&host_port) else {
+        let Some(state) = self.states.get_mut(&host_port) else {
             return Err(std::io::Error::new(
                 ErrorKind::NotConnected,
                 "not connected",
             ));
         };
+        // A duplicate ACK (same `ack`) must repeat the window of the last ACK
+        // that made progress, or the peer will not count it as a duplicate and
+        // will never fast-retransmit. See `last_ack_window`.
+        let window = state.ack_window();
+        if state.ack != state.last_acked_seq {
+            state.last_acked_seq = state.ack;
+            state.last_ack_window = window;
+        }
         let tcp = TcpPacket::create(
             self.host_ip,
             self.peer_ip,
@@ -1052,12 +1087,12 @@ impl Adapter {
                 ack: true,
                 ..Default::default()
             },
-            state.window_field(),
+            window,
             &[],
             &[],
         );
-        let ip = self.ip_wrap(&tcp);
         let _ = state;
+        let ip = self.ip_wrap(&tcp);
         self.peer.write_all(&ip).await?;
         self.log_packet(&ip)
     }
@@ -1967,10 +2002,38 @@ mod tests {
             ((1 << 20) >> OUR_WSCALE) as u16,
             "an empty buffer advertises its full size"
         );
+    }
 
-        // Four segments land ahead of the gap head: the window has to shrink by
-        // exactly what they occupy.
-        for i in 1..=4u32 {
+    /// Duplicate ACKs must repeat the window of the last ACK that made
+    /// progress. RFC 5681 only counts an acknowledgement as a *duplicate* when
+    /// its advertised window "equals the advertised window in the last
+    /// incoming acknowledgment", so a window that shrinks with every buffered
+    /// segment makes the peer disregard all of them and wait out its
+    /// retransmit timer. That is the 2026-10 stall: ~1024 B per ~300 ms while
+    /// a multi-megabyte protective backup sat behind an open hole.
+    #[tokio::test]
+    async fn duplicate_acks_repeat_the_last_window() {
+        let (adapter_end, test_end) = tokio::io::duplex(1 << 16);
+        let (mut test_rx, mut test_tx) = tokio::io::split(test_end);
+        let mut adapter = Adapter::new(
+            Box::new(TestTransport(adapter_end)),
+            IpAddr::V6(HOST_IP),
+            IpAddr::V6(PEER_IP),
+        );
+        adapter.set_reorder_window(1 << 20);
+        let hp = handshake(&mut adapter, &mut test_rx, &mut test_tx).await;
+        let _ = drain_packets(&mut test_rx).await;
+
+        // Compute the advertised window once, with the buffer empty.
+        peer_data(&mut adapter, hp, PEER_ISN + 1, &vec![1u8; 16]).await;
+        let in_order = drain_packets(&mut test_rx).await;
+        assert!(!in_order.is_empty(), "in-order data is ACKed");
+        let window = in_order.last().unwrap().window_size;
+
+        // Every one of these lands ahead of the gap head and shrinks the free
+        // buffer. Each duplicate ACK must nonetheless carry the same window as
+        // the in-order ACK above, or the peer will not count it.
+        for i in 1..=6u32 {
             peer_data(
                 &mut adapter,
                 hp,
@@ -1979,12 +2042,16 @@ mod tests {
             )
             .await;
         }
-        let acks = drain_packets(&mut test_rx).await;
-        assert!(!acks.is_empty(), "out-of-order data is ACKed");
-        assert_eq!(
-            acks.last().unwrap().window_size,
-            (((1 << 20) - 4 * SEG_BYTES) >> OUR_WSCALE) as u16,
-            "the window must track the space actually left"
+        let dups = drain_packets(&mut test_rx).await;
+        assert!(
+            dups.len() >= 3,
+            "at least enough duplicate ACKs to trigger a fast retransmit: got {}",
+            dups.len()
+        );
+        assert!(
+            dups.iter().all(|a| a.window_size == window),
+            "duplicate ACKs must not change the advertised window: {:?}",
+            dups.iter().map(|a| a.window_size).collect::<Vec<_>>()
         );
     }
 }
