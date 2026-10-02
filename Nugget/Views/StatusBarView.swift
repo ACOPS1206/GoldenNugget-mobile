@@ -47,7 +47,7 @@ struct StatusBarView: View {
     }
 
     var body: some View {
-        GoldenPage(spacing: GoldenTheme.rowSpacing) {
+        List {
             enableSection
             if mechanism == .archive { archiveNote }
             textSection
@@ -63,12 +63,9 @@ struct StatusBarView: View {
             }
             deliveryCard
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("Status Bar")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
-        .toolbarBackground(GoldenTheme.backgroundSecondary, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
         .task {
             // A page-level reload, like PosterBoard's: the selection is owned by
             // the shell and was loaded there, but a preset imported from a file
@@ -80,12 +77,11 @@ struct StatusBarView: View {
     // MARK: - Enable
 
     private var enableSection: some View {
-        VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-            GoldenSectionHeader(text: "Status Bar Overrides")
+        Section {
             toggleRow("Enable Status Bar Modifications", isOn: $selection.enabled) {
                 edited()
             }
-            GoldenMutedNote(text: mechanism == .archive
+            NativeNote(mechanism == .archive
                 ? "This writes \(StatusBarMechanism.archive.restorePath) in \(StatusBarMechanism.archive.domain)."
                 : "This writes \(StatusBarMechanism.classic.restorePath) in \(StatusBarMechanism.classic.domain).")
         }
@@ -94,10 +90,12 @@ struct StatusBarView: View {
     /// The iOS 27 explanation, where the reference puts it: hidden everywhere
     /// else, and stated once rather than repeated on every row that disappears.
     private var archiveNote: some View {
-        GoldenMutedNote(text: "iOS 27 replaced the status bar override file, so only the carrier "
-            + "entry can be changed here: its name, its service badge and its signal bars. "
-            + "The badge and the bars apply to the carrier name, so set one first. The other "
-            + "options need iOS 26 or lower.")
+        Section {
+            NativeNote("iOS 27 replaced the status bar override file, so only the carrier "
+                + "entry can be changed here: its name, its service badge and its signal bars. "
+                + "The badge and the bars apply to the carrier name, so set one first. The other "
+                + "options need iOS 26 or lower.")
+        }
     }
 
     // MARK: - Text
@@ -108,8 +106,7 @@ struct StatusBarView: View {
     /// row so the gating sits next to the control it gates instead of in a second
     /// list of names that could drift out of step with the rows.
     private var textSection: some View {
-        VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-            GoldenSectionHeader(text: "Text")
+        Section("Text") {
             textFieldRow(.carrierName, "Carrier Name", survivesArchive: true)
             textFieldRow(.serviceBadge, "Service Badge", survivesArchive: true)
             textFieldRow(.secondaryCarrierName, "Secondary Carrier Name", survivesArchive: true)
@@ -125,8 +122,7 @@ struct StatusBarView: View {
 
     /// The numeric overrides, as steppers in the reference's own ranges.
     private var levelsSection: some View {
-        VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-            GoldenSectionHeader(text: "Levels")
+        Section("Levels") {
             levelRow(.signalBars, "Cellular Signal Bars", range: 0...5, survivesArchive: true)
             levelRow(.secondarySignalBars, "Secondary Cellular Signal Bars",
                      range: 0...5, survivesArchive: true)
@@ -148,8 +144,7 @@ struct StatusBarView: View {
     /// and collapsing them into one switch would have meant dropping a control
     /// the reference shows.  Neither survives the archive.
     private var rawSection: some View {
-        VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-            GoldenSectionHeader(text: "Raw Signal Strength")
+        Section("Raw Signal Strength") {
             toggleRow("Show Numeric Cellular Strength",
                       isOn: $selection.overrides.rawSignalShown) { edited() }
             toggleRow("Show Numeric Wi-Fi Strength",
@@ -169,8 +164,7 @@ struct StatusBarView: View {
     /// visibility: `set_item_override(item, True)` and "no override" are
     /// different on the device, and the reference only ever offers the second.
     private var itemsSection: some View {
-        VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-            GoldenSectionHeader(text: "Items")
+        Section("Items") {
             ForEach(Self.itemRows, id: \.0) { item, title in
                 // `itemHidden` already saves, so this row passes no `onChange`:
                 // two saves per flip would write the same bytes twice and make
@@ -223,10 +217,9 @@ struct StatusBarView: View {
     // MARK: - Extras
 
     private var extrasSection: some View {
-        VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-            GoldenSectionHeader(text: "Extras")
+        Section("Extras") {
             toggleRow("Silly Mode (every item on)", isOn: $selection.sillyMode) { edited() }
-            GoldenMutedNote(text: "Silly Mode forces every status-bar item on, over anything set "
+            NativeNote("Silly Mode forces every status-bar item on, over anything set "
                 + "above it. Turning it off restores exactly what you had.")
         }
     }
@@ -242,11 +235,10 @@ struct StatusBarView: View {
     /// device.  A page that says "0 overrides" and leaves the user guessing
     /// whether that clears or does nothing is the case worth a line of text.
     private var deliveryCard: some View {
-        GoldenCard {
+        Section {
             Text(selection.enabled ? "Ready to apply" : "Not applying")
-                .font(GoldenFont.cardTitle)
-                .foregroundColor(GoldenTheme.textPrimary)
-            GoldenMutedNote(text: selection.enabled
+                .font(.headline)
+            NativeNote(selection.enabled
                 ? "\(selection.overrides.activeCount) override(s) → "
                     + "\(mechanism == .archive ? "the iOS 27 archive" : "the classic struct"), "
                     + "written on the next Apply."
@@ -260,14 +252,12 @@ struct StatusBarView: View {
     /// card metrics around them.
     private func toggleRow(_ title: String, isOn: Binding<Bool>,
                            onChange: @escaping () -> Void = {}) -> some View {
-        HStack(spacing: 12) {
-            Text(title)
-                .font(GoldenFont.rowTitle)
-                .foregroundColor(GoldenTheme.textPrimary)
-            Spacer(minLength: 12)
-            GoldenSwitch(isOn: isOn) { _ in onChange() }
-        }
-        .goldenRowSurface()
+        Toggle(title, isOn: Binding(
+            get: { isOn.wrappedValue },
+            set: { value in
+                isOn.wrappedValue = value
+                onChange()
+            }))
     }
 
     /// A string override: the switch that says whether it is delivered, and the
@@ -276,42 +266,47 @@ struct StatusBarView: View {
     /// The field is disabled while the override is off rather than cleared, so
     /// switching off and on again does not lose what was typed — the reference
     /// keeps the value on the setter for the same reason and only drops the flag.
+    @ViewBuilder
     private func textFieldRow(_ key: StatusBarOverrides.FieldKey, _ title: String,
                               survivesArchive: Bool) -> some View {
         let field = selection.overrides.field(for: key)
-        if mechanism == .archive && !survivesArchive { return AnyView(EmptyView()) }
-        return AnyView(
+        if mechanism == .archive && !survivesArchive {
+            EmptyView()
+        } else {
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 12) {
-                    Text(title)
-                        .font(GoldenFont.rowTitle)
-                        .foregroundColor(GoldenTheme.textPrimary)
-                    Spacer(minLength: 12)
-                    GoldenSwitch(isOn: overrideSwitch(for: key)) { _ in edited() }
-                }
+                toggleRow(title, isOn: overrideSwitch(for: key)) { edited() }
                 TextField("(empty = clear)", text: textBinding(for: key))
-                    .goldenField()
+                    .textFieldStyle(.roundedBorder)
                     .disabled(!field.set)
             }
-            .goldenRowSurface())
+        }
     }
 
     /// A numeric override: the reference's own `min_val`/`max_val` as the
     /// stepper's range, so the value cannot be set to something the field cannot
     /// hold.
+    @ViewBuilder
     private func levelRow(_ key: StatusBarOverrides.FieldKey, _ title: String,
                           range: ClosedRange<Int>, survivesArchive: Bool) -> some View {
         let field = selection.overrides.field(for: key)
-        if mechanism == .archive && !survivesArchive { return AnyView(EmptyView()) }
-        return AnyView(
+        if mechanism == .archive && !survivesArchive {
+            EmptyView()
+        } else {
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 12) {
-                    Text(title)
-                        .font(GoldenFont.rowTitle)
-                        .foregroundColor(GoldenTheme.textPrimary)
-                    Spacer(minLength: 12)
-                    GoldenValueLabel(text: field.set ? "\(field.value)" : "Default")
-                    GoldenSwitch(isOn: overrideSwitch(for: key)) { _ in edited() }
+                Toggle(isOn: Binding(
+                    get: { selection.overrides.field(for: key).set },
+                    set: { on in
+                        var updated = selection.overrides.field(for: key)
+                        updated.set = on
+                        selection.overrides.set(updated, for: key)
+                        edited()
+                    })) {
+                    HStack {
+                        Text(title)
+                        Spacer()
+                        Text(field.set ? "\(field.value)" : "Default")
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Stepper(value: levelBinding(for: key), in: range) {
                     EmptyView()
@@ -319,7 +314,7 @@ struct StatusBarView: View {
                 .labelsHidden()
                 .disabled(!field.set)
             }
-            .goldenRowSurface())
+        }
     }
 
     /// The override switch for one field: on means the value is delivered.

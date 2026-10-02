@@ -33,37 +33,36 @@ struct DaemonsView: View {
     @State private var foldedByHand: Set<DaemonSection> = []
 
     var body: some View {
-        GoldenPage(spacing: GoldenTheme.rowSpacing) {
-            headerCard
-            coverageCard
+        List {
+            headerSection
+            coverageSection
             ForEach(DaemonSection.allCases) { section in
                 let groups = visibleGroups(in: section)
                 if !groups.isEmpty {
-                    // Same sibling shape as the tweaks page — see
-                    // `GoldenCollapsibleHeader`.
+                    // Same disclosure behaviour as the tweaks page: an explicit
+                    // chevron in the header, rows built only while open.
                     let collapsed = collapsedBinding(for: section, groups: groups)
-                    GoldenCollapsibleHeader(
-                        title: "\(section.rawValue) (\(onCount(in: groups))/\(groups.count))",
-                        isCollapsed: collapsed
-                    )
-                    if !collapsed.wrappedValue {
-                        ForEach(groups, id: \.name) { group in
-                            groupRow(group)
+                    Section {
+                        if !collapsed.wrappedValue {
+                            ForEach(groups, id: \.name) { group in
+                                groupRow(group)
+                            }
                         }
+                    } header: {
+                        NativeCollapsibleHeader(
+                            title: "\(section.rawValue) (\(onCount(in: groups))/\(groups.count))",
+                            collapsed: collapsed)
                     }
                 }
             }
-            screenTimeCard
+            screenTimeSection
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("Daemons")
         // Compact widths only -- on a tablet the split view draws its own sidebar
         // toggle, and a second button beside it is the duplicate-controls mess.
         .goldenSidebarButton()
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
-        .toolbarBackground(GoldenTheme.backgroundSecondary, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
         .task {
             // Upstream's master switch reads the stored `enabled` flag. There is
             // no separate flag here, so the page reports the state that actually
@@ -81,12 +80,11 @@ struct DaemonsView: View {
     /// The device line and the count, in the Tweaks page's shape. The counts
     /// differ deliberately: this page has no "applicable" filter, so a group that
     /// is missing is missing for good, not because the device cannot run it.
-    private var coverageCard: some View {
-        GoldenCard {
+    private var coverageSection: some View {
+        Section {
             Text(identity.describe)
-                .font(GoldenFont.cardTitle)
-                .foregroundColor(GoldenTheme.textPrimary)
-            GoldenMutedNote(text: "\(onCount(in: DaemonGroups.all.filter { $0.showsSwitch })) "
+                .font(.headline)
+            NativeNote("\(onCount(in: DaemonGroups.all.filter { $0.showsSwitch })) "
                 + "of \(DaemonGroups.all.filter { $0.showsSwitch }.count) daemon group(s) on. "
                 + "The groups upstream marks interface-visible but gives no switch are in the "
                 + "Recommended set only.")
@@ -110,57 +108,52 @@ struct DaemonsView: View {
             })
     }
 
-    private var headerCard: some View {
-        GoldenCard {
-            VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-                masterRow
-                recommendedRow
-                GoldenMutedNote(text: "Writes "
-                    + "/var/db/com.apple.xpc.launchd/disabled.plist. Disabling a "
-                    + "daemon stops its service. Only the "
-                    + "\(DaemonGroups.allowedKeys.count) labels shown here can "
-                    + "ever reach the file.")
-            }
+    private var headerSection: some View {
+        Section {
+            masterRow
+            recommendedRow
+            NativeNote("Writes "
+                + "/var/db/com.apple.xpc.launchd/disabled.plist. Disabling a "
+                + "daemon stops its service. Only the "
+                + "\(DaemonGroups.allowedKeys.count) labels shown here can "
+                + "ever reach the file.")
         }
     }
 
     private var masterRow: some View {
-        GoldenActionRow(title: "Enable Daemon Modifications",
-                        systemImage: "switch.2",
-                        tone: masterEnabled ? .primary : .secondary) {
-            masterEnabled.toggle()
-            // The reference's master switch is a gate, not a group: flipping it
-            // off leaves the per-group choices alone and only stops the write.
-            if !masterEnabled { setAllRecommended(false) }
-        }
+        Toggle("Enable Daemon Modifications", isOn: Binding(
+            get: { masterEnabled },
+            set: { on in
+                masterEnabled = on
+                // The reference's master switch is a gate, not a group: flipping
+                // it off leaves the per-group choices alone and only stops the
+                // write.
+                if !on { setAllRecommended(false) }
+            }))
     }
 
     private var recommendedRow: some View {
-        GoldenActionRow(title: "Recommended (analytics, tracking & logging)",
-                        systemImage: "wand.and.stars",
-                        tone: isAllRecommendedOn ? .primary : .secondary) {
+        Button {
             let turnOn = !isAllRecommendedOn
             for group in DaemonGroups.recommended {
                 setGroup(group, on: turnOn)
             }
+        } label: {
+            Label("Recommended (analytics, tracking & logging)",
+                  systemImage: "wand.and.stars")
         }
     }
 
-    private var screenTimeCard: some View {
-        GoldenSection(
-            title: "Other",
-            content: AnyView(
-                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-                    let spec = TweakCatalog.screenTimeSpec
-                    TweakRow(spec: spec, selection: $selection,
-                             isOn: { isOn(spec) }, setOn: { setOn($0, for: spec) })
-                    GoldenMutedNote(text: "Writes a 0-byte file over "
-                        + "\(DaemonGroups.screenTime.path). Upstream models this as "
-                        + "a NullifyFileTweak: it removes a plist rather than "
-                        + "writing one.")
-                }
-            )
-        )
+    private var screenTimeSection: some View {
+        Section("Other") {
+            let spec = TweakCatalog.screenTimeSpec
+            TweakRow(spec: spec, selection: $selection,
+                     isOn: { isOn(spec) }, setOn: { setOn($0, for: spec) })
+            NativeNote("Writes a 0-byte file over "
+                + "\(DaemonGroups.screenTime.path). Upstream models this as "
+                + "a NullifyFileTweak: it removes a plist rather than "
+                + "writing one.")
+        }
     }
 
     // MARK: - Rows
@@ -177,8 +170,7 @@ struct DaemonsView: View {
             // A group with no spec would be a switch that does nothing. Say so
             // rather than rendering a row that cannot be tapped.
             Text(group.title)
-                .font(GoldenFont.rowTitle)
-                .foregroundColor(GoldenTheme.textDisabled)
+                .foregroundStyle(.tertiary)
         }
     }
 

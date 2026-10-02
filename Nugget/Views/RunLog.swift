@@ -97,9 +97,24 @@ struct RunLogCard: View {
 
     var body: some View {
         if !log.lines.isEmpty {
-            GoldenSection(title: "Log",
-                          content: AnyView(GoldenLogView(lines: log.lines,
-                                                         firstId: log.firstLineId)))
+            Section("Log") {
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    ForEach(rows, id: \.id) { row in
+                        Text(row.text)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
         }
+    }
+
+    /// Row identity is `firstLineId + offset`, the stable key the store exposes,
+    /// rather than the array offset — see `RunLog.firstLineId`.
+    private var rows: [(id: Int, text: String)] {
+        log.lines.enumerated().map { (log.firstLineId + $0.offset, $0.element) }
     }
 }

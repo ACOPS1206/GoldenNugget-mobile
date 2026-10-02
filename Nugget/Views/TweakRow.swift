@@ -47,39 +47,29 @@ struct TweakRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        Group {
             switch spec.kind {
             case .toggle:
-                HStack(spacing: 12) {
-                    Text(spec.title)
-                        .font(GoldenFont.rowTitle)
-                        .foregroundColor(GoldenTheme.textPrimary)
-                    Spacer(minLength: 12)
-                    GoldenSwitch(isOn: toggleBinding)
+                Toggle(isOn: toggleBinding) {
+                    TweakRowLabel(title: spec.title, id: spec.id, detail: spec.detail)
                 }
             case .text:
-                Text(spec.title)
-                    .font(GoldenFont.rowTitle)
-                    .foregroundColor(GoldenTheme.textPrimary)
-                TextField("(empty = clear)", text: textBinding)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .goldenField()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(spec.title)
+                    TextField("(empty = clear)", text: textBinding)
+                        .textFieldStyle(.roundedBorder)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    TweakRowCaption(id: spec.id, detail: spec.detail)
+                }
             case .number:
-                Text(spec.title)
-                    .font(GoldenFont.rowTitle)
-                    .foregroundColor(GoldenTheme.textPrimary)
-                TweakNumberField(spec: spec, selection: $selection)
-                GoldenMutedNote(text: spec.numberHint)
-            }
-            Text(spec.id)
-                .font(GoldenFont.caption)
-                .foregroundColor(GoldenTheme.textDisabled)
-            if let detail = spec.detail {
-                GoldenMutedNote(text: detail)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(spec.title)
+                    TweakNumberField(spec: spec, selection: $selection)
+                    TweakRowCaption(id: spec.id, detail: spec.numberHint)
+                }
             }
         }
-        .goldenRowSurface()
     }
 
     private var toggleBinding: Binding<Bool> {
@@ -131,15 +121,53 @@ struct TweakNumberField: View {
             // `.decimalPad` has no Return key: on a phone the keyboard would
             // be impossible to dismiss.
             .keyboardType(.decimalPad)
-            .goldenKeyboardDone()
+            .nativeKeyboardDone()
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
-            .goldenField()
+            .textFieldStyle(.roundedBorder)
             .onChange(of: draft) { newValue in
                 if let value = spec.numberValue(from: newValue) {
                     selection.setValue(value, for: spec)
                 }
             }
             .onSubmit { draft = selection.value(for: spec).display }
+    }
+}
+
+/// A toggle row's label: the title, its registry id in the caption style, and
+/// the registry's description when it has one.
+private struct TweakRowLabel: View {
+    let title: String
+    let id: String
+    let detail: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+            Text(id)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            if let detail {
+                NativeNote(detail)
+            }
+        }
+    }
+}
+
+/// The caption block under a field row: the registry id, then the hint or
+/// description.
+private struct TweakRowCaption: View {
+    let id: String
+    let detail: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(id)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            if let detail {
+                NativeNote(detail)
+            }
+        }
     }
 }

@@ -21,21 +21,24 @@ struct PasscodeThemeView: View {
     @State private var showImporter = false
 
     var body: some View {
-        GoldenPage(spacing: GoldenTheme.rowSpacing) {
-            deviceCard
-            importCard
-            if let theme { previewCard(theme) }
-            optionsCard
-            applyCard
-            if let status { GoldenStatusText(text: status, tone: tone) }
+        List {
+            deviceSection
+            importSection
+            if let theme { previewSection(theme) }
+            optionsSection
+            applySection
+            if let status {
+                Section {
+                    Text(status)
+                        .foregroundStyle(tone.nativeColor)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
             if !log.isEmpty { runLog }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("Passcode")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
-        .toolbarBackground(GoldenTheme.backgroundSecondary, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
         .task { identity = await DeviceIdentity.read() }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.data]) { result in
             importTheme(result)
@@ -53,47 +56,42 @@ struct PasscodeThemeView: View {
 
     // MARK: - Cards
 
-    private var deviceCard: some View {
-        GoldenCard {
+    private var deviceSection: some View {
+        Section {
             Text(identity.describe)
-                .font(GoldenFont.cardTitle)
-                .foregroundColor(GoldenTheme.textPrimary)
-            GoldenMutedNote(text: "The keypad's artwork is written into "
+                .font(.headline)
+            NativeNote("The keypad's artwork is written into "
                 + "/var/mobile/Library/Caches/TelephonyUI-…, which is a cache rather than a "
                 + "preference, so a backup cannot carry it. Lock the device to see the result.")
-            if !blocker.isEmpty { GoldenMutedNote(text: blocker) }
+            if !blocker.isEmpty { NativeSafetyNote(blocker) }
         }
     }
 
-    private var importCard: some View {
-        GoldenCard {
-            GoldenActionRow(title: theme == nil ? "Import a .passthm" : "Import another",
-                            systemImage: "square.and.arrow.down",
-                            tone: .primary) {
+    private var importSection: some View {
+        Section {
+            Button {
                 showImporter = true
+            } label: {
+                Label(theme == nil ? "Import a .passthm" : "Import another",
+                      systemImage: "square.and.arrow.down")
             }
             if let theme {
-                GoldenMutedNote(text: "\(theme.name) — \(theme.fileCount) file(s), "
+                NativeNote("\(theme.name) — \(theme.fileCount) file(s), "
                     + "\(theme.keysPreview.count) key(s) found.")
             }
         }
     }
 
-    private func previewCard(_ theme: PasscodeThemeInfo) -> some View {
-        GoldenSection(
-            title: "Keys",
-            content: AnyView(
-                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-                    ForEach(0..<4, id: \.self) { row in
-                        HStack(spacing: 8) {
-                            ForEach(0..<3, id: \.self) { column in
-                                keySlot(theme, row: row, column: column)
-                            }
-                        }
+    private func previewSection(_ theme: PasscodeThemeInfo) -> some View {
+        Section("Keys") {
+            ForEach(0..<4, id: \.self) { row in
+                HStack(spacing: 8) {
+                    ForEach(0..<3, id: \.self) { column in
+                        keySlot(theme, row: row, column: column)
                     }
                 }
-            )
-        )
+            }
+        }
     }
 
     private func keySlot(_ theme: PasscodeThemeInfo, row: Int, column: Int) -> some View {
@@ -108,21 +106,21 @@ struct PasscodeThemeView: View {
                     .frame(height: 44)
             } else {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(GoldenTheme.backgroundTertiary)
+                    .fill(.quaternary)
                     .frame(height: 44)
             }
             Text(digit ?? "")
-                .font(GoldenFont.value)
-                .foregroundColor(GoldenTheme.textDisabled)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity)
     }
 
-    private var optionsCard: some View {
-        GoldenCard {
+    private var optionsSection: some View {
+        Section {
             optionRow(title: "Language", selection: $language, choices: PasscodeLanguageTarget.allCases)
             optionRow(title: "Weight", selection: $weight, choices: PasscodeBoldTarget.allCases)
-            GoldenMutedNote(text: "The device asks for one file per locale, weight and key "
+            NativeNote("The device asks for one file per locale, weight and key "
                 + "subtext. \"All languages\" writes every variant — it is the only setting that "
                 + "works on a device whose language you do not know — while the device's own "
                 + "locale and the fallback are always included either way.")
@@ -139,41 +137,36 @@ struct PasscodeThemeView: View {
         selection: Binding<Option>,
         choices: [Option]
     ) -> some View where Option.RawValue == String, Option.ID == String {
-        HStack(spacing: 12) {
-            Text(title)
-                .font(GoldenFont.rowTitle)
-                .foregroundColor(GoldenTheme.textPrimary)
-            Spacer(minLength: 12)
-            Picker(title, selection: selection) {
-                ForEach(choices) { option in
-                    Text(option.id).tag(option)
-                }
+        Picker(title, selection: selection) {
+            ForEach(choices) { option in
+                Text(option.id).tag(option)
             }
-            .labelsHidden()
-            .tint(GoldenTheme.accent)
         }
-        .goldenRowSurface()
     }
 
-    private var applyCard: some View {
-        GoldenCard {
-            GoldenActionRow(
-                title: running ? "Applying…" : "Apply theme",
-                value: running ? "…" : nil,
-                systemImage: "lock.rectangle.stack.fill",
-                tone: running || theme == nil || !blocker.isEmpty ? .disabled : .primary
-            ) { apply() }
+    private var applySection: some View {
+        Section {
+            Button {
+                apply()
+            } label: {
+                HStack {
+                    Label(running ? "Applying…" : "Apply theme",
+                          systemImage: "lock.rectangle.stack.fill")
+                    Spacer()
+                    if running { ProgressView().controlSize(.small) }
+                }
+            }
             .disabled(running || theme == nil || !blocker.isEmpty)
-            if !blocker.isEmpty { GoldenMutedNote(text: blocker) }
+            if !blocker.isEmpty { NativeSafetyNote(blocker) }
         }
     }
 
     private var runLog: some View {
-        GoldenCard {
+        Section {
             ForEach(Array(log.enumerated()), id: \.offset) { _, line in
                 Text(line)
-                    .font(GoldenFont.value)
-                    .foregroundColor(GoldenTheme.textSecondary)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

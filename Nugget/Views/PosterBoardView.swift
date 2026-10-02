@@ -58,29 +58,32 @@ struct PosterBoardView: View {
     @State private var applyMode: PosterBoardApplyMode = .airlift
 
     var body: some View {
-        GoldenPage(spacing: GoldenTheme.rowSpacing) {
-            deviceCard
-            applyModeCard
+        List {
+            deviceSection
+            applyModeSection
             // AirLift writes the descriptors into the container and never looks
             // at the store's sqlite, so on that mode the whole card is about a
             // stage the run will not perform. Leaving it up would be offering a
             // fetch that the apply below ignores.
-            if applyMode != .airlift { databaseCard }
+            if applyMode != .airlift { databaseSection }
             packsSection
             videoSection
             resetSection
-            if applyMode == .airlift { airliftApplyCard }
-            applyCard
+            if applyMode == .airlift { airliftApplySection }
+            applySection
             if let pickError { errorSection(pickError) }
-            if !statusText.isEmpty { GoldenStatusText(text: statusText, tone: statusTone) }
+            if !statusText.isEmpty {
+                Section {
+                    Text(statusText)
+                        .foregroundStyle(statusTone.nativeColor)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
             RunLogCard()
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("PosterBoard")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
-        .toolbarBackground(GoldenTheme.backgroundSecondary, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
         // Loading the pack list and the database state is a directory walk and a
         // file stat, so it happens here and not in `body`. `loadFromDisk` is idempotent
         // and does not touch the options: `RootView` already ran it at launch, and this
@@ -108,12 +111,11 @@ struct PosterBoardView: View {
 
     // MARK: - Device and database
 
-    private var deviceCard: some View {
-        GoldenCard {
+    private var deviceSection: some View {
+        Section {
             Text(identity.describe)
-                .font(GoldenFont.cardTitle)
-                .foregroundColor(GoldenTheme.textPrimary)
-            GoldenMutedNote(text: "Wallpapers are delivered as files into this app's own backup "
+                .font(.headline)
+            NativeNote("Wallpapers are delivered as files into this app's own backup "
                 + "of the device, in the \(PosterBoard.domain) domain — the same channel the "
                 + "tweaks use. Nothing is written to the device until Apply.")
         }
@@ -128,38 +130,28 @@ struct PosterBoardView: View {
     /// The consequence of picking AirLift is spelled out under it, because
     /// "AirLift" alone says nothing about the version floor or the reboot it
     /// saves.
-    private var applyModeCard: some View {
-        GoldenCard {
-            HStack(spacing: 12) {
-                Text("How to apply")
-                    .font(GoldenFont.rowTitle)
-                    .foregroundColor(GoldenTheme.textPrimary)
-                Spacer(minLength: 12)
-                Picker("", selection: $applyMode) {
-                    ForEach(PosterBoardApplyMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .tint(GoldenTheme.accent)
-                .onChange(of: applyMode) { _, mode in
-                    PosterBoardApplyModeSettings.current = mode
+    private var applyModeSection: some View {
+        Section {
+            Picker("How to apply", selection: $applyMode) {
+                ForEach(PosterBoardApplyMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
                 }
             }
-            .goldenRowSurface()
-            GoldenMutedNote(text: applyMode.summary)
+            .onChange(of: applyMode) { _, mode in
+                PosterBoardApplyModeSettings.current = mode
+            }
+            NativeNote(applyMode.summary)
             if applyMode == .airlift, !airliftBlocker.isEmpty {
-                GoldenStatusText(text: airliftBlocker, tone: .warning)
+                NativeSafetyNote(airliftBlocker)
             }
             if applyMode == .airlift {
-                GoldenMutedNote(text: "The store database is not part of this mode, so its card "
+                NativeNote("The store database is not part of this mode, so its card "
                     + "is hidden: the injection writes the descriptors straight into the "
                     + "container and the rows are not touched. Automatic refresh is ignored too.")
             }
             if !selection.resetModes.isEmpty, !applyMode.supportsReset {
-                GoldenStatusText(text: "The reset you have selected cannot be done over AirLift. "
-                    + "Switch back to Protective backup to keep it.", tone: .warning)
+                NativeSafetyNote("The reset you have selected cannot be done over AirLift. "
+                    + "Switch back to Protective backup to keep it.")
             }
         }
     }
@@ -177,30 +169,21 @@ struct PosterBoardView: View {
         return ""
     }
 
-    private var databaseCard: some View {
-        GoldenSection(
-            title: "Store database",
-            content: AnyView(
-                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-                    HStack(spacing: 12) {
-                        Text("Automatic refresh")
-                            .font(GoldenFont.rowTitle)
-                            .foregroundColor(GoldenTheme.textPrimary)
-                        Spacer(minLength: 12)
-                        GoldenSwitch(isOn: $selection.autoRefresh)
-                    }
-                    .goldenRowSurface()
-                    GoldenActionRow(title: "Fetch database from device",
-                                    value: running ? "…" : nil,
-                                    systemImage: "arrow.down.circle",
-                                    tone: running ? .disabled : .primary) {
-                        fetchDatabase()
-                    }
-                    .disabled(running)
-                    GoldenMutedNote(text: databaseNote)
+    private var databaseSection: some View {
+        Section("Store database") {
+            Toggle("Automatic refresh", isOn: $selection.autoRefresh)
+            Button {
+                fetchDatabase()
+            } label: {
+                HStack {
+                    Label("Fetch database from device", systemImage: "arrow.down.circle")
+                    Spacer()
+                    if running { ProgressView().controlSize(.small) }
                 }
-            )
-        )
+            }
+            .disabled(running)
+            NativeNote(databaseNote)
+        }
     }
 
     private var databaseNote: String {
@@ -222,39 +205,34 @@ struct PosterBoardView: View {
     // MARK: - Packs
 
     private var packsSection: some View {
-        GoldenSection(
-            title: "Wallpaper packs (\(selection.tendies.count))",
-            content: AnyView(
-                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-                    GoldenActionRow(title: "Import .tendies pack",
-                                    systemImage: "plus.circle",
-                                    tone: running ? .disabled : .primary) {
-                        showPackImporter = true
-                    }
-                    .disabled(running)
-                    if selection.tendies.isEmpty {
-                        GoldenMutedNote(text: "No packs imported yet. A `.tendies` file is a ZIP "
-                            + "holding a wallpaper's descriptor; import one from a wallpaper "
-                            + "collection (Cowabunga and CaPlayground publish them), then Apply.")
-                    } else {
-                        ForEach(selection.tendies) { pack in
-                            packRow(pack)
-                        }
-                        GoldenActionRow(title: "Remove all packs",
-                                            systemImage: "trash",
-                                            tone: running ? .disabled : .error) {
-                            selection.tendies.forEach(PosterBoardImports.remove)
-                            selection.loadFromDisk()
-                        }
-                        .disabled(running)
-                        GoldenMutedNote(text: "Upstream caps a selection at "
-                            + "\(PosterBoardImports.descriptorLimit) descriptors. Each pack is "
-                            + "copied into this app, so removing one here removes the copy — "
-                            + "the file you imported is untouched.")
-                    }
+        Section("Wallpaper packs (\(selection.tendies.count))") {
+            Button {
+                showPackImporter = true
+            } label: {
+                Label("Import .tendies pack", systemImage: "plus.circle")
+            }
+            .disabled(running)
+            if selection.tendies.isEmpty {
+                NativeNote("No packs imported yet. A `.tendies` file is a ZIP "
+                    + "holding a wallpaper's descriptor; import one from a wallpaper "
+                    + "collection (Cowabunga and CaPlayground publish them), then Apply.")
+            } else {
+                ForEach(selection.tendies) { pack in
+                    packRow(pack)
                 }
-            )
-        )
+                Button(role: .destructive) {
+                    selection.tendies.forEach(PosterBoardImports.remove)
+                    selection.loadFromDisk()
+                } label: {
+                    Label("Remove all packs", systemImage: "trash")
+                }
+                .disabled(running)
+                NativeNote("Upstream caps a selection at "
+                    + "\(PosterBoardImports.descriptorLimit) descriptors. Each pack is "
+                    + "copied into this app, so removing one here removes the copy — "
+                    + "the file you imported is untouched.")
+            }
+        }
     }
 
     private func packRow(_ pack: PosterBoardTendie) -> some View {
@@ -262,25 +240,22 @@ struct PosterBoardView: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(pack.name)
-                        .font(GoldenFont.rowTitle)
-                        .foregroundColor(GoldenTheme.textPrimary)
+                        .font(.body)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Text(pack.summary)
-                        .font(GoldenFont.caption)
-                        .foregroundColor(pack.isUnsafeContainer ? GoldenTheme.warning
-                                                                : GoldenTheme.textSecondary)
+                        .font(.caption)
+                        .foregroundStyle(pack.isUnsafeContainer ? Color.orange : Color.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .layoutPriority(1)
                 Spacer(minLength: 8)
-                Button {
+                Button(role: .destructive) {
                     PosterBoardImports.remove(pack)
                     selection.loadFromDisk()
                 } label: {
                     Image(systemName: "trash")
                         .font(.system(size: 14))
-                        .foregroundColor(running ? GoldenTheme.textDisabled : GoldenTheme.error)
                 }
                 .buttonStyle(.plain)
                 .disabled(running)
@@ -305,87 +280,68 @@ struct PosterBoardView: View {
                         Text(type.label).tag(type)
                     }
                 }
-                .pickerStyle(.menu)
-                .tint(GoldenTheme.accent)
                 .disabled(running)
             }
         }
-        .goldenRowSurface()
     }
 
     // MARK: - Video
 
     private var videoSection: some View {
-        GoldenSection(
-            title: "Video wallpaper",
-            content: AnyView(
-                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-                    GoldenActionRow(title: "Choose video",
-                                    value: selection.video?.lastPathComponent,
-                                    systemImage: "film",
-                                    tone: running ? .disabled : .primary) {
-                        showVideoImporter = true
+        Section("Video wallpaper") {
+            Button {
+                showVideoImporter = true
+            } label: {
+                HStack {
+                    Label("Choose video", systemImage: "film")
+                    if let video = selection.video?.lastPathComponent {
+                        Spacer()
+                        Text(video).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .disabled(running)
-                    goldenToggle("Loop (CoreAnimation frame list)", isOn: $selection.loop)
-                    if selection.loop {
-                        goldenToggle("Reverse on loop", isOn: $selection.reverse)
-                        goldenToggle("Cover the clock", isOn: $selection.foreground)
-                        calculationModeRow
-                    } else {
-                        GoldenActionRow(title: "Choose freeze frame (.heic)",
-                                        value: selection.thumbnail?.lastPathComponent,
-                                        systemImage: "photo",
-                                        tone: running ? .disabled : .primary) {
-                            showThumbnailImporter = true
-                        }
-                        .disabled(running)
-                    }
-                    if selection.video != nil || selection.thumbnail != nil {
-                        GoldenActionRow(title: "Clear the video choice",
-                                        systemImage: "xmark.circle",
-                                        tone: .error) {
-                            PosterBoard.clearFiles(in: PosterBoard.videoDirectory)
-                            PosterBoard.clearFiles(in: PosterBoard.thumbnailDirectory)
-                            selection.video = nil
-                            selection.thumbnail = nil
-                        }
-                    }
-                    GoldenMutedNote(text: videoNote)
                 }
-            )
-        )
-    }
-
-    private func goldenToggle(_ title: String, isOn: Binding<Bool>) -> some View {
-        HStack(spacing: 12) {
-            Text(title)
-                .font(GoldenFont.rowTitle)
-                .foregroundColor(GoldenTheme.textPrimary)
-            Spacer(minLength: 12)
-            GoldenSwitch(isOn: isOn)
+            }
+            .disabled(running)
+            Toggle("Loop (CoreAnimation frame list)", isOn: $selection.loop)
+            if selection.loop {
+                Toggle("Reverse on loop", isOn: $selection.reverse)
+                Toggle("Cover the clock", isOn: $selection.foreground)
+                calculationModeRow
+            } else {
+                Button {
+                    showThumbnailImporter = true
+                } label: {
+                    HStack {
+                        Label("Choose freeze frame (.heic)", systemImage: "photo")
+                        if let thumbnail = selection.thumbnail?.lastPathComponent {
+                            Spacer()
+                            Text(thumbnail).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                }
+                .disabled(running)
+            }
+            if selection.video != nil || selection.thumbnail != nil {
+                Button(role: .destructive) {
+                    PosterBoard.clearFiles(in: PosterBoard.videoDirectory)
+                    PosterBoard.clearFiles(in: PosterBoard.thumbnailDirectory)
+                    selection.video = nil
+                    selection.thumbnail = nil
+                } label: {
+                    Label("Clear the video choice", systemImage: "xmark.circle")
+                }
+            }
+            NativeNote(videoNote)
         }
-        .goldenRowSurface()
     }
 
     /// Four options in one row is 288 pt of text at the narrowest window width,
     /// so this is a menu: it keeps its value on screen instead of wrapping.
     private var calculationModeRow: some View {
-        HStack(spacing: 12) {
-            Text("Calculation mode")
-                .font(GoldenFont.rowTitle)
-                .foregroundColor(GoldenTheme.textPrimary)
-            Spacer(minLength: 12)
-            Picker("", selection: $selection.calculationMode) {
-                ForEach(PosterBoardCalculationMode.allCases) { mode in
-                    Text(mode.title).tag(mode.rawValue)
-                }
+        Picker("Calculation mode", selection: $selection.calculationMode) {
+            ForEach(PosterBoardCalculationMode.allCases) { mode in
+                Text(mode.title).tag(mode.rawValue)
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .tint(GoldenTheme.accent)
         }
-        .goldenRowSurface()
     }
 
     private var videoNote: String {
@@ -413,19 +369,15 @@ struct PosterBoardView: View {
     // MARK: - Reset
 
     private var resetSection: some View {
-        GoldenSection(
-            title: "Reset",
-            content: AnyView(
-                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-                    goldenToggle("Full reset — wipe everything and start empty",
-                                 isOn: $selection.fullReset)
-                    ForEach(PosterBoardResetMode.allCases) { mode in
-                        goldenToggle(mode.rawValue, isOn: binding(for: mode))
-                    }
-                    GoldenSafetyNote(text: resetWarning)
-                }
-            )
-        )
+        Section("Reset") {
+            Toggle("Full reset — wipe everything and start empty", isOn: $selection.fullReset)
+            ForEach(PosterBoardResetMode.allCases) { mode in
+                Toggle(mode.rawValue, isOn: binding(for: mode))
+            }
+            if !resetWarning.isEmpty {
+                NativeSafetyNote(resetWarning)
+            }
+        }
     }
 
     private func binding(for mode: PosterBoardResetMode) -> Binding<Bool> {
@@ -474,25 +426,28 @@ struct PosterBoardView: View {
     /// Reached through the home page, a wallpapers-only run looks identical to
     /// one that also takes a backup — the page says otherwise, but the button
     /// to believe is the one that was pressed.
-    private var airliftApplyCard: some View {
-        GoldenCard {
+    private var airliftApplySection: some View {
+        Section {
             if selection.isActive {
-                GoldenStatusText(text: "Ready: \(selection.describe)", tone: .accent)
+                Text("Ready: \(selection.describe)").foregroundStyle(.tint)
             } else {
-                GoldenMutedNote(text: "No packs imported yet — import a `.tendies` above to "
+                NativeNote("No packs imported yet — import a `.tendies` above to "
                     + "apply it this way.")
             }
-            GoldenActionRow(title: "Apply via AirLift",
-                            value: running ? "…" : nil,
-                            systemImage: "bolt.horizontal.circle",
-                            tone: airliftButtonTone) {
+            Button {
                 applyViaAirlift()
+            } label: {
+                HStack {
+                    Label("Apply via AirLift", systemImage: "bolt.horizontal.circle")
+                    Spacer()
+                    if running { ProgressView().controlSize(.small) }
+                }
             }
             .disabled(!airliftAvailable)
             if !airliftBlocker.isEmpty {
-                GoldenStatusText(text: airliftBlocker, tone: .warning)
+                NativeSafetyNote(airliftBlocker)
             }
-            GoldenMutedNote(text: "Writes the descriptors into \(PosterBoard.domain) over a "
+            NativeNote("Writes the descriptors into \(PosterBoard.domain) over a "
                 + "tunnel and resprings, so it is live in seconds. No backup is taken, because "
                 + "nothing is delivered back to the device — but for the same reason it applies "
                 + "**only** the packs: tweaks need the backup, so they still go through the "
@@ -506,35 +461,31 @@ struct PosterBoardView: View {
         !running && airliftBlocker.isEmpty && selection.isActive
     }
 
-    private var airliftButtonTone: GoldenTone {
-        airliftAvailable ? .accent : .disabled
-    }
-
-    private var applyCard: some View {
-        GoldenCard {
+    private var applySection: some View {
+        Section {
             if applyMode == .airlift {
                 // The home page's Apply is still a backup-mode run even when this
                 // page is set to AirLift: it delivers the tweaks, and the
                 // wallpapers ride that same backup. Saying "fetches the database
                 // first" here would be true of that run, but the database card
                 // above is hidden, so it would read as a reference to nothing.
-                GoldenMutedNote(text: "The **Apply** button on the home page delivers the "
+                NativeNote("The **Apply** button on the home page delivers the "
                     + "tweaks, and the wallpapers you picked go with them in one protective "
                     + "backup — it is a backup-mode run regardless of this page's setting. To "
                     + "apply the packs alone, with no backup, use **Apply via AirLift** above.")
             } else if selection.isActive {
-                GoldenStatusText(text: "Ready: \(selection.describe)", tone: .accent)
-                GoldenMutedNote(text: "Delivered by the **Apply** button on the home page, "
+                Text("Ready: \(selection.describe)").foregroundStyle(.tint)
+                NativeNote("Delivered by the **Apply** button on the home page, "
                     + "together with the tweaks. It fetches the store's database from the "
                     + "device first, so that run takes one extra exchange. Reboot the device "
                     + "afterwards — the store is read at boot.")
             } else {
-                GoldenMutedNote(text: "Nothing selected yet. Whatever is picked here is "
+                NativeNote("Nothing selected yet. Whatever is picked here is "
                     + "delivered by the **Apply** button on the home page, together with the "
                     + "tweaks — one backup, one restore.")
             }
             if applyMode != .airlift {
-                GoldenMutedNote(text: "The database itself can be fetched on its own, from the "
+                NativeNote("The database itself can be fetched on its own, from the "
                     + "card above — it is the one stage that can fail on its own terms (the "
                     + "device decides whether it will upload the container), so being able to "
                     + "run it, watch it and retry is worth its own button.")
@@ -545,7 +496,9 @@ struct PosterBoardView: View {
     private var statusText: String { status ?? "" }
 
     private func errorSection(_ message: String) -> some View {
-        GoldenSection(title: "Import failed", content: AnyView(GoldenMutedNote(text: message)))
+        Section("Import failed") {
+            NativeSafetyNote(message)
+        }
     }
 
     // MARK: - Behaviour

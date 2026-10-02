@@ -111,8 +111,8 @@ struct FilesView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ProgressView(value: pullProgress)
                     Text("Pulling \(Int(pullProgress * 100))%")
-                        .font(GoldenFont.caption)
-                        .foregroundColor(GoldenTheme.textDisabled)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .listRowBackground(Color.clear)
             }
@@ -127,14 +127,12 @@ struct FilesView: View {
             Text("Uploads are capped at \(AfcFileExplorer.format(AfcFileExplorer.pushSizeLimit)) "
                  + "— an AFC write is a single call with no streaming form, so a larger file "
                  + "is refused rather than truncated.")
-                .font(GoldenFont.caption)
-                .foregroundColor(GoldenTheme.textDisabled)
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
         }
         .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(GoldenTheme.backgroundPrimary)
         // A path bar between the navigation bar and the list, the way Finder
         // and Files both put it. A `safeAreaInset` rather than a list row: as a
         // row it scrolls away, and a browser that cannot say where it is has
@@ -152,10 +150,6 @@ struct FilesView: View {
         // toggle, and a second button beside it is the duplicate-controls mess.
         .goldenSidebarButton()
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
-        .toolbarBackground(GoldenTheme.backgroundSecondary, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 // The three things that act on the listing, in the platform's own
@@ -253,10 +247,10 @@ struct FilesView: View {
         if let banner {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: banner.isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                    .foregroundColor(banner.isError ? GoldenTheme.warning : GoldenTheme.success)
+                    .foregroundStyle(banner.isError ? Color.orange : Color.green)
                 Text(banner.text)
-                    .font(GoldenFont.caption)
-                    .foregroundColor(GoldenTheme.textPrimary)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Button {
                     error = nil
@@ -264,19 +258,19 @@ struct FilesView: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(GoldenTheme.textSecondary)
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
             }
             .padding(12)
-            .background(GoldenTheme.backgroundTertiary)
-            .clipShape(RoundedRectangle(cornerRadius: GoldenTheme.controlRadius))
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: GoldenTheme.controlRadius)
-                    .strokeBorder(GoldenTheme.divider, lineWidth: 1)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color(.separator), lineWidth: 1)
             )
-            .padding(.horizontal, GoldenTheme.pageMargin)
-            .padding(.bottom, GoldenTheme.rowSpacing)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
             .transition(.move(edge: .bottom).combined(with: .opacity))
             // Self-clearing, but only a success. An error waits for the user to
             // acknowledge it or for the next thing they do to replace it.
@@ -304,19 +298,17 @@ struct FilesView: View {
                 Button(action: goUp) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(GoldenTheme.accent)
+                        .foregroundStyle(.tint)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Up one level")
-                .padding(.leading, GoldenTheme.pageMargin)
+                .padding(.leading)
             }
 
             breadcrumb
         }
-        .background(GoldenTheme.backgroundPrimary)
-        .overlay(alignment: .bottom) {
-            Divider().background(GoldenTheme.divider)
-        }
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     /// Horizontal instead of wrapping.  A device path is deeper than any window
@@ -333,10 +325,10 @@ struct FilesView: View {
                     // leading "afc://" says where the tree comes from, which the
                     // empty breadcrumb otherwise does not.
                     Image(systemName: "internaldrive")
-                        .foregroundColor(GoldenTheme.textSecondary)
+                        .foregroundStyle(.secondary)
                     Text("afc://")
-                        .font(GoldenFont.rowTitle)
-                        .foregroundColor(GoldenTheme.textPrimary)
+                        .font(.body)
+                        .fontWeight(.medium)
                 }
                 ForEach(Array(path.enumerated()), id: \.offset) { index, component in
                     if index > 0 {
@@ -344,26 +336,27 @@ struct FilesView: View {
                         // words read as a path rather than as a sentence.
                         Image(systemName: "chevron.right")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(GoldenTheme.textDisabled)
+                            .foregroundStyle(.tertiary)
                     }
                     Button {
                         path = Array(path.prefix(index + 1))
                         Task { await load() }
                     } label: {
                         Text(component)
-                            .font(GoldenFont.rowTitle)
-                            .foregroundColor(index == path.count - 1
-                                             ? GoldenTheme.textPrimary
-                                             : GoldenTheme.accent)
+                            .font(.body)
+                            .fontWeight(.medium)
+                            .foregroundStyle(index == path.count - 1
+                                             ? Color.primary
+                                             : Color.accentColor)
                             // Natural width, never compressed: the scroll view is
                             // what absorbs the overflow.
                             .fixedSize()
                     }
                     .buttonStyle(.plain)
                 }
-                if loading { ProgressView().goldenField() }
+                if loading { ProgressView() }
             }
-            .padding(.horizontal, GoldenTheme.pageMargin)
+            .padding(.horizontal)
             .padding(.vertical, 8)
         }
     }
@@ -396,7 +389,7 @@ struct FilesView: View {
                 Image(systemName: entry.isDirectory
                       ? "folder.fill"
                       : (entry.linkTarget != nil ? "link" : "doc"))
-                    .foregroundColor(entry.isDirectory ? GoldenTheme.accent : GoldenTheme.textSecondary)
+                    .foregroundStyle(entry.isDirectory ? Color.accentColor : Color.secondary)
                     .frame(width: 22)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -407,13 +400,12 @@ struct FilesView: View {
                     // keeps the extension, which is the part a browser is usually
                     // read for.
                     Text(entry.name)
-                        .font(GoldenFont.rowTitle)
-                        .foregroundColor(GoldenTheme.textPrimary)
+                        .font(.body)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Text(subtitle(for: entry))
-                        .font(GoldenFont.caption)
-                        .foregroundColor(GoldenTheme.textDisabled)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
 
@@ -422,13 +414,12 @@ struct FilesView: View {
                 if entry.isDirectory {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(GoldenTheme.textDisabled)
+                        .foregroundStyle(.tertiary)
                 }
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .listRowBackground(GoldenTheme.backgroundSecondary)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             // No full swipe: `afcDelete` is a real unlink with no trash, and a
             // gesture that destroys without a confirmation is exactly the thing
@@ -442,12 +433,12 @@ struct FilesView: View {
                 Button { renaming = entry; renameText = entry.name } label: {
                     Label("Rename", systemImage: "pencil")
                 }
-                .tint(GoldenTheme.textSecondary)
+                .tint(.gray)
             } else {
                 Button { Task { await pull(entry) } } label: {
                     Label("Pull", systemImage: "arrow.down.to.line")
                 }
-                .tint(GoldenTheme.textSecondary)
+                .tint(.gray)
             }
         }
         .contextMenu {
@@ -508,11 +499,11 @@ struct FilesView: View {
     private func volumeRow(_ volume: AfcFsVolumeInfo) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "internaldrive")
-                .foregroundColor(GoldenTheme.textDisabled)
+                .foregroundStyle(.secondary)
             Text("\(AfcFileExplorer.format(volume.freeBytes)) free of "
                  + "\(AfcFileExplorer.format(volume.totalBytes))")
-                .font(GoldenFont.caption)
-                .foregroundColor(GoldenTheme.textDisabled)
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Spacer(minLength: 0)
         }
         .listRowBackground(Color.clear)

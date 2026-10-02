@@ -23,6 +23,7 @@ enum TweakFileLocation: String, CaseIterable, Sendable {
     case footnote = "/var/containers/Shared/SystemGroup/systemgroup.com.apple.configurationprofiles/Library/ConfigurationProfiles/SharedDeviceConfiguration.plist"
     case airdrop = "/var/Managed Preferences/mobile/com.apple.sharingd.plist"
     case nanoregistry = "/var/mobile/Library/Preferences/com.apple.NanoRegistry.plist"
+    case statusBarOverridesArchive = "/var/mobile/Library/SpringBoard/StatusBarOverrides.archive"
     case globalPreferences = "/var/Managed Preferences/mobile/.GlobalPreferences.plist"
     case globalPreferencesHomeDomain = "/var/mobile/Library/Preferences/.GlobalPreferences.plist"
     case appStore = "/var/Managed Preferences/mobile/com.apple.AppStore.plist"

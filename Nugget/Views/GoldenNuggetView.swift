@@ -45,6 +45,10 @@ struct GoldenNuggetView: View {
     @Binding var autoImportDisabled: Bool
     @State private var running = false
     @State private var showPairingImporter = false
+    /// The on-device wireless-pairing service.  Shared because the advertisement
+    /// outlives this page (a `NavigationSplitView` replaces the detail on every
+    /// selection), and the page is only its UI.
+    @ObservedObject private var wirelessPair = WirelessPairing.shared
     @State private var showRebootNotice = false
     // The run log is not page state any more: `RunLog` owns it and `RunLogCard`
     // is the only observer, so a logged line no longer re-evaluates this
@@ -137,7 +141,7 @@ struct GoldenNuggetView: View {
     }
 
     var body: some View {
-        GoldenPage(spacing: GoldenTheme.sectionSpacing) {
+        List {
             header
             connectionLine
             applyCard
@@ -147,6 +151,7 @@ struct GoldenNuggetView: View {
             diagnosticsSection
             RunLogCard()
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("GoldenNugget")
         // Compact widths only -- on a tablet the split view draws its own sidebar
         // toggle, and a second button beside it is the duplicate-controls mess.
@@ -204,6 +209,12 @@ struct GoldenNuggetView: View {
             guard Self.isPairingFileExtension(url.pathExtension) else { return }
             importPairingFile(from: url)
         }
+        // A wireless pairing that succeeded has already written the record to
+        // `AppPaths.pairingFile`; adopt it through the one contract every other
+        // record enters by, then drop the terminal state so the button is live.
+        .onChange(of: wirelessPair.generatedRecordPath) { _, path in
+            adoptGeneratedPairingFile(at: path)
+        }
         .alert("Error", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
             Button("OK") {}
         } message: {
@@ -240,14 +251,33 @@ struct GoldenNuggetView: View {
     /// before the tunnel was up kept saying "unknown device" until it was left
     /// and re-entered.
     private var header: some View {
-        GoldenHeader(title: "GoldenNugget", subtitle: identity.describe) {
-            GoldenIconButton(systemImage: "arrow.clockwise",
-                             enabled: paired && !readingDevice) {
-                Task {
-                    await readDevice()
-                    await refreshTunnelStatus()
+        Section {
+            HStack(spacing: 16) {
+                NativeLogo(size: 64)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("GoldenNugget")
+                        .font(.title2.bold())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    Text(identity.describe)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
+                Spacer(minLength: 0)
+                Button {
+                    Task {
+                        await readDevice()
+                        await refreshTunnelStatus()
+                    }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 18, weight: .medium))
+                }
+                .buttonStyle(.borderless)
+                .disabled(!(paired && !readingDevice))
             }
+            .padding(.vertical, 4)
         }
     }
 
@@ -256,7 +286,12 @@ struct GoldenNuggetView: View {
     /// loaded but lockdown has not said what the device is, plain
     /// "Not connected" otherwise.
     private var connectionLine: some View {
-        GoldenStatusText(text: connectionState.text, tone: connectionState.tone)
+        Section {
+            Text(connectionState.text)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(connectionState.tone.nativeColor)
+                .frame(maxWidth: .infinity, alignment: .center)
+        }
     }
 
     private var connectionState: (text: String, tone: GoldenTone) {
@@ -269,9 +304,9 @@ struct GoldenNuggetView: View {
     /// a progress line) in the place its home page puts the button — directly
     /// under the status line, which is where the cards used to sit.
     private var applyCard: some View {
-        GoldenCard {
-            GoldenMutedNote(text: applyNote)
-            GoldenPrimaryButton(title: running ? "Applying…" : applyTitle,
+        Section {
+            NativeNote(applyNote)
+            NativePrimaryButton(title: running ? "Applying…" : applyTitle,
                                 running: running,
                                 disabled: !canApply) {
                 applyTweaks()
@@ -279,21 +314,40 @@ struct GoldenNuggetView: View {
             if running {
                 TimelineView(.periodic(from: .now, by: 1)) { ctx in
                     let secs = Int(ctx.date.timeIntervalSince(runStarted ?? ctx.date))
-                    GoldenStatusText(text: elapsedText(secs), tone: .secondary)
+                    Text(elapsedText(secs))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
                 // The engine has reported whole-percent progress all along and
                 // this view has been storing it in `progress` without ever
                 // showing it, which left a multi-minute AirLift injection
                 // looking exactly like a hung one.
-                GoldenProgressBar(value: progress)
+                progressView
                 // A stall guard that waits minutes for a device that may be
                 // wedged is only safe if it can be stopped by hand. A blocked
                 // Rust read cannot be interrupted, so this abandons the call
                 // and unwinds: the guard notices the flag at its next poll.
-                GoldenDangerButton(title: "Stop run") {
+                NativeDangerButton(title: "Stop run") {
                     GoldenNuggetEngine.shared.requestCancel()
                 }
             }
+        }
+    }
+
+    /// The run's percentage, as a bar and a number.
+    ///
+    /// `progress` is nil until the engine reports one, which is not the same as
+    /// zero — an unknown start is shown as an indeterminate bar rather than an
+    /// empty one claiming no work has been done.
+    private var progressView: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ProgressView(value: progress ?? 0, total: 100)
+                .progressViewStyle(.linear)
+                .opacity(progress == nil ? 0.35 : 1)
+            Text(progress == nil ? "working…" : String(format: "%.0f%%", progress ?? 0))
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -308,11 +362,11 @@ struct GoldenNuggetView: View {
     /// device-reset name meant the one destructive button on the page did
     /// nothing to the device while reading as though it had.
     private var clearCard: some View {
-        GoldenCard {
-            GoldenMutedNote(text: "Puts whole pages back to stock on the device: the files those "
+        Section {
+            NativeNote("Puts whole pages back to stock on the device: the files those "
                 + "pages' tweaks are written to are overwritten with what a fresh device has. "
                 + "Choose the pages in the next screen.")
-            GoldenDangerButton(title: "Reset Tweaks",
+            NativeDangerButton(title: "Reset Tweaks",
                                disabled: running || resetting) {
                 showResetSheet = true
             }
@@ -354,27 +408,45 @@ struct GoldenNuggetView: View {
     /// `home.py: process_status_lbl` — centred, coloured by outcome.
     @ViewBuilder
     private var processStatus: some View {
-        GoldenStatusText(text: status, tone: statusTone, centered: true)
+        Section {
+            Text(status)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(statusTone.nativeColor)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, alignment: .center)
+        }
     }
 
     private var connectionSection: some View {
-        GoldenSection(
-            title: "Connection",
-            content: AnyView(
-                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-                    if paired {
-                        GoldenActionRow(title: "Reset pairing file",
-                                        systemImage: "arrow.counterclockwise") { resetPairing() }
-                    } else {
-                        GoldenActionRow(title: "Select Pairing File",
-                                        systemImage: "doc.badge.plus") {
-                            showPairingImporter.toggle()
-                        }
-                    }
-                    tunnelDisclosure
+        Section("Connection") {
+            if paired {
+                Button {
+                    resetPairing()
+                } label: {
+                    Label("Reset pairing file", systemImage: "arrow.counterclockwise")
                 }
-            )
-        )
+            } else if wirelessPair.isRunning {
+                wirelessPairProgress
+            } else {
+                Button {
+                    showPairingImporter.toggle()
+                } label: {
+                    Label("Select Pairing File", systemImage: "doc.badge.plus")
+                }
+                // iOS 27 lets the device pair with itself: the service below is
+                // discovered by this same phone's RemotePairing daemon, so no
+                // computer is needed to produce a record.
+                Button {
+                    wirelessPair.start()
+                } label: {
+                    Label("Pair Wirelessly", systemImage: "wifi")
+                }
+                if case .failed(let message) = wirelessPair.phase {
+                    NativeSafetyNote(message)
+                }
+            }
+            tunnelDisclosure
+        }
         .fileImporter(isPresented: $showPairingImporter,
                       allowedContentTypes: Self.pairingFileTypes) { result in
             switch result {
@@ -382,6 +454,39 @@ struct GoldenNuggetView: View {
                 importPairingFile(from: url)
             case .failure(let error):
                 errorText = error.localizedDescription
+            }
+        }
+    }
+
+    /// The in-flight wireless pairing, drawn in place of the two acquire buttons.
+    ///
+    /// The advertisement blocks on the library side until the device connects, so
+    /// this row's only jobs are to say the host is up, show the PIN if the device
+    /// asks for one, and offer a way out — a pairing that never connects would
+    /// otherwise leave the Connection section looking frozen.
+    @ViewBuilder
+    private var wirelessPairProgress: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ProgressView()
+                Text(wirelessPair.serviceName.map { "Advertising “\($0)” — waiting for this iPhone to connect…" }
+                     ?? "Starting the pairing service…")
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let pin = wirelessPair.pin {
+                Text("PIN: \(pin)")
+                    .font(.title3.monospaced().weight(.semibold))
+                    .textSelection(.enabled)
+                NativeNote("Confirm this PIN on the device to finish pairing.")
+            } else {
+                NativeNote("Leave this screen open. iOS 27 connects this iPhone to the advertised "
+                    + "pairing service itself — no computer is involved.")
+            }
+            Button(role: .destructive) {
+                wirelessPair.cancel()
+            } label: {
+                Label("Cancel pairing", systemImage: "xmark.circle")
             }
         }
     }
@@ -395,60 +500,79 @@ struct GoldenNuggetView: View {
     /// the part a session that already works never needs to look at twice.
     private var tunnelDisclosure: some View {
         DisclosureGroup(isExpanded: $tunnelExpanded) {
-            VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-                GoldenMutedNote(text: "How this app finds the LocalDevVPN tunnel: it waits for the "
+            VStack(alignment: .leading, spacing: 12) {
+                NativeNote("How this app finds the LocalDevVPN tunnel: it waits for the "
                     + "tunnel IP on an interface, then probes the peer's lockdown port. "
                     + "\(Tunnel.isCustomised ? "Custom values in use." : "Defaults in use.") "
                     + "These steer this app only — the vendored library finds the peer from the "
                     + "route table and always dials 62078.")
-                GoldenLabeledField(label: "Tunnel IP (this device)") {
-                    TextField(Tunnel.defaultIfaceIP, text: $tunnelIfaceIP)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Tunnel IP (this device)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("Tunnel IP (this device)", text: $tunnelIfaceIP)
+                        .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         .keyboardType(.numbersAndPunctuation)
+                    if !tunnelIfaceIPOK {
+                        NativeSafetyNote("Not an IPv4 address — \(Tunnel.defaultIfaceIP) is being probed instead.")
+                    }
                 }
-                if !tunnelIfaceIPOK {
-                    GoldenSafetyNote(text: "Not an IPv4 address — \(Tunnel.defaultIfaceIP) is being probed instead.")
-                }
-                GoldenLabeledField(label: "Peer IP (the VPN server)") {
-                    TextField(Tunnel.defaultPeerIP, text: $tunnelPeerIP)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Peer IP (the VPN server)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("Peer IP (the VPN server)", text: $tunnelPeerIP)
+                        .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         .keyboardType(.numbersAndPunctuation)
+                    if !tunnelPeerIPOK {
+                        NativeSafetyNote("Not an IPv4 address — \(Tunnel.defaultPeerIP) is being probed instead.")
+                    }
                 }
-                if !tunnelPeerIPOK {
-                    GoldenSafetyNote(text: "Not an IPv4 address — \(Tunnel.defaultPeerIP) is being probed instead.")
-                }
-                GoldenLabeledField(label: "Lockdown port") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Lockdown port")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     TextField(String(Tunnel.defaultServicePort), text: $tunnelPort)
+                        .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         // `.numberPad` has no Return key, so on a phone this
                         // keyboard could not be dismissed at all.
                         .keyboardType(.numberPad)
-                        .goldenKeyboardDone()
+                        .nativeKeyboardDone()
+                    if !tunnelPortOK {
+                        NativeSafetyNote("Not a port in 1…65535 — \(Tunnel.defaultServicePort) is being probed instead.")
+                    }
                 }
-                if !tunnelPortOK {
-                    GoldenSafetyNote(text: "Not a port in 1…65535 — \(Tunnel.defaultServicePort) is being probed instead.")
-                }
-                GoldenLabeledField(label: "Tunnel IP prefix length") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Tunnel IP prefix length")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     TextField(String(Tunnel.defaultPrefixLength), text: $tunnelPrefixLength)
+                        .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         // `.numberPad` has no Return key, so on a phone this
                         // keyboard could not be dismissed at all.
                         .keyboardType(.numberPad)
-                        .goldenKeyboardDone()
+                        .nativeKeyboardDone()
+                    if !tunnelPrefixOK {
+                        NativeSafetyNote("Not 0…32 — LocalDevVPN's tunnel-IP field takes a CIDR, and this is the part after the slash.")
+                    }
                 }
-                if !tunnelPrefixOK {
-                    GoldenSafetyNote(text: "Not 0…32 — LocalDevVPN's tunnel-IP field takes a CIDR, and this is the part after the slash.")
-                }
-                GoldenMutedNote(text: "Copy into LocalDevVPN: tunnel IP \(Tunnel.ifaceIP)/\(Tunnel.ifacePrefixLength), peer \(Tunnel.peerIP), port \(Tunnel.servicePort).")
+                NativeNote("Copy into LocalDevVPN: tunnel IP \(Tunnel.ifaceIP)/\(Tunnel.ifacePrefixLength), peer \(Tunnel.peerIP), port \(Tunnel.servicePort).")
                 // Both values come from state — see `tunnelSummary`.  The probe
                 // is a 2 s `poll()` and must never run in a body.
-                GoldenStatusText(text: "tunnel: \(tunnelSummary) · peer \(Tunnel.peerIP):\(Tunnel.servicePort) "
+                Text("tunnel: \(tunnelSummary) · peer \(Tunnel.peerIP):\(Tunnel.servicePort) "
                     + "reachable: \(peerReachable.map(String.init) ?? "…")")
-                GoldenActionRow(title: "Reset tunnel addresses", systemImage: "arrow.counterclockwise") {
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
                     Tunnel.resetToDefaults()
                     tunnelIfaceIP = Tunnel.defaultIfaceIP
                     tunnelPeerIP = Tunnel.defaultPeerIP
@@ -456,19 +580,21 @@ struct GoldenNuggetView: View {
                     tunnelPrefixLength = String(Tunnel.defaultPrefixLength)
                     GoldenNuggetEngine.shared.log("tunnel addresses reset to defaults: \(Tunnel.requirements)")
                     Task { await refreshTunnelStatus() }
+                } label: {
+                    Label("Reset tunnel addresses", systemImage: "arrow.counterclockwise")
                 }
             }
             .padding(.top, 8)
         } label: {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Tunnel settings")
-                    .font(GoldenFont.cardTitle)
-                    .foregroundColor(GoldenTheme.textPrimary)
-                GoldenValueLabel(text: Tunnel.requirements)
+                    .font(.headline)
+                Text(Tunnel.requirements)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
-        .tint(GoldenTheme.accent)
-        .goldenRowSurface()
+        .tint(.accentColor)
     }
 
     // A value is only "in use" when it survives the same validator `Tunnel`
@@ -480,57 +606,51 @@ struct GoldenNuggetView: View {
     private var tunnelPrefixOK: Bool { Tunnel.validPrefixLength(tunnelPrefixLength) != nil }
 
     private var diagnosticsSection: some View {
-        GoldenSection(
-            title: "Diagnostics",
-            content: AnyView(
-                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-                    GoldenActionRow(title: "Dump Diagnostics Into Log",
-                                    systemImage: "doc.text.magnifyingglass",
-                                    tone: running ? .disabled : .primary) {
-                        Task {
-                            let block = await GoldenNuggetEngine.shared.diagnostics()
-                            RunLog.shared.append(block)
-                        }
-                    }
-                    .disabled(running)
-                    // Share sheets beat hand-selecting text: the diagnostics block and
-                    // the full Rust log are files in Documents.  AirDrop / Save to
-                    // Files gets them off the device intact.
-                    shareRow(title: "Share diagnostics.txt",
-                             systemImage: "square.and.arrow.up",
-                             url: GoldenNuggetEngine.diagnosticsURL,
-                             available: hasDiagnostics)
-                    shareRow(title: "Share minimuxer.log (\(GoldenNuggetEngine.rustLogSize() / 1024) KB)",
-                             systemImage: "doc.text.magnifyingglass",
-                             url: GoldenNuggetEngine.rustLogURL,
-                             available: GoldenNuggetEngine.rustLogSize() > 0)
-                    // The app-side log is a separate file because it is a separate
-                    // half of the evidence: the Rust log shows what the protocol did,
-                    // this one shows what the host decided (filter keeps, commit
-                    // accounting, staging leftovers).
-                    shareRow(title: "Share goldennugget.log (\(GoldenNuggetEngine.appLogSize() / 1024) KB)",
-                             systemImage: "doc.plaintext",
-                             url: GoldenNuggetEngine.appLogURL,
-                             available: GoldenNuggetEngine.appLogSize() > 0)
-                    GoldenMutedNote(text: "The dump carries a keyword slice of the Rust log "
-                        + "(mobilebackup2 protocol + jktcp flow verdict) scoped to this run, plus "
-                        + "the app log tail (host-side decisions).")
+        Section("Diagnostics") {
+            Button {
+                Task {
+                    let block = await GoldenNuggetEngine.shared.diagnostics()
+                    RunLog.shared.append(block)
                 }
-            )
-        )
+            } label: {
+                Label("Dump Diagnostics Into Log", systemImage: "doc.text.magnifyingglass")
+            }
+            .disabled(running)
+            // Share sheets beat hand-selecting text: the diagnostics block and
+            // the full Rust log are files in Documents.  AirDrop / Save to
+            // Files gets them off the device intact.
+            shareRow(title: "Share diagnostics.txt",
+                     systemImage: "square.and.arrow.up",
+                     url: GoldenNuggetEngine.diagnosticsURL,
+                     available: hasDiagnostics)
+            shareRow(title: "Share minimuxer.log (\(GoldenNuggetEngine.rustLogSize() / 1024) KB)",
+                     systemImage: "doc.text.magnifyingglass",
+                     url: GoldenNuggetEngine.rustLogURL,
+                     available: GoldenNuggetEngine.rustLogSize() > 0)
+            // The app-side log is a separate file because it is a separate
+            // half of the evidence: the Rust log shows what the protocol did,
+            // this one shows what the host decided (filter keeps, commit
+            // accounting, staging leftovers).
+            shareRow(title: "Share goldennugget.log (\(GoldenNuggetEngine.appLogSize() / 1024) KB)",
+                     systemImage: "doc.plaintext",
+                     url: GoldenNuggetEngine.appLogURL,
+                     available: GoldenNuggetEngine.appLogSize() > 0)
+            NativeNote("The dump carries a keyword slice of the Rust log "
+                + "(mobilebackup2 protocol + jktcp flow verdict) scoped to this run, plus "
+                + "the app log tail (host-side decisions).")
+        }
     }
 
     /// One share action as a row.  Kept in one place so the three cannot drift
-    /// apart — including the disabled look, which the reference expresses as
-    /// `text_disabled` rather than by hiding the control.
+    /// apart — the system dims an unavailable `ShareLink` on its own.
     private func shareRow(title: String, systemImage: String, url: URL, available: Bool) -> some View {
         ShareLink(item: url) {
-            GoldenRowLabel(title: title, systemImage: systemImage,
-                           tone: available ? .primary : .disabled)
+            HStack(spacing: 12) {
+                Label(title, systemImage: systemImage)
+                Spacer(minLength: 0)
+            }
         }
-        .buttonStyle(.plain)
-        .goldenRowSurface()
-        .disabled(!available)
+        .foregroundStyle(available ? Color.primary : Color.secondary)
     }
 
     private var paired: Bool { pairingFileURL != nil }
@@ -827,6 +947,31 @@ struct GoldenNuggetView: View {
         } catch {
             errorText = error.localizedDescription
             GoldenNuggetEngine.shared.log("pairing file import failed (\(url.lastPathComponent)): "
+                + "\(error.localizedDescription)")
+        }
+    }
+
+    /// Adopt the record a completed wireless pairing wrote.
+    ///
+    /// The library writes the paired `.mobiledevicepairing` straight to
+    /// `AppPaths.pairingFile`, which is the canonical location the rest of the
+    /// app already reads — so this is a hand-off, not a second import path.
+    /// Routing it through `loadPairingFile` keeps the validate → write →
+    /// read-back → claim contract in one place: a record the library produced but
+    /// this app cannot parse is rejected with the same wording a picked file
+    /// would get, instead of being trusted because it came from inside the app.
+    ///
+    /// The pair state is reset afterwards either way, so a failed adoption does
+    /// not leave the Connection section stuck on "paired".
+    private func adoptGeneratedPairingFile(at path: String?) {
+        guard let path else { return }
+        defer { wirelessPair.reset() }
+        do {
+            try loadPairingFile(from: URL(fileURLWithPath: path))
+            GoldenNuggetEngine.shared.log("wireless pair: generated record adopted")
+        } catch {
+            errorText = error.localizedDescription
+            GoldenNuggetEngine.shared.log("wireless pair: generated record rejected — "
                 + "\(error.localizedDescription)")
         }
     }

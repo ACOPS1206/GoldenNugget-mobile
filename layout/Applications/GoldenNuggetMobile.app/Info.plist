@@ -48,6 +48,13 @@
 	<true/>
 	<key>MinimumOSVersion</key>
 	<string>26.0</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_remotepairing-pairable-host._tcp</string>
+		<string>_remotepairing-pairable-host._tcp.</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>GoldenNugget publishes an iOS 27 wireless pairing service on the local network so this iPhone can pair with itself and generate its own pairing file without a computer.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

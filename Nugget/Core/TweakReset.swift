@@ -5,20 +5,19 @@ import Foundation
 /// dialog.
 ///
 /// The reference builds that list as `[StatusBar, Springboard, InternalOptions,
-/// Daemons]` and drops `StatusBar` on iOS 27, where the Speakeasy flags it
-/// writes are not writable.
-///
-/// **This port has no Status Bar page**, so the group is not offered at all:
-/// nothing in the catalog writes `/Library/SpringBoard/statusBarOverrides`
-/// (`TweakFileLocation` has no case for it — the only mention in the app is a
-/// skip-prefix in `ProtectiveBackup`). The other three map one-to-one, in the
-/// reference's order.
+/// Daemons]` and drops `StatusBar` on iOS 27, where the old Speakeasy
+/// `FeatureFlags` write is gone. This port keeps it on every version because it
+/// *can* reset the status bar on iOS 27: the same `StatusBarMechanism` that
+/// delivers the tweak delivers the reset, and its archive branch is a supported
+/// writer here (`StatusBarArchive`), unlike the reference's dialog. All four map
+/// one-to-one, in the reference's order.
 ///
 /// The name is `Page` in the reference and carries the same meaning — a
 /// *feature area*, not a navigation destination. `AppDestination` is this app's
 /// navigation enum and would be the wrong thing to reuse: it holds Daemons but
 /// not Springboard or Internal, which are sections of the Tweaks page.
 enum ResetPage: String, CaseIterable, Identifiable, Sendable {
+    case statusBar
     case springboard
     case internalOptions
     case daemons
@@ -29,6 +28,7 @@ enum ResetPage: String, CaseIterable, Identifiable, Sendable {
     /// is the string the reference's checkbox carries.
     var title: String {
         switch self {
+        case .statusBar: return "Status Bar"
         case .springboard: return "Springboard"
         case .internalOptions: return "Internal"
         case .daemons: return "Daemons"
@@ -38,6 +38,11 @@ enum ResetPage: String, CaseIterable, Identifiable, Sendable {
     /// The files this page's reset writes, in the order the reference appends
     /// them, for the sheet's "what this will touch" line and the run log.
     ///
+    /// `statusBar` names the iOS 27 archive location; on iOS 26 the run writes
+    /// the classic `/Library/SpringBoard/statusBarOverrides` instead, which has
+    /// no `FileLocation` case in the reference and so is the one path spelled
+    /// out in `plan` rather than looked up from this list.
+    ///
     /// `internalOptions` carries seven files while the catalog's Internal
     /// section only uses six of them: the reference nulls
     /// `.GlobalPreferences.plist` in HomeDomain as well, and no tweak in this
@@ -46,6 +51,8 @@ enum ResetPage: String, CaseIterable, Identifiable, Sendable {
     /// the same one.
     var locations: [TweakFileLocation] {
         switch self {
+        case .statusBar:
+            return [.statusBarOverridesArchive]
         case .springboard:
             return [.springboard, .uikit]
         case .internalOptions:
@@ -101,6 +108,11 @@ enum ResetPage: String, CaseIterable, Identifiable, Sendable {
 ///   of these, so an empty dict would leave `otpaird`, `bootpd`, `dhcp6d`,
 ///   `magicswitchd.companion` and `relevanced` *enabled* where the factory
 ///   device has them off, and a reset would be a way to break pairing.
+/// * **Status bar** — a fresh, all-default `StatusBarOverrides` written through
+///   the same `StatusBarMechanism` the apply uses: the classic struct on iOS 26,
+///   a no-cellular `StatusBarOverrides.archive` on iOS 27+. Neither is nulled —
+///   an empty file is not a valid override struct, so "off" has to be spelled
+///   out as a zeroed one.
 ///
 /// The owner/group the reference passes for that file (`owner=0, group=0`) need
 /// no special case here: `/var/db/…` maps to `DatabaseDomain`, whose
@@ -116,14 +128,23 @@ enum TweakReset {
         case emptyPlist = "empty plist"
         /// The stock six-key `disabled.plist`.
         case stockDaemons = "stock daemons"
+        /// The zeroed classic status-bar struct (iOS 26).
+        case statusBarClassic = "fresh status bar struct"
+        /// The archive that decodes as "no overrides" (iOS 27+).
+        case statusBarArchive = "reset status bar archive"
     }
 
     /// One file the reset will write.
+    ///
+    /// The path is a plain `String` rather than a `TweakFileLocation` because the
+    /// classic status-bar reset writes `/Library/SpringBoard/statusBarOverrides`,
+    /// which the reference spells out literally and the `FileLocation` enum has
+    /// no case for. It is unique per target, which is what `Identifiable` needs.
     struct Target: Identifiable, Sendable {
-        let location: TweakFileLocation
+        let path: String
         let contents: Data
         let kind: Kind
-        var id: String { location.rawValue }
+        var id: String { path }
     }
 
     struct Plan {
@@ -159,13 +180,13 @@ enum TweakReset {
     ///   two reads of the same fact is how the apply path once put a 27.0
     ///   device on the 26 branch.
     ///
-    /// The reference appends the daemons file inside the page loop and writes
-    /// every nulled file after the loop, so the restore carries the non-null
-    /// file first; the order is kept here because it is free and a diff against
-    /// the reference should not have to explain a difference. The two
-    /// `skip_setup` files are appended *after* all of these — the reference calls
-    /// `add_skip_setup` after the null loop, so they are last in its file list
-    /// too.
+    /// The reference restores two files whole inside the page loop — the status
+    /// bar and the daemons file — and writes every nulled file only after the
+    /// loop, so both restored-whole files precede the nulls in its list. That
+    /// order is kept here because it is free and a diff against the reference
+    /// should not have to explain a difference. The two `skip_setup` files are
+    /// appended *after* all of these — the reference calls `add_skip_setup` after
+    /// the null loop, so they are last in its file list too.
     static func plan(pages: Set<ResetPage>, ios27: Bool) -> Plan {
         // `ResetPage.allCases` order, not the caller's `Set` order: `Set` has
         // none, and a payload list that reorders between two runs of the same
@@ -178,30 +199,63 @@ enum TweakReset {
         var payloads: [TweakPayload] = []
         var skipped: [(label: String, reason: String)] = []
 
-        func add(_ location: TweakFileLocation, _ contents: Data, _ kind: Kind) {
-            // Every location above has a prefix rule in `TweakDomainMap`, so this
-            // cannot fail for these three pages — but a row injected with no
-            // domain is a row no device ever produced, so it is refused rather
-            // than written.
-            guard let dest = TweakDomainMap.split(path: location.rawValue) else {
-                skipped.append((location.rawValue, "no backup-domain prefix matches this location"))
-                return
-            }
-            targets.append(Target(location: location, contents: contents, kind: kind))
-            payloads.append(TweakPayload(domain: dest.domain,
-                                         relativePath: dest.relativePath,
+        func append(path: String, contents: Data, kind: Kind,
+                    domain: String, relativePath: String) {
+            targets.append(Target(path: path, contents: contents, kind: kind))
+            payloads.append(TweakPayload(domain: domain, relativePath: relativePath,
                                          contents: contents))
         }
 
-        for page in ordered {
-            for location in page.locations where location == .disabledDaemons {
-                add(location, TweakCompiler.serialisePlist(stockDisabledDaemons), .stockDaemons)
+        // A location with no prefix rule in `TweakDomainMap` is refused rather
+        // than injected as a row no device ever produced (the compiler's rule,
+        // same reason).
+        func addNulled(_ location: TweakFileLocation) {
+            guard let dest = TweakDomainMap.split(path: location.rawValue) else {
+                skipped.append((location.rawValue,
+                                "no backup-domain prefix matches this location"))
+                return
+            }
+            append(path: location.rawValue, contents: nullContents, kind: nullKind,
+                   domain: dest.domain, relativePath: dest.relativePath)
+        }
+
+        // The status bar is written whole, through the same `StatusBarMechanism`
+        // the apply uses, so the reset and the tweak can never disagree on which
+        // file this device reads.
+        func addStatusBar() {
+            let mechanism: StatusBarMechanism = ios27 ? .archive : .classic
+            guard let built = try? mechanism.payload(for: StatusBarOverrides()) else {
+                skipped.append((mechanism.restorePath, "could not build the reset status bar payload"))
+                return
+            }
+            append(path: mechanism.restorePath, contents: built.data,
+                   kind: ios27 ? .statusBarArchive : .statusBarClassic,
+                   domain: mechanism.domain, relativePath: mechanism.restorePath)
+        }
+
+        // The two restored-whole files first, in reference page order.
+        for page in ordered where page == .statusBar || page == .daemons {
+            switch page {
+            case .statusBar:
+                addStatusBar()
+            case .daemons:
+                let location = TweakFileLocation.disabledDaemons
+                guard let dest = TweakDomainMap.split(path: location.rawValue) else {
+                    skipped.append((location.rawValue,
+                                    "no backup-domain prefix matches this location"))
+                    continue
+                }
+                append(path: location.rawValue,
+                       contents: TweakCompiler.serialisePlist(stockDisabledDaemons),
+                       kind: .stockDaemons,
+                       domain: dest.domain, relativePath: dest.relativePath)
+            default:
+                break
             }
         }
-        for page in ordered {
-            for location in page.locations where location != .disabledDaemons {
-                add(location, nullContents, nullKind)
-            }
+        // Every nulled file after the loop, in reference page order.
+        for page in ordered where page != .statusBar && page != .daemons {
+            for location in page.locations { addNulled(location) }
         }
 
         return Plan(targets: targets, payloads: payloads, skipped: skipped,
@@ -215,19 +269,24 @@ enum TweakReset {
     ///         or (dev_version and Version(dev_version) < Version("27.0"))):
     /// ```
     ///
-    /// In the reset path `uses_domains` is assigned in exactly one place — the
-    /// Daemons branch — so on **iOS 27 a Springboard-only or Internal-only reset
-    /// carries no `skip_setup` files at all**, and only a reset that ticks
-    /// Daemons (or any combination containing it) picks them up. On iOS 26 the
-    /// version arm is true, so they always ride along. The reference does not
-    /// explain the iOS 27 arm; its own comment argues the files are safe
-    /// regardless ("they always carry real domains, so they can always ride the
-    /// domain delivery"), which makes the flag look like a leftover from the
-    /// tweak path. It is kept as written so a diff against the reference is
-    /// empty — the trade-off is a Springboard-only reset on iOS 27 leaving the
-    /// setup wizard state alone.
+    /// In the reset path `uses_domains` is set by two branches: Daemons, and the
+    /// StatusBar archive reset on iOS 27 (a real domain delivery). So on **iOS 27
+    /// a Springboard-only or Internal-only reset carries no `skip_setup` files at
+    /// all**, and only a reset that ticks Daemons or Status Bar (or any
+    /// combination containing one) picks them up. On iOS 26 the version arm is
+    /// true, so they always ride along. The reference does not explain the iOS 27
+    /// arm; its own comment argues the files are safe regardless ("they always
+    /// carry real domains, so they can always ride the domain delivery"), which
+    /// makes the flag look like a leftover from the tweak path. It is kept as
+    /// written so a diff against the reference is empty — the trade-off is a
+    /// Springboard-only reset on iOS 27 leaving the setup wizard state alone.
+    ///
+    /// Note the reference's StatusBar branch is the iOS 27 `archive` arm only;
+    /// on iOS 26 the classic arm appends to `files_to_restore` directly and does
+    /// not set the flag — but the version arm already makes the gate true there,
+    /// so the outcome is the same.
     static func skipSetupAllowed(pages: [ResetPage], ios27: Bool) -> Bool {
-        let usesDomains = pages.contains(.daemons)
+        let usesDomains = pages.contains(.daemons) || (ios27 && pages.contains(.statusBar))
         return usesDomains || !ios27
     }
 }

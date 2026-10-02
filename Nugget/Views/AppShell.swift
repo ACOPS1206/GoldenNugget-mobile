@@ -126,13 +126,8 @@ struct RootView: View {
         Group {
             if width == .compact { compactShell } else { regularShell }
         }
-        // The reference ships a single palette (`theme.colors.DARK`) and builds
-        // its whole iOS GUI on it, so this app is dark-only by design.  Saying so
-        // once here keeps every platform control it cannot restyle — text fields,
-        // alerts, the share sheet, the document picker — on the same surface as
-        // the cards instead of rendering light-on-dark.
-        .preferredColorScheme(.dark)
-        .tint(GoldenTheme.accent)
+        // The native screens resolve every colour and text style from the system,
+        // so the app follows the device appearance.
         // The device line and the version bounds it gates refresh themselves, and
         // the two ends of the app's life are the moments that matter: coming back
         // from the background is when a rebooted or swapped device is most stale,
@@ -331,28 +326,17 @@ private struct AppDestinationList: View {
         List {
             ForEach(AppDestination.allCases) { destination in
                 Button { select(destination) } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: destination.systemImage)
-                            .font(.system(size: 15))
-                            .frame(width: 20)
-                        Text(destination.title)
-                            .font(GoldenFont.rowTitle)
-                        Spacer(minLength: 0)
-                    }
-                    .foregroundColor(destination == current
-                                     ? GoldenTheme.textPrimary
-                                     : GoldenTheme.textSecondary)
+                    Label(destination.title, systemImage: destination.systemImage)
+                        .fontWeight(destination == current ? .semibold : .regular)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 .listRowBackground(destination == current
-                                   ? GoldenTheme.backgroundTertiary
+                                   ? Color.accentColor.opacity(0.15)
                                    : Color.clear)
             }
         }
         .listStyle(.sidebar)
-        // The platform sidebar style draws its own grouped background; hiding it
-        // puts the page surface underneath back, so the list is the same
-        // `backgroundPrimary` the pages are.
-        .scrollContentBackground(.hidden)
-        .background(GoldenTheme.backgroundPrimary.ignoresSafeArea())
     }
 }

@@ -44,3 +44,8 @@ __pycache__/
 # Device logs pulled for diagnosis (pymobiledevice3 apps pull … goldennugget.log).
 # They carry the device UDID and whatever the run was doing.
 gn*.log
+
+# Release notes are draft prose for the GitHub release, not part of the source.
+# Ignoring them keeps a wording edit from showing up as a repo change; covers
+# the per-language files (RELEASE_NOTES.md, RELEASE_NOTES.en.md, …).
+RELEASE_NOTES*.md

@@ -612,7 +612,7 @@ class GoldenNuggetEngine {
 
         log("Reset: \(pages.count) page(s) — \(plan.targets.count) file(s) on iOS \(version)")
         for target in plan.targets {
-            log("  → \(target.location.rawValue) [\(target.kind.rawValue), "
+            log("  → \(target.path) [\(target.kind.rawValue), "
                 + "\(target.contents.count) bytes]")
         }
         for item in plan.skipped { log("  ⚠️ skipped \(item.label): \(item.reason)") }

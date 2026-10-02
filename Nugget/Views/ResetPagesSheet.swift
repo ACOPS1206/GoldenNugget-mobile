@@ -17,8 +17,9 @@ import SwiftUI
 ///   and the consequence land in the same place — the user can scroll the note
 ///   before the button, but not after the restore.
 ///
-/// The page list is `ResetPage.allCases` (see its doc comment: the reference's
-/// `get_resettable_pages` minus `StatusBar`, which this port has no writer for).
+/// The page list is `ResetPage.allCases` — the reference's `get_resettable_pages`
+/// plus `StatusBar` on iOS 27, which the reference's dialog hides but this port
+/// can still reset through `StatusBarArchive` (see `ResetPage`).
 struct ResetPagesSheet: View {
     /// The device's iOS version, for the note that says which procedure runs.
     let deviceVersion: String
@@ -29,23 +30,19 @@ struct ResetPagesSheet: View {
     @State private var selection: Set<ResetPage> = []
 
     /// The plan for what is ticked *so far*, so the file list updates as the
-    /// switches move. `ios27` is the same predicate `procedureNote` uses, and it
-    /// changes the bytes a nulled file is written as — so the list under the
+    /// switches move. `ios27` is the same predicate `procedureSection` uses, and
+    /// it changes the bytes a nulled file is written as — so the list under the
     /// switches has to be built with the same branch the run will take.
     private var plan: TweakReset.Plan { TweakReset.plan(pages: selection, ios27: isIOS27) }
 
     var body: some View {
         NavigationStack {
-            // `GoldenPage` is the app's page scaffold: it *is* the ScrollView
-            // and carries the background, so this is the same shape every other
-            // page has. Wrapping it in a second ScrollView here would nest two
-            // and the inner one would win the gesture.
-            GoldenPage(spacing: GoldenTheme.sectionSpacing) {
-                GoldenMutedNote(text: "Select the pages you would like to reset.")
-                pageCard
+            List {
+                pageSection
                 whatItTouches
-                procedureNote
+                procedureSection
             }
+            .listStyle(.insetGrouped)
             .navigationTitle("Reset Page Tweaks")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -73,19 +70,19 @@ struct ResetPagesSheet: View {
         .presentationDetents([.medium, .large])
     }
 
-    /// One switch row per page, with the count of files behind it. The count is
-    /// the row's `value` rather than a subtitle because `GoldenRowLabel` has no
-    /// subtitle slot, and a wrapped path list under three rows would be a wall.
-    private var pageCard: some View {
-        GoldenCard {
+    /// One switch row per page, with the count of files behind it, right-aligned
+    /// in the row.
+    private var pageSection: some View {
+        Section("Select the pages you would like to reset.") {
             ForEach(ResetPage.allCases) { page in
                 Toggle(isOn: binding(for: page)) {
-                    GoldenRowLabel(title: page.title,
-                                   value: fileCount(page),
-                                   trailingGlyph: nil)
+                    HStack {
+                        Text(page.title)
+                        Spacer()
+                        Text(fileCount(page)).foregroundStyle(.secondary)
+                    }
                 }
-                .tint(GoldenTheme.success)
-                if page != ResetPage.allCases.last { GoldenDivider() }
+                .tint(.green)
             }
         }
     }
@@ -93,20 +90,21 @@ struct ResetPagesSheet: View {
     /// The paths the reset would write, named before it runs.
     ///
     /// Last path components rather than the absolute paths: the directories are
-    /// the same three for every file here (`/var/Managed Preferences/mobile/`,
-    /// `/var/mobile/Library/Preferences/`, `/var/db/com.apple.xpc.launchd/`) and
-    /// printing them nine times says less than the file names do. The
-    /// directory *is* in the run log, which is where a full path belongs.
+    /// the same handful for every file here (`/var/Managed Preferences/mobile/`,
+    /// `/var/mobile/Library/Preferences/`, `/var/mobile/Library/SpringBoard/`,
+    /// `/var/db/com.apple.xpc.launchd/`) and printing them nine times says less
+    /// than the file names do. The directory *is* in the run log, which is where
+    /// a full path belongs.
     @ViewBuilder
     private var whatItTouches: some View {
         if plan.targets.isEmpty {
-            GoldenMutedNote(text: "Nothing selected yet.")
+            Section { NativeNote("Nothing selected yet.") }
         } else {
-            GoldenCard {
-                GoldenMutedNote(text: "Writes \(plan.targets.count) file(s) to the device:")
+            Section("Writes \(plan.targets.count) file(s) to the device:") {
                 ForEach(plan.targets) { target in
-                    GoldenStatusText(text: "\(shortPath(target.location)) · \(target.kind.rawValue)",
-                                     tone: .secondary)
+                    Text("\(shortPath(target.path)) · \(target.kind.rawValue)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -120,24 +118,28 @@ struct ResetPagesSheet: View {
     /// plist, and the reason is that a 0-byte plist is a *truncated* plist on the
     /// newer releases, which is a SpringBoard boot loop. The user has to be able
     /// to read that before the button, not in a failure afterwards.
-    private var procedureNote: some View {
-        Group {
+    private var procedureSection: some View {
+        Section {
             if isIOS27 {
-                GoldenSafetyNote(text: "iOS \(deviceVersion): each nulled file is written as a "
+                NativeSafetyNote("iOS \(deviceVersion): each nulled file is written as a "
                     + "valid empty plist, not 0 bytes. A 0-byte plist is a truncated plist on "
                     + "this release and crashes SpringBoard at boot. An empty plist parses, and the "
                     + "system falls back to its own defaults.")
             } else {
-                GoldenMutedNote(text: "Each nulled file is written as 0 bytes, which makes the "
+                NativeNote("Each nulled file is written as 0 bytes, which makes the "
                     + "daemon that reads it fall back to its defaults.")
             }
-            GoldenMutedNote(text: "Nothing is read back from the device first: no original values "
+            NativeNote("Nothing is read back from the device first: no original values "
                 + "are captured, so a file that was already custom before an apply is put back to "
                 + "its default rather than to what it held. The daemon list is the exception — it "
                 + "is written with the six entries a stock device ships. The selections in this app "
                 + "are left alone; applying again writes the tweaks back.")
-            GoldenMutedNote(text: "There is no Status Bar page to reset in this port: nothing here "
-                + "writes /Library/SpringBoard/statusBarOverrides.")
+            NativeNote("The Status Bar reset is the one file here that is written whole, not "
+                + "nulled: a fresh, all-default "
+                + (isIOS27 ? "StatusBarOverrides.archive with no cellular entries, which "
+                    + "SpringBoard decodes as \"no overrides\"."
+                    : "statusBarOverrides struct, so every override reads as off.")
+                + " It goes through the same mechanism the Status Bar page applies with.")
         }
     }
 
@@ -151,11 +153,11 @@ struct ResetPagesSheet: View {
         return count == 1 ? "1 file" : "\(count) files"
     }
 
-    /// The file name, not the path. Every location here sits in one of three
+    /// The file name, not the path. Every location here sits in one of a few
     /// directories and the same prefix nine times says less than the name does;
     /// the full path is one tap away in the run log.
-    private func shortPath(_ location: TweakFileLocation) -> String {
-        location.rawValue.split(separator: "/").last.map(String.init) ?? location.rawValue
+    private func shortPath(_ path: String) -> String {
+        path.split(separator: "/").last.map(String.init) ?? path
     }
 
     private func binding(for page: ResetPage) -> Binding<Bool> {

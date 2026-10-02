@@ -63,28 +63,20 @@ struct TweaksView: View {
     @State private var foldedByHand: Set<TweakSection> = []
 
     var body: some View {
-        GoldenPage(spacing: GoldenTheme.rowSpacing) {
-            identityCard
+        List {
+            identitySection
             importSection
             tweakSections
             if let importReport { reportSection(importReport) }
             if let importError { errorSection(importError) }
             if !tail.isEmpty { logSection }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("Tweaks")
         // Compact widths only -- on a tablet the split view draws its own sidebar
         // toggle, and a second button beside it is the duplicate-controls mess.
         .goldenSidebarButton()
         .navigationBarTitleDisplayMode(.inline)
-        // The reference's `IOSNavBar` is `bg_secondary` with a bottom divider;
-        // on iOS that is the platform bar with its background pinned visible.
-        // `.visible` is stated rather than inherited: the home page hides its
-        // bar (it has its own logo header), and visibility is only reliably
-        // per-page when both ends say what they want.
-        .toolbar(.visible, for: .navigationBar)
-        .toolbarBackground(GoldenTheme.backgroundSecondary, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
         .task {
             // Read before restoring, and the order is load-bearing: the stored
             // preset is applied through `TweakSpec.isCompatible`, so restoring
@@ -126,45 +118,40 @@ struct TweaksView: View {
 
     // MARK: - Sections
 
-    /// The device line + coverage count, as one card (`home_card_title` +
-    /// `home_card_subtitle` sizes).
-    private var identityCard: some View {
-        GoldenCard {
+    /// The device line + coverage count.
+    private var identitySection: some View {
+        Section {
             Text(identity.describe)
-                .font(GoldenFont.cardTitle)
-                .foregroundColor(GoldenTheme.textPrimary)
-            GoldenMutedNote(text: "\(selection.enabledCount) of \(visibleSpecs.count) applicable tweak(s) enabled. "
+                .font(.headline)
+            NativeNote("\(selection.enabledCount) of \(visibleSpecs.count) applicable tweak(s) enabled. "
                 + "Incompatible and un-ported tweaks are hidden, the same way the reference hides them.")
         }
     }
 
     private var importSection: some View {
-        GoldenSection(
-            title: "Saved state",
-            content: AnyView(
-                VStack(alignment: .leading, spacing: GoldenTheme.rowSpacing) {
-                    GoldenActionRow(title: "Import autosave.json",
-                                    systemImage: "square.and.arrow.down",
-                                    tone: running ? .disabled : .primary) {
-                        showImporter = true
-                    }
-                    .disabled(running)
-                    GoldenActionRow(title: "Clear all tweaks",
-                                    systemImage: "xmark.circle",
-                                    tone: .error) {
-                        selection.removeAll()
-                        importReport = nil
-                        importError = nil
-                        // Delete it rather than leaving it to be re-read: an
-                        // all-off autosave and no autosave are the same state,
-                        // and the latter cannot resurrect a cleared tweak.
-                        GoldenNuggetAutosave.clear()
-                    }
-                    .disabled(running || selection.enabledCount == 0)
-                    GoldenMutedNote(text: autosaveNote)
-                }
-            )
-        )
+        Section("Saved state") {
+            Button {
+                showImporter = true
+            } label: {
+                Label("Import autosave.json", systemImage: "square.and.arrow.down")
+            }
+            .disabled(running)
+
+            Button(role: .destructive) {
+                selection.removeAll()
+                importReport = nil
+                importError = nil
+                // Delete it rather than leaving it to be re-read: an
+                // all-off autosave and no autosave are the same state,
+                // and the latter cannot resurrect a cleared tweak.
+                GoldenNuggetAutosave.clear()
+            } label: {
+                Label("Clear all tweaks", systemImage: "xmark.circle")
+            }
+            .disabled(running || selection.enabledCount == 0)
+
+            NativeNote(autosaveNote)
+        }
     }
 
     @ViewBuilder
@@ -174,49 +161,62 @@ struct TweaksView: View {
             if !specs.isEmpty {
                 let on = specs.filter { selection.isOn($0) }.count
                 let collapsed = collapsedBinding(for: section, specs: specs)
-                // Header and rows are **siblings**, not a header containing its
-                // rows: that is what lets `GoldenPage`'s lazy stack build a row
-                // only when it scrolls into view.  See `GoldenCollapsibleHeader`.
-                GoldenCollapsibleHeader(
-                    title: "\(section.rawValue) (\(on)/\(specs.count))",
-                    isCollapsed: collapsed
-                )
-                if !collapsed.wrappedValue {
-                    ForEach(specs, id: \.id) { spec in
-                        TweakRow(spec: spec, selection: $selection)
-                            .id("\(spec.id)#\(formEpoch)")
+                // A section that folds away, with its own chevron in the header
+                // — the platform's `Section(isExpanded:)` drew no affordance in
+                // this list, so the disclosure is explicit.  The rows are only
+                // built while the section is open, so a folded group costs
+                // nothing.
+                Section {
+                    if !collapsed.wrappedValue {
+                        ForEach(specs, id: \.id) { spec in
+                            TweakRow(spec: spec, selection: $selection)
+                                .id("\(spec.id)#\(formEpoch)")
+                        }
                     }
+                } header: {
+                    NativeCollapsibleHeader(
+                        title: "\(section.rawValue) (\(on)/\(specs.count))",
+                        collapsed: collapsed)
                 }
             }
         }
     }
 
     private func reportSection(_ report: TweakImportReport) -> some View {
-        GoldenSection(
-            title: "Import result",
-            content: AnyView(
-                GoldenCard {
-                    ForEach(Array(report.logLines.enumerated()), id: \.offset) { _, line in
+        Section("Import result") {
+            ForEach(Array(report.logLines.enumerated()), id: \.offset) { _, line in
+                Text(line)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func errorSection(_ message: String) -> some View {
+        Section("Import failed") {
+            NativeNote(message)
+        }
+    }
+
+    private var logSection: some View {
+        Section("Run log (last 30 lines)") {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(tail.enumerated()), id: \.offset) { _, line in
                         Text(line)
-                            .font(GoldenFont.log)
-                            .foregroundColor(GoldenTheme.textSecondary)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-            )
-        )
-    }
-
-    private func errorSection(_ message: String) -> some View {
-        GoldenSection(title: "Import failed",
-                      content: AnyView(GoldenMutedNote(text: message)))
-    }
-
-    private var logSection: some View {
-        GoldenSection(title: "Run log (last 30 lines)",
-                      content: AnyView(GoldenLogView(lines: tail, height: 260)))
+            }
+            .frame(height: 260)
+        }
     }
 
     // MARK: - Behaviour

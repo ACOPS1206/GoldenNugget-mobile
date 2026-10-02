@@ -165,25 +165,34 @@ class Reference:
                         self.nulls[page].append(member)
 
     def _read_null_loop(self, fn) -> None:
-        """The loop that drains `files_to_null`, and the per-branch null bytes."""
+        """The loop that drains `files_to_null`, and the per-branch null bytes.
+
+        Two reference shapes are supported: the current one, where the loop body
+        forks directly on `if is_ios27:` (`plistlib.dumps({})` vs `b""`), and the
+        older one that captured the original plist first and forked inside the
+        `orelse` of `if original is not None:`. The reference dropped the capture
+        when it dropped psysbackup; both are read so a diff against either tree
+        still works.
+        """
         for node in ast.walk(fn):
             if not (isinstance(node, ast.For) and unparse(node.target) == "file_path"):
                 continue
             self.null_loop_line = node.lineno
-            # `original = original_plists.get(file_path)` / `if original is not None:`
-            # `elif >= 27.0:` -> `else: b""`. The else arm hangs off the *version* if's
-            # own orelse, not off the outer one.
             for stmt in node.body:
-                if not (isinstance(stmt, ast.If) and _is_not_none(stmt.test)):
+                if not isinstance(stmt, ast.If):
                     continue
-                for arm in stmt.orelse:
-                    if isinstance(arm, ast.If) and _is_version_ge_27(arm.test):
-                        self.null_fork["ios27"] = _contents_expr(arm.body)
-                        for inner in arm.orelse:
-                            if isinstance(inner, ast.Assign):
-                                self.null_fork["ios26"] = _contents_expr([inner])
-                    elif isinstance(arm, ast.Assign):
-                        self.null_fork["ios26"] = _contents_expr([arm])
+                if _is_ios27_test(stmt.test):
+                    self.null_fork["ios27"] = _contents_expr(stmt.body)
+                    self.null_fork["ios26"] = _contents_expr(stmt.orelse)
+                elif _is_not_none(stmt.test):
+                    for arm in stmt.orelse:
+                        if isinstance(arm, ast.If) and _is_version_ge_27(arm.test):
+                            self.null_fork["ios27"] = _contents_expr(arm.body)
+                            for inner in arm.orelse:
+                                if isinstance(inner, ast.Assign):
+                                    self.null_fork["ios26"] = _contents_expr([inner])
+                        elif isinstance(arm, ast.Assign):
+                            self.null_fork["ios26"] = _contents_expr([arm])
 
     # -- add_skip_setup ------------------------------------------------------------ #
 
@@ -273,6 +282,13 @@ def _is_version_ge_27(test: ast.expr) -> bool:
     return bool(re.search(r"Version\((['\"])27\.0\1\)", text)) and ">=" in text
 
 
+def _is_ios27_test(test: ast.expr) -> bool:
+    """The null loop's version fork: `if is_ios27:` or an inline `Version >= 27.0`."""
+    if isinstance(test, ast.Name):
+        return test.id in ("is_ios27", "ios27")
+    return _is_version_ge_27(test)
+
+
 def _const_dict(node: ast.Dict) -> dict:
     out = {}
     for k, v in zip(node.keys, node.values):
@@ -348,17 +364,28 @@ class Port:
         return "unknown"
 
     def skip_setup_gate(self) -> str:
-        """The gate, normalised: which page sets `uses_domains`, and the `or` arm."""
+        """The gate, normalised: which pages set `uses_domains`, and the `or` arm.
+
+        The reference sets the flag in the Daemons branch *and* in the StatusBar
+        branch's iOS 27 (archive) arm. The AST walker above does not descend into
+        the status bar's inner version `if`, so it only reports Daemons; this
+        side reads the port's source directly and requires both arms.
+        """
         m = re.search(r"func skipSetupAllowed\(.*?\) -> Bool \{\s*\n(.*?)\n    \}",
                       self.reset_src, re.S)
         if not m:
             sys.exit("error: skipSetupAllowed(pages:ios27:) not found in TweakReset.swift")
         body = m.group(1)
-        uses = re.search(r"usesDomains = pages\.contains\(\.(\w+)\)", body)
+        uses = re.search(r"usesDomains = (.*)", body)
         allowed = re.search(r"return usesDomains \|\| !ios27", body)
         if not uses or not allowed:
             sys.exit("error: could not read the skipSetupAllowed body")
-        return f"daemons page sets the flag; or !ios27"
+        expression = uses.group(1)
+        if not ("pages.contains(.daemons)" in expression
+                and "pages.contains(.statusBar)" in expression
+                and "ios27" in expression):
+            sys.exit(f"error: unexpected skipSetupAllowed usesDomains expression: {expression}")
+        return "statusBar (iOS 27) and daemons set the flag; or !ios27"
 
 
 
@@ -429,7 +456,8 @@ def compare(ref: Reference, port: Port, verbose: bool) -> list[str]:
           True,
           "restoring_domains" in ref_gate
           and bool(re.search(r"Version\((['\"])27\.0\1\)", ref_gate)))
-    check("gate: this port", "daemons page sets the flag; or !ios27", port.skip_setup_gate())
+    check("gate: this port", "statusBar (iOS 27) and daemons set the flag; or !ios27",
+          port.skip_setup_gate())
     check("which pages set uses_domains in a reset", ["Daemons"],
           ref.pages_setting_uses_domains)
 
