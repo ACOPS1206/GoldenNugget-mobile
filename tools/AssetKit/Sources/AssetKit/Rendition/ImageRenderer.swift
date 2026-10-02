@@ -93,7 +93,8 @@ enum ImageRenderer {
                 appearance: file.appearance,
                 gamut: .sRGB,
                 filename: filename,
-                kind: .appIcon
+                kind: .appIcon,
+                resampleTarget: file.pixelSize
             )
             out.append(contentsOf: try PNGSource.renditions(bytes: bytes, context: ctx))
         }

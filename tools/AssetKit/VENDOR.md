@@ -50,6 +50,34 @@ open issue or PR about appearances.
    decoder; this reports the table that went *into* the CAR so
    `tools/assetkit-cli --dump-renditions` can assert the pairing. It does not
    affect the produced bytes.
+6. `AppIcon/IconBundle.swift` (new) — `IconBundleContents` models the slice of
+   an Icon Composer `icon.json` a flat fallback needs (layer `image-name`s and
+   `hidden-specializations`), and `FlatIconSynthesis` expands the bundle's base
+   and dark artwork across the standard iphone/ipad/marketing matrix.
+   Upstream has no Icon Composer support at all.
+7. `Catalog/CatalogLoader.swift` — recognizes `.icon` directories, synthesizes
+   a `LoadedAppIcon` from them, and replaces the single `appIcon` with
+   `primaryAppIcon` + `additionalAppIcons`. An `.icon` bundle is preferred as
+   the primary, otherwise a set named `AppIcon`; alternates still contribute
+   renditions (so `setAlternateIconName` resolves) but not plist keys.
+8. `AppIcon/AppIconPlist.swift` + `XCAssetCompiler.swift` — `IconFile.pixelSize`
+   and the loose-PNG path. An `.icon` bundle carries one 1024px master per
+   appearance, so every synthesized slot is resampled to its point size before
+   it becomes a rendition or a loose PNG. Plain `.appiconset`s leave it `nil`
+   and pass their pre-sized files through untouched.
+9. `Rendition/PNGSource.swift` — `Context.resampleTarget`, a bilinear
+   premultiplied-BGRA downscaler, and `resizedPNG(bytes:target:)` (swift-png
+   encode into an in-memory bytestream) for the loose files.
+10. `CAR/CARLayout.swift` — unchanged layout, but now also classifies the
+    alternates' renditions; `CARWriter` still drops the unreproducible
+    `BITMAPKEYS` block.
+
+The flat `.icon` fallback deliberately does **not** reproduce the iconstack
+(part 245/246, layout 1019): the gradient fill, shadow, translucency and
+tintable appearance are lost. It exists so a Linux build with no committed
+actool car still ships a correctly named `AppIcon` with a dark appearance.
+`scripts/compile-assets.sh` keeps the actool car authoritative and takes the
+shim path only when none is committed (or `ASSETKIT_SHIM_FORCE=1`).
 
 ## Removed
 

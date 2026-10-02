@@ -26,10 +26,20 @@ enum PNGSource {
         var gamut: Gamut
         var filename: String
         var kind: BitmapBody.Kind
+        /// Local addition. When set, the decoded artwork is downscaled to this
+        /// many pixels (square) before it becomes a rendition. Icon Composer
+        /// `.icon` bundles carry one 1024px master per appearance, so every
+        /// `.appiconset` slot they expand into needs resampling; plain
+        /// imagesets and appiconsets leave it `nil` and pass bytes through.
+        var resampleTarget: Int? = nil
     }
 
     static func renditions(bytes: Data, context: Context) throws -> [Rendition] {
-        let (width, height, bgra) = try decodeBGRA(bytes)
+        var (width, height, bgra) = try decodeBGRA(bytes)
+        if let target = context.resampleTarget, target > 0, target != Int(width) {
+            (width, height, bgra) = resampleBGRA(
+                width: width, height: height, pixels: bgra, target: target)
+        }
         return [Rendition(
             name: context.assetName,
             idiom: context.idiom,
@@ -70,5 +80,108 @@ enum PNGSource {
             out[base + 3] = px.a
         }
         return (width, height, out)
+    }
+
+    /// Downscale a square, premultiplied-BGRA buffer with bilinear
+    /// interpolation. Only ever shrinks: Icon Composer masters are 1024px and
+    /// every app-icon slot is smaller or equal. Premultiplied channels
+    /// interpolate linearly, so no alpha un/re-premultiply is required.
+    static func resampleBGRA(
+        width: UInt32, height: UInt32, pixels: [UInt8], target: Int
+    ) -> (UInt32, UInt32, [UInt8]) {
+        guard target > 0, target != Int(width) || target != Int(height) else {
+            return (width, height, pixels)
+        }
+        let dst = target
+        let srcW = Int(width)
+        let srcH = Int(height)
+        let scaleX = Double(srcW) / Double(dst)
+        let scaleY = Double(srcH) / Double(dst)
+        var out = [UInt8](repeating: 0, count: dst * dst * 4)
+        for dy in 0..<dst {
+            let sy = (Double(dy) + 0.5) * scaleY - 0.5
+            let y0 = max(0, min(srcH - 1, Int(sy.rounded(.down))))
+            let y1 = min(srcH - 1, y0 + 1)
+            let fy = max(0, min(1, sy - Double(y0)))
+            for dx in 0..<dst {
+                let sx = (Double(dx) + 0.5) * scaleX - 0.5
+                let x0 = max(0, min(srcW - 1, Int(sx.rounded(.down))))
+                let x1 = min(srcW - 1, x0 + 1)
+                let fx = max(0, min(1, sx - Double(x0)))
+                let i00 = (y0 * srcW + x0) * 4
+                let i10 = (y0 * srcW + x1) * 4
+                let i01 = (y1 * srcW + x0) * 4
+                let i11 = (y1 * srcW + x1) * 4
+                let o = (dy * dst + dx) * 4
+                for c in 0..<4 {
+                    let top = Double(pixels[i00 + c]) * (1 - fx) + Double(pixels[i10 + c]) * fx
+                    let bottom = Double(pixels[i01 + c]) * (1 - fx) + Double(pixels[i11 + c]) * fx
+                    let value = top * (1 - fy) + bottom * fy
+                    out[o + c] = UInt8(max(0, min(255, value.rounded())))
+                }
+            }
+        }
+        return (UInt32(dst), UInt32(dst), out)
+    }
+
+    /// Decode `bytes`, downscale the (straight-alpha) RGBA to `target` pixels
+    /// square, and re-encode. Used for the loose PNGs in the bundle root, which
+    /// SpringBoard reads directly and which must match the slot's pixel size.
+    static func resizedPNG(bytes: Data, target: Int) throws -> Data {
+        var blob = MemoryBytestream(bytes: [UInt8](bytes))
+        let image = try PNG.Image.decompress(stream: &blob)
+        let source = image.unpack(as: PNG.RGBA<UInt8>.self)
+        let resized: [PNG.RGBA<UInt8>]
+        if target > 0, target != image.size.x {
+            resized = resampleRGBA(
+                source, width: image.size.x, height: image.size.y, target: target)
+        } else {
+            resized = source
+        }
+        let layout = PNG.Layout(format: .rgba8(palette: [], fill: nil))
+        let out = PNG.Image(
+            packing: resized, size: (x: target, y: target), layout: layout)
+        var destination = DataDestination()
+        try out.compress(stream: &destination, level: 9)
+        return Data(destination.data)
+    }
+
+    private static func resampleRGBA(
+        _ pixels: [PNG.RGBA<UInt8>], width: Int, height: Int, target: Int
+    ) -> [PNG.RGBA<UInt8>] {
+        guard target > 0, target != width || target != height else { return pixels }
+        var flattened = [UInt8](repeating: 0, count: width * height * 4)
+        for i in 0..<pixels.count {
+            flattened[i * 4 + 0] = pixels[i].r
+            flattened[i * 4 + 1] = pixels[i].g
+            flattened[i * 4 + 2] = pixels[i].b
+            flattened[i * 4 + 3] = pixels[i].a
+        }
+        // Straight-alpha channels still interpolate acceptably for an icon
+        // fallback; the value is visual approximation, not a bit-exact match to
+        // Apple's Lanczos-like resampler.
+        let (_, _, rgba) = resampleBGRA(
+            width: UInt32(width), height: UInt32(height), pixels: flattened, target: target)
+        var out: [PNG.RGBA<UInt8>] = []
+        out.reserveCapacity(target * target)
+        for i in 0..<(target * target) {
+            let r = rgba[i * 4 + 0]
+            let g = rgba[i * 4 + 1]
+            let b = rgba[i * 4 + 2]
+            let a = rgba[i * 4 + 3]
+            out.append(PNG.RGBA<UInt8>(r, g, b, a))
+        }
+        return out
+    }
+}
+
+/// In-memory PNG destination, so `resizedPNG` can hand back `Data` instead of
+/// round-tripping through a temporary file.
+private struct DataDestination: PNG.BytestreamDestination {
+    var data: [UInt8] = []
+
+    mutating func write(_ buffer: [UInt8]) -> Void? {
+        data.append(contentsOf: buffer)
+        return ()
     }
 }

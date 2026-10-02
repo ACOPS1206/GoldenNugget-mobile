@@ -93,7 +93,7 @@ public struct XCAssetCompiler: Sendable {
         }
 
         var appIconBundle: AppIconBundle?
-        if let appIcon = loaded.appIcon {
+        if let appIcon = loaded.primaryAppIcon {
             let plist = try AppIconPlistEmitter.emit(appIcon)
             renditions.append(contentsOf: try ImageRenderer.appIconRenditions(for: appIcon, files: plist.iconFiles))
 
@@ -106,8 +106,7 @@ public struct XCAssetCompiler: Sendable {
                 guard file.appearance == nil else { continue }
                 let suffix = file.scale == 1 ? "" : "@\(file.scale)x"
                 let target = "\(file.outputName)\(suffix).png"
-                let data = try Data(contentsOf: file.sourceURL)
-                looseFiles.append(LooseFile(name: target, data: data))
+                looseFiles.append(LooseFile(name: target, data: try loosePNG(for: file)))
             }
 
             appIconBundle = AppIconBundle(
@@ -117,10 +116,28 @@ public struct XCAssetCompiler: Sendable {
             )
         }
 
+        // Alternates (e.g. `ScrappedIcon`) still need a rendition for
+        // `setAlternateIconName` to resolve, but only the primary contributes
+        // `CFBundleIconName` / `CFBundleIconFiles`.
+        for alternate in loaded.additionalAppIcons {
+            let plist = try AppIconPlistEmitter.emit(alternate)
+            renditions.append(contentsOf: try ImageRenderer.appIconRenditions(
+                for: alternate, files: plist.iconFiles))
+        }
+
         let writer = CARWriter(deploymentTarget: deploymentTarget, renditions: renditions)
         let bytes = try writer.write()
 
         return CompileResult(carData: bytes, appIconBundle: appIconBundle)
+    }
+
+    /// Returns the bytes for one loose app-icon PNG, resampling first when the
+    /// source is a single master shared across slots (an Icon Composer `.icon`
+    /// bundle) and copying the file through otherwise.
+    private func loosePNG(for file: IconFile) throws -> Data {
+        let bytes = try Data(contentsOf: file.sourceURL)
+        guard let target = file.pixelSize else { return bytes }
+        return try PNGSource.resizedPNG(bytes: bytes, target: target)
     }
 
     /// Local patch (verification aid). `Assets.car` is LZFSE-compressed, so on
@@ -144,9 +161,15 @@ public struct XCAssetCompiler: Sendable {
                 out.append(RenditionReport(rendition: rendition))
             }
         }
-        if let appIcon = loaded.appIcon {
+        if let appIcon = loaded.primaryAppIcon {
             let plist = try AppIconPlistEmitter.emit(appIcon)
             for rendition in try ImageRenderer.appIconRenditions(for: appIcon, files: plist.iconFiles) {
+                out.append(RenditionReport(rendition: rendition))
+            }
+        }
+        for alternate in loaded.additionalAppIcons {
+            let plist = try AppIconPlistEmitter.emit(alternate)
+            for rendition in try ImageRenderer.appIconRenditions(for: alternate, files: plist.iconFiles) {
                 out.append(RenditionReport(rendition: rendition))
             }
         }

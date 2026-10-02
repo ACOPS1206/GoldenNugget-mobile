@@ -12,10 +12,14 @@ bundleID: com.awesomenull.goldennugget
 deploymentTarget: 26.0
 infoPath: layout/Applications/GoldenNuggetMobile.app/Info.plist
 resources:
-  # The icon is an Icon Composer bundle compiled by Apple's own actool (see
-  # scripts/compile-assets.sh and .github/workflows/assets-car.yml). The car is
-  # the only icon source on purpose: loose PNGs are light-only and would shadow
-  # the dark variant the iconstack carries.
+  # The icon is an Icon Composer bundle. Normally Apple's own actool compiles
+  # it into this car (see scripts/compile-assets.sh and
+  # .github/workflows/assets-car.yml), keeping the iconstack (part 245/246)
+  # and its tintable appearance. When no actool car is committed the AssetKit
+  # shim compiles the catalog on Linux instead, expanding the `.icon`'s base
+  # and dark artwork into a classic part-220 appiconset with both appearances.
+  # Either way the car is the only icon source on purpose: the shim's loose
+  # PNGs are base-appearance only and would shadow the dark variant.
   #
   # xtool cannot compile the catalog itself: it copies actool out of the darwin
   # SDK into xtool/.xtool-tmp/actool and execs it, and that copy loses the
@@ -26,10 +30,10 @@ resources:
   # restored it would fail again: that actool is "Mach-O 64-bit arm64" and this
   # is an x86_64 Linux host.
   #
-  # So scripts/compile-assets.sh runs the AssetKit-backed actool shim over
-  # Assets.xcassets first and leaves Assets.car plus the loose PNGs in
-  # build/assets/, and xtool ships them here as ordinary resources.  Run that
-  # script before `xtool dev build`; see the build order in scripts/build-ipa.sh.
+  # So scripts/compile-assets.sh leaves Assets.car in build/assets/ first
+  # (copied from actool's output when present, otherwise written by the shim),
+  # and xtool ships it here as an ordinary resource.  Run that script before
+  # `xtool dev build`; see the build order in scripts/build-ipa-xtool.sh.
   #
   # AppIcon60x60@2x is deliberately absent: iconPath above already puts a file
   # of that name in the bundle root, and two entries would fight over one

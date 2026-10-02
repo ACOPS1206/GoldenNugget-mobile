@@ -4,7 +4,14 @@ struct LoadedCatalog: Sendable {
     var url: URL
     var imageSets: [LoadedImageSet]
     var colorSets: [LoadedColorSet]
-    var appIcon: LoadedAppIcon?
+    /// The app icon the bundle's `CFBundleIconName` resolves to. An Icon
+    /// Composer `.icon` wins over a plain `.appiconset`, and a set literally
+    /// named `AppIcon` wins over any other appiconset.
+    var primaryAppIcon: LoadedAppIcon?
+    /// Other app icons in the catalog (e.g. an alternate reached through
+    /// `CFBundleAlternateIcons`). Their renditions ship in the car, but only
+    /// the primary's plist additions are emitted.
+    var additionalAppIcons: [LoadedAppIcon]
 }
 
 struct LoadedImageSet: Sendable {
@@ -23,6 +30,11 @@ struct LoadedAppIcon: Sendable {
     var name: String
     var directory: URL
     var contents: AppIconContents
+    /// Local addition. Icon Composer `.icon` bundles carry a single 1024px
+    /// master per appearance, so every `.appiconset` slot has to be downscaled
+    /// to its point size before it becomes a rendition. Plain `.appiconset`s
+    /// ship pre-sized files and are never resampled.
+    var resampleToPointSize: Bool = false
 }
 
 struct CatalogLoader: Sendable {
@@ -39,7 +51,8 @@ struct CatalogLoader: Sendable {
 
         var imageSets: [LoadedImageSet] = []
         var colorSets: [LoadedColorSet] = []
-        var appIcons: [LoadedAppIcon] = []
+        var appIconSets: [LoadedAppIcon] = []
+        var iconBundles: [LoadedAppIcon] = []
 
         try walk(url, fileManager: fm) { entry in
             let ext = entry.pathExtension
@@ -53,7 +66,11 @@ struct CatalogLoader: Sendable {
                 colorSets.append(LoadedColorSet(name: name, directory: entry, contents: contents))
             case "appiconset":
                 let contents = try decode(AppIconContents.self, at: entry, decoder: decoder)
-                appIcons.append(LoadedAppIcon(name: name, directory: entry, contents: contents))
+                appIconSets.append(LoadedAppIcon(name: name, directory: entry, contents: contents))
+            case "icon":
+                let contents = try decodeIconBundle(at: entry, decoder: decoder)
+                iconBundles.append(try FlatIconSynthesis.appIcon(
+                    name: name, directory: entry, contents: contents))
             default:
                 if !ext.isEmpty {
                     throw XCAssetCompilerError.unsupportedAssetType("\(name).\(ext)")
@@ -61,16 +78,46 @@ struct CatalogLoader: Sendable {
             }
         }
 
-        guard appIcons.count <= 1 else {
-            throw XCAssetCompilerError.multipleAppIconSets(appIcons.map(\.name))
+        // An Icon Composer `.icon` is always the primary when present: it is
+        // what `CFBundleIconName` names. Otherwise prefer a set literally named
+        // `AppIcon`, which is the conventional primary, and fall back to
+        // declaration order. The remaining sets are alternates whose
+        // renditions still have to be in the car for `setAlternateIconName`
+        // to resolve.
+        let primary = iconBundles.first
+            ?? appIconSets.first { $0.name == "AppIcon" }
+            ?? appIconSets.first
+        var all = iconBundles + appIconSets
+        if let primary, let index = all.firstIndex(where: { $0.name == primary.name }) {
+            all.remove(at: index)
         }
 
         return LoadedCatalog(
             url: url,
             imageSets: imageSets,
             colorSets: colorSets,
-            appIcon: appIcons.first
+            primaryAppIcon: primary,
+            additionalAppIcons: all
         )
+    }
+
+    private func decodeIconBundle(
+        at directory: URL, decoder: JSONDecoder
+    ) throws -> IconBundleContents {
+        let contentsURL = directory.appendingPathComponent("icon.json")
+        guard FileManager.default.fileExists(atPath: contentsURL.path) else {
+            throw XCAssetCompilerError.missingContentsJSON(path: contentsURL.path)
+        }
+        do {
+            return try decoder.decode(IconBundleContents.self, from: Data(contentsOf: contentsURL))
+        } catch let error as XCAssetCompilerError {
+            throw error
+        } catch {
+            throw XCAssetCompilerError.malformedContentsJSON(
+                path: contentsURL.path,
+                underlying: String(describing: error)
+            )
+        }
     }
 
     private func decode<T: Decodable>(_ type: T.Type, at directory: URL, decoder: JSONDecoder) throws -> T {
@@ -97,7 +144,7 @@ struct CatalogLoader: Sendable {
             let values = try child.resourceValues(forKeys: [.isDirectoryKey])
             guard values.isDirectory == true else { continue }
             let ext = child.pathExtension
-            if ["imageset", "colorset", "appiconset"].contains(ext) {
+            if ["imageset", "colorset", "appiconset", "icon"].contains(ext) {
                 try visit(child)
             } else {
                 try walk(child, fileManager: fm, visit: visit)

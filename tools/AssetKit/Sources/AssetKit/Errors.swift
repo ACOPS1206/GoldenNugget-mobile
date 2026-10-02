@@ -9,6 +9,7 @@ public enum XCAssetCompilerError: Error, Sendable, Equatable {
     case unsupportedGamut(String)
     case multipleAppIconSets([String])
     case appIconSizeMissing(asset: String, size: String)
+    case iconBundleMissingArtwork(asset: String)
     case notADirectory(path: String)
     case unsupportedAssetType(String)
     case malformedJPEG(reason: String)
@@ -36,6 +37,8 @@ extension XCAssetCompilerError: CustomStringConvertible {
             return "Catalog has more than one .appiconset: \(names.joined(separator: ", "))"
         case .appIconSizeMissing(let asset, let size):
             return "AppIcon '\(asset)' declares size \(size) but no source file matched"
+        case .iconBundleMissingArtwork(let asset):
+            return "Icon bundle '\(asset)' declares no visible artwork for any appearance"
         case .notADirectory(let path):
             return "Expected an .xcassets directory at \(path)"
         case .unsupportedAssetType(let name):

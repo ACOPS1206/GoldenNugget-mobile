@@ -17,6 +17,12 @@ struct IconFile: Sendable, Hashable {
     /// icon file, so a dark slot became a separate rendition instead of a
     /// second appearance of the same one.
     var appearance: Appearance?
+    /// Local addition. When set, the source artwork is resampled to this many
+    /// pixels before it becomes a rendition (and before it is written as a
+    /// loose PNG). `nil` means "use the file as-is", which is what a plain
+    /// `.appiconset` wants. Icon Composer `.icon` bundles set it because they
+    /// carry one 1024px master per appearance for every slot.
+    var pixelSize: Int?
 }
 
 enum AppIconPlistEmitter {
@@ -43,7 +49,10 @@ enum AppIconPlistEmitter {
                 scale: scale,
                 sourceURL: src,
                 outputName: bundleName,
-                appearance: image.appearances?.first { $0.darkLuminosity }
+                appearance: image.appearances?.first { $0.darkLuminosity },
+                pixelSize: appIcon.resampleToPointSize
+                    ? Int((w * Double(scale)).rounded())
+                    : nil
             )
             allFiles.append(entry)
             // Only the base appearance goes into CFBundleIconFiles. A dark
