@@ -85,7 +85,7 @@ settings:
     CODE_SIGN_IDENTITY: Apple Development
     DEVELOPMENT_TEAM: L7HX85L6GU
     CURRENT_PROJECT_VERSION: 1
-    MARKETING_VERSION: 0.1.0
+    MARKETING_VERSION: 9.5.2
     # The app icon is an Icon Composer document (`Assets.xcassets/AppIcon.icon`),
     # not loose PNGs: it carries a `luminosity=dark` layer, so the system picks
     # the dark artwork on a dark home screen and the light one otherwise.  Loose
