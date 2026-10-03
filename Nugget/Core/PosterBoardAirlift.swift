@@ -183,6 +183,13 @@ enum PosterBoardAirlift {
                 + "been cleared for the next attempt.")
         }
 
+        log("Refreshing PosterBoard cache and file protections…")
+        try await refreshPosterBoardPreferences(
+            container: container,
+            pairingPath: pairingPath,
+            log: log
+        )
+
         log("Respring so PosterBoard re-reads the store…")
         // The injections are the queue, so the bar is full before the respring;
         // the line below is what the operator is actually waiting on, and a bar
@@ -192,6 +199,79 @@ enum PosterBoardAirlift {
         try await Airlift.respring()
         progress(100)
         log("Injected \(injected) descriptor(s).")
+    }
+
+    /// Stage the same reload preferences AirCard writes after a Tendies flash.
+    ///
+    /// Descriptor injection can succeed while PosterBoard keeps using its cached
+    /// provider state and stale file-protection metadata. In that case the run
+    /// looks successful, but the wallpaper never appears in the picker. AirCard
+    /// fixes that by writing this unprotected defaults plist before respringing.
+    ///
+    /// The app-container copy is required: it is PosterBoard's own preferences.
+    /// The mobile-global copy is best-effort, matching AirCard, because some
+    /// system components consult the global preference domain during reload.
+    private static func refreshPosterBoardPreferences(
+        container: String,
+        pairingPath: String,
+        log: @escaping (String) -> Void
+    ) async throws {
+        let stage = PosterBoard.workDirectory
+            .appendingPathComponent("airlift-preferences-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: stage) }
+
+        let plist: [String: Any] = [
+            "PBF_RESET_FILE_PROTECTIONS": true,
+            "PBF_LOCALE_DID_CHANGE": false,
+            "PersistedPosterContainerBundleIdentifiers": [
+                "com.apple.Posters.CollectionsPosterApp",
+                "com.apple.WallpaperKit.CollectionsPoster",
+            ],
+            "CompletedPosterBundleIdentifierMigrations": [
+                "com.apple.Posters.UnityPosterApp.ExtragalacticPoster",
+                "com.apple.Posters.WeatherPosterApp.WeatherPoster",
+                "com.apple.Posters.UnityPosterApp.Unity2025Poster",
+                "com.apple.Posters.UnityPosterApp.UnityPosterExtension",
+                "com.apple.Posters.UnityPosterApp.RhizomePoster",
+                "com.apple.Posters.KaleidoscopePosterApp.KaleidoscopePoster",
+            ],
+        ]
+
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: plist,
+            format: .binary,
+            options: 0
+        )
+        let file = stage.appendingPathComponent("com.apple.PosterBoard.unprotectedUserDefaults.plist")
+        try data.write(to: file, options: .atomic)
+
+        var normalizedContainer = container
+        while normalizedContainer.hasSuffix("/") {
+            normalizedContainer.removeLast()
+        }
+
+        let posterBoardPreferences = normalizedContainer + "/Library/Preferences"
+        log("Writing PosterBoard reload preferences…")
+        try await Airlift.writeDir(
+            pairingPath: pairingPath,
+            sourceDir: stage.path,
+            targetDir: posterBoardPreferences
+        )
+
+        do {
+            try await Airlift.writeDir(
+                pairingPath: pairingPath,
+                sourceDir: stage.path,
+                targetDir: "/var/mobile/Library/Preferences"
+            )
+        } catch {
+            // AirCard treats the global copy as optional. The container copy above
+            // is the one that must succeed before we claim the refresh was staged.
+            log("  ⚠️ global PosterBoard preference copy failed: \(error.localizedDescription)")
+        }
+
+        log("PosterBoard preferences staged for reload.")
     }
 
     // MARK: - Descriptor discovery
