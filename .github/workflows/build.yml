@@ -32,3 +32,5 @@ jobs:
           name: GoldenNuggetMobile-patched
           path: build/GoldenNuggetMobile.ipa
           if-no-files-found: error
+
+# Manual rebuild trigger
