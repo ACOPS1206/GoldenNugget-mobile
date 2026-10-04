@@ -378,14 +378,56 @@ class GoldenNuggetEngine {
         }
     }
 
-    /// Run the AirLift PosterBoard injection, reporting through the run log.
-    private func applyPosterBoardOverAirlift(selection: PosterBoardSelection) async throws {
-        try await PosterBoardAirlift.apply(
+    /// Compile PosterBoard against the device's own store database, then deliver
+    /// the resulting configuration tree and registration rows over AirLift.
+    ///
+    /// A descriptor directory by itself is inert on current PosterBoard stores:
+    /// the picker is driven by the store database, and the normal compiler already
+    /// knows how to keep those two halves consistent. AirLift therefore replaces
+    /// only the *delivery* half of the normal PosterBoard path, not its compiler.
+    private func applyPosterBoardOverAirlift(
+        selection: PosterBoardSelection,
+        udid: String,
+        deviceVersion: String
+    ) async throws {
+        let major = Int(deviceVersion.split(separator: ".").first ?? "0") ?? 0
+        let fetched = try await PosterBoardBackup.fetch(
+            backupRoot: AppPaths.posterBoardFetchRoot,
+            udid: udid,
+            ios27: major >= 27,
+            onProgress: { overall in
+                // Leave the upper half of the visible progress bar for the
+                // compile/write/respring phases that follow the targeted fetch.
+                self.logProgress("posterboard database fetch", min(45, overall * 0.45))
+            },
+            log: { AppLog.write($0) }
+        )
+
+        let work = PosterBoard.workDirectory
+            .appendingPathComponent("airlift-db-backed-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.removeItem(at: work)
+        defer { try? FileManager.default.removeItem(at: work) }
+
+        log("PosterBoard: compiling against the freshly fetched store database "
+            + "(structure \(fetched.structureVersion))")
+        let payloads = try await PosterBoard.compile(
             selection: selection,
-            structureVersion: PosterBoard.fallbackStructureVersion,
+            structureVersion: fetched.structureVersion,
+            database: fetched.database,
+            deviceVersion: deviceVersion,
+            workingDirectory: work,
+            log: { AppLog.write($0) }
+        )
+        log("PosterBoard: \(payloads.count) compiled file(s) ready for AirLift delivery")
+
+        try await PosterBoardAirlift.applyCompiled(
+            payloads: payloads,
             pairingPath: AppPaths.pairingFile.path,
             log: { AppLog.write($0) },
-            progress: { overall in self.logProgress("posterboard airlift", overall) }
+            progress: { direct in
+                // Direct writer reports 0...100 for staging/write/respring.
+                self.logProgress("posterboard airlift", 45 + direct * 0.55)
+            }
         )
     }
 
@@ -439,11 +481,20 @@ class GoldenNuggetEngine {
         let stage = StageTimer("RUN posterboard airlift apply")
         defer { stage.done() }
 
-        try checkAirliftCanApply(posterBoard: selection, deviceVersion: deviceVersion)
-        log("PosterBoard: \(selection.describe) — over AirLift, no backup")
-        try await applyPosterBoardOverAirlift(selection: selection)
-        log("PosterBoard: injected over AirLift and resprung. No backup was taken, and no "
-            + "tweak was delivered — the home page's Apply is what delivers those.")
+        let version = try await resolvedDeviceVersion(deviceVersion)
+        try checkAirliftCanApply(posterBoard: selection, deviceVersion: version)
+        let udid = try await prepareRun()
+
+        log("PosterBoard: \(selection.describe) — database-backed AirLift")
+        log("PosterBoard: fetching only the PosterBoard store database; no full protective "
+            + "backup and no restore will be performed")
+        try await applyPosterBoardOverAirlift(
+            selection: selection,
+            udid: udid,
+            deviceVersion: version
+        )
+        log("PosterBoard: compiled store written over AirLift and resprung. No restore was "
+            + "performed, and no tweak was delivered — the home page's Apply delivers those.")
     }
 
     // MARK: - The shared delivery tail
