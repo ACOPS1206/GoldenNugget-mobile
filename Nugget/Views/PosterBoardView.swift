@@ -451,11 +451,11 @@ struct PosterBoardView: View {
             if !airliftBlocker.isEmpty {
                 NativeSafetyNote(airliftBlocker)
             }
-            NativeNote("Writes the descriptors into \(PosterBoard.domain) over a "
-                + "tunnel and resprings, so it is live in seconds. No backup is taken, because "
-                + "nothing is delivered back to the device — but for the same reason it applies "
-                + "**only** the packs: tweaks need the backup, so they still go through the "
-                + "**Apply** button on the home page.")
+            NativeNote("Fetches only PosterBoard\'s store database, compiles the selected packs into "
+                + "configuration files plus registration rows, writes that store back over AirLift, "
+                + "then resprings. It does not run a full protective backup or a restore. "
+                + "**Only** the packs are handled here; tweaks still go through the **Apply** "
+                + "button on the home page.")
         }
     }
 
@@ -623,7 +623,7 @@ struct PosterBoardView: View {
             do {
                 try await GoldenNuggetEngine.shared.applyPosterBoardViaAirlift(
                     selection, deviceVersion: identity.version)
-                text = "Applied over AirLift. The device resprung — no backup was taken."
+                text = "Applied over AirLift. PosterBoard was fetched and written directly; no restore was run."
                 tone = .success
             } catch let failure as TransportFailure where failure.isCancellation {
                 text = "⏹ stopped by the user (\(failure.label))"
