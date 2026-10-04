@@ -70,7 +70,10 @@ struct PosterBoardView: View {
             videoSection
             resetSection
             if applyMode == .airlift { airliftApplySection }
-            if !selection.tendies.isEmpty { macRawRestoreSection }
+            if !selection.tendies.isEmpty {
+                macConfigRestoreSection
+                macRawRestoreSection
+            }
             applySection
             if let pickError { errorSection(pickError) }
             if !statusText.isEmpty {
