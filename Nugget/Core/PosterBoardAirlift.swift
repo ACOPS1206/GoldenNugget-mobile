@@ -132,15 +132,15 @@ enum PosterBoardAirlift {
                         prefix: "  🔎 SOURCE \(descriptor.url.lastPathComponent)",
                         log: log
                     )
-                    // A descriptor that keeps the pack's own identifier collides with
-                    // every other copy of that pack on the device, so the id is
-                    // randomized on the way in — the directory name and the plist
-                    // values have to be rewritten together or PosterBoard indexes a
-                    // wallpaper it cannot find.
-                    randomizeIdentifiers(in: descriptor.url, numericID: numericID)
+                    // A/B diagnostic: preserve the descriptor's internal identifiers
+                    // exactly as the archive shipped them. The destination directory still
+                    // gets a fresh UUID, so this isolates identifier rewriting from the
+                    // AirTraffic write and the descriptor-folder collision problem.
+                    log("  🧪 preserving internal identifiers; destination UUID=\(target), "
+                        + "unused random candidate=\(numericID)")
                     logDescriptorIdentifiers(
                         in: descriptor.url,
-                        prefix: "  🔎 REWRITTEN target=\(target) numeric=\(numericID)",
+                        prefix: "  🔎 PRESERVED target=\(target)",
                         log: log
                     )
 
