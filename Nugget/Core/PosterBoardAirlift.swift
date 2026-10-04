@@ -127,12 +127,22 @@ enum PosterBoardAirlift {
                 for (position, descriptor) in descriptors.enumerated() {
                     let target = UUID().uuidString.uppercased()
                     let numericID = Int.random(in: 10000...99999)
+                    logDescriptorIdentifiers(
+                        in: descriptor.url,
+                        prefix: "  🔎 SOURCE \(descriptor.url.lastPathComponent)",
+                        log: log
+                    )
                     // A descriptor that keeps the pack's own identifier collides with
                     // every other copy of that pack on the device, so the id is
                     // randomized on the way in — the directory name and the plist
                     // values have to be rewritten together or PosterBoard indexes a
                     // wallpaper it cannot find.
                     randomizeIdentifiers(in: descriptor.url, numericID: numericID)
+                    logDescriptorIdentifiers(
+                        in: descriptor.url,
+                        prefix: "  🔎 REWRITTEN target=\(target) numeric=\(numericID)",
+                        log: log
+                    )
 
                     let parent = container + "Library/Application Support/"
                         + PosterBoard.storeDirectoryName + "/\(structureVersion)/Extensions/"
@@ -257,6 +267,62 @@ enum PosterBoardAirlift {
             log("  ⚠️ READ-BACK inconclusive for \(extensionID)/\(target): "
                 + error.localizedDescription)
         }
+    }
+
+    /// Log the identifier-bearing files in one descriptor before and after
+    /// GoldenNugget rewrites them. This is deliberately read-only diagnostics.
+    private static func logDescriptorIdentifiers(
+        in folder: URL,
+        prefix: String,
+        log: @escaping (String) -> Void
+    ) {
+        var descriptorID: String?
+        var representingIDs: [String] = []
+        var wallpaperIDs: [String] = []
+
+        guard let walker = FileManager.default.enumerator(
+            at: folder,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            log(prefix + " — cannot enumerate")
+            return
+        }
+
+        while let url = walker.nextObject() as? URL {
+            let name = url.lastPathComponent
+            switch name {
+            case "com.apple.posterkit.provider.descriptor.identifier":
+                if let data = try? Data(contentsOf: url),
+                   let text = String(data: data, encoding: .utf8) {
+                    descriptorID = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                } else {
+                    descriptorID = "<binary/unreadable>"
+                }
+
+            case "com.apple.posterkit.provider.contents.userInfo":
+                if let data = try? Data(contentsOf: url),
+                   let plist = try? PropertyListSerialization.propertyList(
+                       from: data, options: [], format: nil) as? [String: Any],
+                   let value = plist["wallpaperRepresentingIdentifier"] {
+                    representingIDs.append(String(describing: value))
+                }
+
+            default:
+                if name.hasSuffix("Wallpaper.plist"),
+                   let data = try? Data(contentsOf: url),
+                   let plist = try? PropertyListSerialization.propertyList(
+                       from: data, options: [], format: nil) as? [String: Any],
+                   let value = plist["identifier"] {
+                    wallpaperIDs.append(String(describing: value))
+                }
+            }
+        }
+
+        log(prefix
+            + " — descriptorID=" + (descriptorID ?? "<none>")
+            + ", representing=" + (representingIDs.isEmpty ? "<none>" : representingIDs.joined(separator: "|"))
+            + ", wallpaper=" + (wallpaperIDs.isEmpty ? "<none>" : wallpaperIDs.joined(separator: "|")))
     }
 
     // MARK: - Descriptor discovery
