@@ -70,6 +70,7 @@ struct PosterBoardView: View {
             videoSection
             resetSection
             if applyMode == .airlift { airliftApplySection }
+            if !selection.tendies.isEmpty { macRawRestoreSection }
             applySection
             if let pickError { errorSection(pickError) }
             if !statusText.isEmpty {
@@ -640,4 +641,35 @@ struct PosterBoardView: View {
             }
         }
     }
+    private func applyViaMacRawRestore() {
+        guard !running, macRawRestoreBlocker.isEmpty, !selection.tendies.isEmpty else { return }
+        running = true
+        runStarted = Date()
+        RunLog.shared.clear()
+        status = "Applying PosterBoard with the Mac raw-restore path…"
+        statusTone = .accent
+        Task {
+            var text = ""
+            var tone: GoldenTone = .primary
+            do {
+                try await GoldenNuggetEngine.shared.applyPosterBoardViaMacRawRestore(
+                    selection, deviceVersion: identity.version)
+                text = "Raw restore finished. Reboot the device, then check the wallpaper gallery."
+                tone = .success
+            } catch let failure as TransportFailure where failure.isCancellation {
+                text = "⏹ stopped by the user (\(failure.label))"
+                tone = .warning
+            } catch {
+                text = "❌ \(error.localizedDescription)"
+                tone = .error
+            }
+            await MainActor.run {
+                running = false
+                runStarted = nil
+                status = text
+                statusTone = tone
+            }
+        }
+    }
+
 }
