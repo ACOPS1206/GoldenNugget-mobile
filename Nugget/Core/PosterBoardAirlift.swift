@@ -144,9 +144,14 @@ enum PosterBoardAirlift {
                         log: log
                     )
 
+                    let targetExtensionID = descriptor.extensionID
+                        == PosterBoardPosterType.collections.extensionBundleID
+                        ? "com.apple.Posters.CollectionsPosterApp"
+                        : descriptor.extensionID
                     let parent = container + "Library/Application Support/"
                         + PosterBoard.storeDirectoryName + "/\(structureVersion)/Extensions/"
-                        + descriptor.extensionID + "/descriptors"
+                        + targetExtensionID + "/descriptors"
+                    log("  🧪 provider A/B: writing to \(targetExtensionID) only")
                     do {
                         try await Airlift.injectFolder(
                             pairingPath: pairingPath,
@@ -156,41 +161,16 @@ enum PosterBoardAirlift {
                         )
                         injected += 1
                         done += 1
-                        log("  ✅ \(position + 1)/\(descriptors.count) → \(descriptor.extensionID)")
+                        log("  ✅ \(position + 1)/\(descriptors.count) → \(targetExtensionID)")
                         progress(overall(done))
 
                         await verifyDescriptorReadback(
-                            extensionID: descriptor.extensionID,
+                            extensionID: targetExtensionID,
                             target: target,
                             structureVersion: structureVersion,
                             log: log
                         )
 
-                        // iOS 18+ moved the collections provider, so the reference
-                        // writes the same descriptor to both ids and treats the
-                        // second as best-effort (`try?`). Not a duplicate on the
-                        // device: the old id is no longer read, the new one is.
-                        if descriptor.extensionID == PosterBoardPosterType.collections.extensionBundleID {
-                            let modern = container + "Library/Application Support/"
-                                + PosterBoard.storeDirectoryName + "/\(structureVersion)"
-                                + "/Extensions/com.apple.Posters.CollectionsPosterApp/descriptors"
-                            do {
-                                try await Airlift.injectFolder(
-                                    pairingPath: pairingPath,
-                                    folderPath: descriptor.url.path,
-                                    targetParentDir: modern,
-                                    destName: target
-                                )
-                                await verifyDescriptorReadback(
-                                    extensionID: "com.apple.Posters.CollectionsPosterApp",
-                                    target: target,
-                                    structureVersion: structureVersion,
-                                    log: log
-                                )
-                            } catch {
-                                log("  ⚠️ modern provider copy failed: \(error.localizedDescription)")
-                            }
-                        }
                     } catch {
                         // A stale cached container is the likeliest cause and the one
                         // worth fixing in place rather than making the user retry.
