@@ -348,6 +348,7 @@ enum PosterBoardRawRestore {
             }
 
             let restoreRoot = PosterBoard.storePath(structureVersion)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                 + "/Extensions/\(compiled.provider)/descriptors"
             for file in compiled.files {
                 payloads.append(TweakPayload(
