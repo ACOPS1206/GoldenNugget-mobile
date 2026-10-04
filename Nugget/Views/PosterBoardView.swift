@@ -466,6 +466,47 @@ struct PosterBoardView: View {
         !running && airliftBlocker.isEmpty && selection.isActive
     }
 
+    private var macRawRestoreSection: some View {
+        Section("Mac raw restore · experimental") {
+            Button {
+                applyViaMacRawRestore()
+            } label: {
+                HStack {
+                    Label("Apply exactly like Mac raw restore",
+                          systemImage: "externaldrive.badge.checkmark")
+                    Spacer()
+                    if running { ProgressView().controlSize(.small) }
+                }
+            }
+            .disabled(running || !macRawRestoreBlocker.isEmpty)
+
+            if !macRawRestoreBlocker.isEmpty {
+                NativeSafetyNote(macRawRestoreBlocker)
+            }
+
+            NativeNote("This is the byte-preserving iOS 26 recovery path from the Mac "
+                + "GoldenNugget build. It keeps the archive's original descriptor UUIDs and "
+                + "identifiers, verifies the provider from suggestionMetadata, then delivers "
+                + "those files through the legacy AppDomain partial restore. It does not fetch "
+                + "or replace the PosterBoard database.")
+        }
+    }
+
+    private var macRawRestoreBlocker: String {
+        let major = Int(identity.version.split(separator: ".").first ?? "0") ?? 0
+        if !identity.version.isEmpty && major != 26 {
+            return "Mac raw descriptor restore is available only on iOS 26. "
+                + "This device reports iOS \(identity.version)."
+        }
+        if selection.video != nil {
+            return "Clear the video selection first; raw restore carries descriptor packs only."
+        }
+        if selection.fullReset || !selection.resetModes.isEmpty {
+            return "Clear PosterBoard reset selections first; raw restore cannot be combined with a reset."
+        }
+        return ""
+    }
+
     private var applySection: some View {
         Section {
             if applyMode == .airlift {
