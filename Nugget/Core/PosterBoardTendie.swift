@@ -374,6 +374,7 @@ enum PosterBoardRawRestore {
         stage: URL,
         log: @escaping (String) -> Void
     ) throws -> (provider: String, descriptorCount: Int, files: [ExtractedFile]) {
+        let fm = FileManager.default
         let archive: Archive
         do {
             archive = try Archive(url: pack.url, accessMode: .read)
