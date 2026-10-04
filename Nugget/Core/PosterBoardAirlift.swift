@@ -166,31 +166,7 @@ enum PosterBoardAirlift {
                             log: log
                         )
 
-                        // iOS 18+ moved the collections provider, so the reference
-                        // writes the same descriptor to both ids and treats the
-                        // second as best-effort (`try?`). Not a duplicate on the
-                        // device: the old id is no longer read, the new one is.
-                        if descriptor.extensionID == PosterBoardPosterType.collections.extensionBundleID {
-                            let modern = container + "Library/Application Support/"
-                                + PosterBoard.storeDirectoryName + "/\(structureVersion)"
-                                + "/Extensions/com.apple.Posters.CollectionsPosterApp/descriptors"
-                            do {
-                                try await Airlift.injectFolder(
-                                    pairingPath: pairingPath,
-                                    folderPath: descriptor.url.path,
-                                    targetParentDir: modern,
-                                    destName: target
-                                )
-                                await verifyDescriptorReadback(
-                                    extensionID: "com.apple.Posters.CollectionsPosterApp",
-                                    target: target,
-                                    structureVersion: structureVersion,
-                                    log: log
-                                )
-                            } catch {
-                                log("  ⚠️ modern provider copy failed: \(error.localizedDescription)")
-                            }
-                        }
+                        log("  🧪 provider A/B: old CollectionsPoster only")
                     } catch {
                         // A stale cached container is the likeliest cause and the one
                         // worth fixing in place rather than making the user retry.
