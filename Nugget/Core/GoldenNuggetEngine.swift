@@ -446,6 +446,104 @@ class GoldenNuggetEngine {
             + "tweak was delivered — the home page's Apply is what delivers those.")
     }
 
+    /// Apply normal .tendies using the macOS GoldenNugget configuration path:
+    /// fetch the device store DB, convert descriptors into configurations,
+    /// register those configuration UUIDs in the DB, then partial-restore the
+    /// resulting PosterBoard AppDomain files.
+    func applyPosterBoardViaMacConfigurationRestore(
+        _ selection: PosterBoardSelection,
+        deviceVersion: String
+    ) async throws {
+        AppLog.shared.memory.reset()
+        warnIfPreviousCallStillRunning()
+        clearCancel()
+        clearProgress()
+        let stage = StageTimer("RUN posterboard mac configuration restore")
+        defer { stage.done() }
+
+        guard !selection.tendies.isEmpty else {
+            throw GoldenNuggetError("Configuration restore needs at least one .tendies pack.")
+        }
+        guard selection.video == nil else {
+            throw GoldenNuggetError(
+                "Mac configuration restore is pack-only. Clear the video selection first.")
+        }
+        guard !selection.fullReset, selection.resetModes.isEmpty else {
+            throw GoldenNuggetError(
+                "Mac configuration restore cannot be combined with PosterBoard resets.")
+        }
+
+        let udid = try await prepareRun()
+        let version = try await resolvedDeviceVersion(deviceVersion)
+        let major = Int(version.split(separator: ".").first ?? "0") ?? 0
+        guard major == 26 else {
+            throw GoldenNuggetError(
+                "Mac configuration restore is limited to iOS 26. "
+                + "This device reports iOS \(version).")
+        }
+
+        log("PosterBoard config restore: fetching the device store database…")
+        let fetched = try await PosterBoardBackup.fetch(
+            backupRoot: AppPaths.posterBoardFetchRoot,
+            udid: udid,
+            ios27: false,
+            onProgress: { overall in
+                self.logProgress("posterboard database fetch", min(overall, 100))
+            },
+            log: { AppLog.write($0) }
+        )
+
+        let work = PosterBoard.workDirectory
+            .appendingPathComponent("MacConfigRestore", isDirectory: true)
+        try? FileManager.default.removeItem(at: work)
+        defer { try? FileManager.default.removeItem(at: work) }
+
+        let compiled = try await PosterBoard.compile(
+            selection: selection,
+            structureVersion: fetched.structureVersion,
+            database: fetched.database,
+            deviceVersion: version,
+            workingDirectory: work,
+            log: { AppLog.write($0) }
+        )
+
+        // FileToRestore in the macOS app is allowed to carry a leading slash,
+        // but concat_regular_file() strips that before serialising MBDB rows.
+        // Swift's MBDBManifest writes TweakPayload.relativePath directly, so
+        // mirror the encoded macOS result here.
+        let payloads: [TweakPayload] = compiled.map { payload in
+            let relative = String(payload.relativePath.drop(while: { $0 == "/" }))
+            if let source = payload.source {
+                return TweakPayload(
+                    domain: payload.domain,
+                    relativePath: relative,
+                    source: source
+                )
+            }
+            return TweakPayload(
+                domain: payload.domain,
+                relativePath: relative,
+                contents: payload.contents
+            )
+        }
+
+        let total = payloads.reduce(0) { $0 + $1.byteCount }
+        log("PosterBoard config restore: \(payloads.count) payload(s), "
+            + ByteCountFormatter.string(fromByteCount: Int64(total), countStyle: .file))
+        log("PosterBoard config restore: configurations + store DB + refresh preferences "
+            + "ready for iOS 26 AppDomain partial restore.")
+
+        try await deliver(
+            payloads: payloads,
+            udid: udid,
+            version: version,
+            label: "posterboard configuration restore"
+        ) {
+            log("PosterBoard configuration restore succeeded: the device confirmed 100%.")
+            log("Reboot the device so PosterBoard opens the restored configuration store.")
+        }
+    }
+
     /// Apply PosterBoard descriptors using the same byte-preserving recovery
     /// path that succeeded in the macOS GoldenNugget build.
     ///
