@@ -2,6 +2,8 @@ import Foundation
 import ZIPFoundation
 import Minimuxer
 import DeviceGatewayAPI
+import UIKit
+import ObjectiveC
 
 /// PosterBoard over an AirTraffic tunnel instead of a protective backup.
 ///
@@ -202,15 +204,48 @@ enum PosterBoardAirlift {
                 + "been cleared for the next attempt.")
         }
 
-        log("Respring so PosterBoard re-reads the store…")
-        // The injections are the queue, so the bar is full before the respring;
-        // the line below is what the operator is actually waiting on, and a bar
-        // that sits at 100% through it reads as finished. This is a userspace
-        // restart, not a reboot — the device does not go down.
+        log("Reloading PosterBoard directly (A/B test; no NeoSpring)…")
         progress(99)
-        try await Airlift.respring()
+        let opened = await openPosterBoardForReload()
+        log(opened
+            ? "PosterBoard launch request accepted."
+            : "PosterBoard launch request was not accepted.")
+        await openWallpaperSettings()
         progress(100)
-        log("Injected \(injected) descriptor(s).")
+        log("Injected \(injected) descriptor(s); opened Wallpaper settings for verification.")
+    }
+
+    /// AirCard briefly used this before switching to NeoSpring. Keep it as an
+    /// A/B experiment for iOS 26.7: if descriptors persist but NeoSpring does
+    /// not make the gallery re-index, explicitly waking PosterBoard may.
+    @MainActor
+    private static func openPosterBoardForReload() -> Bool {
+        guard let object = objc_getClass("LSApplicationWorkspace") as? NSObject else {
+            return false
+        }
+        guard let workspace = object
+            .perform(NSSelectorFromString("defaultWorkspace"))?
+            .takeUnretainedValue() as? NSObject
+        else { return false }
+
+        let result = workspace.perform(
+            NSSelectorFromString("openApplicationWithBundleID:"),
+            with: bundleID
+        )
+        return result != nil
+    }
+
+    @MainActor
+    private static func openWallpaperSettings() {
+        for value in [
+            "App-Prefs:root=WALLPAPER",
+            "prefs:root=WALLPAPER",
+            UIApplication.openSettingsURLString,
+        ] {
+            guard let url = URL(string: value) else { continue }
+            UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            return
+        }
     }
 
     /// Read the descriptor back through house_arrest after AirTraffic reports
