@@ -11,8 +11,9 @@ import Foundation
 ///    restore. It is the *reference's* mechanism, it works on every device the
 ///    rest of the app works on, and it ends in a reboot.
 ///  - `.airlift` is the AirCard path: open an AirTraffic tunnel over the pairing
-///    record this app already holds and write straight into PosterBoard's data
-///    container. No backup, no reboot — a respring is enough — but it needs
+///    record this app already holds. It fetches only PosterBoard's store database,
+///    compiles registrations, then writes the result directly into the app container.
+///    No full protective backup or restore, and no reboot — a respring is enough — but it needs
 ///    iOS 26.2+, LocalDevVPN, an unlocked device, and it cannot do a store reset.
 ///
 /// AirLift is the default. The backup path is this port's original mechanism, not
