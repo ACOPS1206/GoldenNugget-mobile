@@ -316,6 +316,13 @@ class GoldenNuggetEngine {
                 deviceVersion: version,
                 workingDirectory: PosterBoard.workDirectory,
                 log: { AppLog.write($0) })
+            posterBoardPayloads = posterBoardPayloads.map { payload in
+                let relative = String(payload.relativePath.drop(while: { $0 == "/" }))
+                if let source = payload.source {
+                    return TweakPayload(domain: payload.domain, relativePath: relative, source: source)
+                }
+                return TweakPayload(domain: payload.domain, relativePath: relative, contents: payload.contents)
+            }
             let onDisk = posterBoardPayloads.filter { $0.source != nil }.count
             let total = posterBoardPayloads.reduce(0) { $0 + $1.byteCount }
             log("PosterBoard: \(posterBoardPayloads.count) payload(s), \(onDisk) of them on disk "
