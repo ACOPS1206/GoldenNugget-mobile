@@ -279,16 +279,19 @@ class GoldenNuggetEngine {
         let major = Int(version.split(separator: ".").first ?? "0") ?? 0
         log("device version for the manifest-format fork: \(version) (major \(major))")
 
-        // PosterBoard, if the page has anything. Two mechanisms, chosen above:
-        // the store's database first — a wallpaper exists only once it has a row in
-        // it — and then the wallpapers themselves, unless AirLift is doing it, in
-        // which case there is no database and no payload: the injection into the
-        // container *is* the apply.
+        // PosterBoard, if the page has anything. Both mechanisms compile against
+        // the device's own database. The difference is delivery: backup mode puts
+        // the compiled store through mobilebackup2 restore, while AirLift writes
+        // the same compiled files straight into PosterBoard's live container.
         var posterBoardPayloads: [TweakPayload] = []
         var posterBoardInjectedOverAirlift = false
         if posterBoard.isActive && posterBoardMode == .airlift {
-            log("PosterBoard: \(posterBoard.describe) — over AirLift, no backup")
-            try await applyPosterBoardOverAirlift(selection: posterBoard)
+            log("PosterBoard: \(posterBoard.describe) — database-backed AirLift")
+            try await applyPosterBoardOverAirlift(
+                selection: posterBoard,
+                udid: udid,
+                deviceVersion: version
+            )
             posterBoardInjectedOverAirlift = true
         } else if posterBoard.isActive {
             log("PosterBoard: \(posterBoard.describe)")
