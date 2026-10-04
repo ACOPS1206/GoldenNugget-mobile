@@ -1,5 +1,7 @@
 import Foundation
 import ZIPFoundation
+import Minimuxer
+import DeviceGatewayAPI
 
 /// PosterBoard over an AirTraffic tunnel instead of a protective backup.
 ///
@@ -147,6 +149,13 @@ enum PosterBoardAirlift {
                         log("  ✅ \(position + 1)/\(descriptors.count) → \(descriptor.extensionID)")
                         progress(overall(done))
 
+                        await verifyDescriptorReadback(
+                            extensionID: descriptor.extensionID,
+                            target: target,
+                            structureVersion: structureVersion,
+                            log: log
+                        )
+
                         // iOS 18+ moved the collections provider, so the reference
                         // writes the same descriptor to both ids and treats the
                         // second as best-effort (`try?`). Not a duplicate on the
@@ -155,12 +164,22 @@ enum PosterBoardAirlift {
                             let modern = container + "Library/Application Support/"
                                 + PosterBoard.storeDirectoryName + "/\(structureVersion)"
                                 + "/Extensions/com.apple.Posters.CollectionsPosterApp/descriptors"
-                            try? await Airlift.injectFolder(
-                                pairingPath: pairingPath,
-                                folderPath: descriptor.url.path,
-                                targetParentDir: modern,
-                                destName: target
-                            )
+                            do {
+                                try await Airlift.injectFolder(
+                                    pairingPath: pairingPath,
+                                    folderPath: descriptor.url.path,
+                                    targetParentDir: modern,
+                                    destName: target
+                                )
+                                await verifyDescriptorReadback(
+                                    extensionID: "com.apple.Posters.CollectionsPosterApp",
+                                    target: target,
+                                    structureVersion: structureVersion,
+                                    log: log
+                                )
+                            } catch {
+                                log("  ⚠️ modern provider copy failed: \(error.localizedDescription)")
+                            }
                         }
                     } catch {
                         // A stale cached container is the likeliest cause and the one
@@ -192,6 +211,52 @@ enum PosterBoardAirlift {
         try await Airlift.respring()
         progress(100)
         log("Injected \(injected) descriptor(s).")
+    }
+
+    /// Read the descriptor back through house_arrest after AirTraffic reports
+    /// success. This is diagnostic only: failure to read does not change the
+    /// apply result, because some builds may refuse house_arrest for PosterBoard.
+    ///
+    /// The useful distinction is:
+    ///   * target UUID is visible -> AirTraffic really persisted the folder;
+    ///   * parent is readable but UUID is absent -> the write acknowledgement was
+    ///     not a durable container mutation;
+    ///   * house_arrest itself is denied -> inconclusive, keep the original result.
+    private static func verifyDescriptorReadback(
+        extensionID: String,
+        target: String,
+        structureVersion: Int,
+        log: @escaping (String) -> Void
+    ) async {
+        guard let gateway = Minimuxer.shared().ideviceGateway else {
+            log("  🔎 read-back unavailable: no idevice gateway")
+            return
+        }
+
+        let parent = "/Library/Application Support/"
+            + PosterBoard.storeDirectoryName + "/\(structureVersion)/Extensions/"
+            + extensionID + "/descriptors"
+        do {
+            let entries = try await gateway.afcContainerList(bundleId: bundleID, path: parent)
+            let names = Set(entries.map(\.name))
+            guard names.contains(target) else {
+                log("  ❌ READ-BACK: \(extensionID)/descriptors is readable, "
+                    + "but \(target) is absent (\(entries.count) entries)")
+                return
+            }
+
+            let descriptorPath = parent + "/" + target
+            let children = try await gateway.afcContainerList(
+                bundleId: bundleID,
+                path: descriptorPath
+            )
+            let childNames = children.map(\.name).sorted().joined(separator: ", ")
+            log("  ✅ READ-BACK: persisted \(extensionID)/descriptors/\(target)")
+            log("     root entries: \(childNames.isEmpty ? "<empty>" : childNames)")
+        } catch {
+            log("  ⚠️ READ-BACK inconclusive for \(extensionID)/\(target): "
+                + error.localizedDescription)
+        }
     }
 
     // MARK: - Descriptor discovery
