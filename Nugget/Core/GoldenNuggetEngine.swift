@@ -446,6 +446,69 @@ class GoldenNuggetEngine {
             + "tweak was delivered — the home page's Apply is what delivers those.")
     }
 
+    /// Apply PosterBoard descriptors using the same byte-preserving recovery
+    /// path that succeeded in the macOS GoldenNugget build.
+    ///
+    /// This is intentionally not the normal PosterBoard compiler and not AirLift:
+    /// it preserves the archive's descriptor UUIDs and embedded identifiers, builds
+    /// AppDomain-com.apple.PosterBoard payloads under the legacy descriptors tree,
+    /// then sends them through the existing iOS 26 partial-restore pipeline.
+    func applyPosterBoardViaMacRawRestore(
+        _ selection: PosterBoardSelection,
+        deviceVersion: String
+    ) async throws {
+        AppLog.shared.memory.reset()
+        warnIfPreviousCallStillRunning()
+        clearCancel()
+        clearProgress()
+        let stage = StageTimer("RUN posterboard mac raw restore")
+        defer { stage.done() }
+
+        guard !selection.tendies.isEmpty else {
+            throw GoldenNuggetError("Raw restore needs at least one .tendies pack.")
+        }
+        guard selection.video == nil else {
+            throw GoldenNuggetError(
+                "Mac raw restore is descriptor-only. Clear the video selection first.")
+        }
+        guard !selection.fullReset, selection.resetModes.isEmpty else {
+            throw GoldenNuggetError(
+                "Mac raw restore cannot be combined with PosterBoard resets.")
+        }
+
+        let udid = try await prepareRun()
+        let version = try await resolvedDeviceVersion(deviceVersion)
+        let major = Int(version.split(separator: ".").first ?? "0") ?? 0
+        guard major == 26 else {
+            throw GoldenNuggetError(
+                "Mac raw descriptor restore is limited to iOS 26. "
+                + "This device reports iOS \(version).")
+        }
+
+        let work = PosterBoard.workDirectory
+            .appendingPathComponent("MacRawRestore", isDirectory: true)
+        let payloads = try PosterBoardRawRestore.compile(
+            packs: selection.tendies,
+            workingDirectory: work,
+            log: { AppLog.write($0) }
+        )
+        let total = payloads.reduce(0) { $0 + $1.byteCount }
+        log("PosterBoard raw restore: \(payloads.count) payload(s), "
+            + ByteCountFormatter.string(fromByteCount: Int64(total), countStyle: .file))
+        log("PosterBoard raw restore: using legacy AppDomain partial restore, "
+            + "with original descriptor UUIDs and IDs unchanged.")
+
+        try await deliver(
+            payloads: payloads,
+            udid: udid,
+            version: version,
+            label: "posterboard raw restore"
+        ) {
+            log("PosterBoard raw restore succeeded: the device confirmed the restore finished.")
+            log("Reboot the device so PosterBoard re-reads the restored descriptor tree.")
+        }
+    }
+
     // MARK: - The shared delivery tail
     //
     // Both applies end in the same four stages, and the order is load-bearing:
