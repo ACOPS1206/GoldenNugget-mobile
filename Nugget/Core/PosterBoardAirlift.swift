@@ -274,6 +274,98 @@ enum PosterBoardAirlift {
         log("PosterBoard preferences staged for reload.")
     }
 
+    /// Write a fully compiled PosterBoard payload set directly into the app container.
+    ///
+    /// Unlike the legacy AirCard-compatible path above, this does not treat a
+    /// descriptor directory as a complete wallpaper. The caller first runs the
+    /// normal PosterBoard compiler against a freshly fetched device database, so
+    /// these payloads include the provider configuration directories, the updated
+    /// store SQLite database, empty WAL/SHM companions, and the refresh preference.
+    ///
+    /// This is deliberately a separate experimental path: replacing a live
+    /// PosterBoard database over AirTraffic has not yet had the same device testing
+    /// as the backup/restore path. The targeted fetch performed by the caller is
+    /// also the recovery copy if the direct write is rejected by PosterBoard.
+    static func applyCompiled(
+        payloads: [TweakPayload],
+        pairingPath: String,
+        log: @escaping (String) -> Void,
+        progress: @escaping (Double) -> Void
+    ) async throws {
+        guard !payloads.isEmpty else {
+            throw GoldenNuggetError("PosterBoard compiled no files to write.")
+        }
+        if let foreign = payloads.first(where: { $0.domain != PosterBoard.domain }) {
+            throw GoldenNuggetError(
+                "Refusing to AirLift a non-PosterBoard payload: \(foreign.label).")
+        }
+
+        var container = cachedContainer
+        if container.isEmpty {
+            log("Locating \(bundleID) over the tunnel…")
+            container = try await resolveContainer(pairingPath: pairingPath)
+        }
+        while container.hasSuffix("/") { container.removeLast() }
+        guard !container.isEmpty else {
+            throw GoldenNuggetError("PosterBoard container lookup returned an empty path.")
+        }
+        log("PosterBoard container: \(container)")
+
+        let stage = PosterBoard.workDirectory
+            .appendingPathComponent("airlift-compiled-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.removeItem(at: stage)
+        try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: stage) }
+
+        let fm = FileManager.default
+        for (index, payload) in payloads.enumerated() {
+            let relative = payload.relativePath
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let components = relative.split(separator: "/", omittingEmptySubsequences: true)
+                .map(String.init)
+            guard !components.isEmpty,
+                  !components.contains("."),
+                  !components.contains("..")
+            else {
+                throw GoldenNuggetError(
+                    "Refusing an unsafe PosterBoard payload path: \(payload.relativePath)")
+            }
+
+            var destination = stage
+            for component in components {
+                destination.appendPathComponent(component)
+            }
+            try fm.createDirectory(
+                at: destination.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            try? fm.removeItem(at: destination)
+
+            if let source = payload.source {
+                try fm.copyItem(at: source, to: destination)
+            } else {
+                try payload.contents.write(to: destination, options: .atomic)
+            }
+
+            // Staging is intentionally only the first part of progress. The
+            // AirTraffic batch and userspace restart are the operations that can
+            // still fail after every local file exists.
+            progress(min(70, Double(index + 1) / Double(payloads.count) * 70))
+        }
+
+        log("Writing \(payloads.count) compiled PosterBoard file(s) over AirLift…")
+        try await Airlift.writeDir(
+            pairingPath: pairingPath,
+            sourceDir: stage.path,
+            targetDir: container
+        )
+        progress(95)
+
+        log("Compiled PosterBoard store written; respringing so it is reopened…")
+        try await Airlift.respring()
+        progress(100)
+        log("PosterBoard database-backed AirLift apply finished.")
+    }
+
     // MARK: - Descriptor discovery
 
     /// How many descriptors a pack will yield, counted from the archive listing.
